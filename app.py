@@ -97,27 +97,45 @@ with tab1:
     st.divider()
     st.subheader("Lançamentos recentes")
 
-    df = reports.df_transactions()
-    if df.empty:
-        st.info("Sem lançamentos ainda.")
-    else:
-        show = df.sort_values("date", ascending=False).head(50).copy()
-        show["date"] = show["date"].dt.strftime("%Y-%m-%d")
-        show["amount_brl"] = show["amount"].apply(to_brl)
-        st.dataframe(
-            show[["id", "date", "description", "account", "category", "amount_brl"]],
-            use_container_width=True,
-            hide_index=True
-        )
+df = reports.df_transactions()
+if df.empty:
+    st.info("Sem lançamentos ainda.")
+else:
+    show = df.sort_values("date", ascending=False).head(50).copy()
+    show["date"] = show["date"].dt.strftime("%Y-%m-%d")
+    show["amount_brl"] = show["amount"].apply(to_brl)
+    st.dataframe(
+        show[["id", "date", "description", "account", "category", "amount_brl"]],
+        use_container_width=True,
+        hide_index=True
+    )
 
+    col_del, col_btn = st.columns([1.2, 1.0])
+
+    with col_del:
         del_id = st.number_input("Excluir lançamento por ID", min_value=0, step=1, value=0)
+
+    with col_btn:
         if st.button("Excluir"):
             if del_id > 0:
                 repo.delete_transaction(int(del_id))
-                st.success("Excluído (se existia). Atualize a página.")
+                st.success("Excluído (se existia).")
+                st.rerun()
             else:
                 st.warning("Informe um ID > 0.")
 
+    st.divider()
+    st.markdown("#### Limpeza rápida")
+
+    cA, cB = st.columns([1.2, 2.0])
+    with cA:
+        if st.button("🧹 Limpar lançamentos INV (teste)"):
+            deleted = repo.delete_transactions_by_description_prefix("INV ")
+            st.success(f"Removidos {deleted} lançamentos INV.")
+            st.rerun()
+
+    with cB:
+        st.caption("Remove tudo que começa com 'INV ' (ex: INV BUY..., INV SELL...).")
 # ========== TAB 2: Dashboard ==========
 with tab2:
     st.subheader("Filtros")
@@ -245,8 +263,7 @@ with tab3:
         except Exception as e:
             st.error(f"Erro ao ler/importar: {e}")
 
-            import invest_repo
-import invest_reports
+
 
 with tab4:
     st.subheader("Investimentos (Ações/FIIs + Cripto + Renda Fixa)")
@@ -306,86 +323,197 @@ with tab4:
             st.dataframe(df[["id","symbol","name","asset_class","currency","broker_account"]], use_container_width=True, hide_index=True)
 
     # ===== Operações =====
-    with subtabs[1]:
-        st.markdown("### Nova operação (BUY/SELL)")
-        if not assets:
-            st.warning("Cadastre um ativo primeiro.")
-        else:
-            c1, c2, c3, c4 = st.columns([1.4, 1.0, 1.0, 1.0])
-            with c1:
-                sym = st.selectbox("Ativo", list(asset_label.keys()))
-            with c2:
-                date = st.date_input("Data", key="trade_date")
-            with c3:
-                side = st.selectbox("Tipo", ["BUY", "SELL"])
-            with c4:
-                qty = st.number_input("Quantidade", min_value=0.0, step=1.0, format="%.8f")
+with subtabs[1]:
+    st.markdown("### Nova operação (BUY/SELL)")
 
-            c5, c6, c7 = st.columns([1.0, 1.0, 2.0])
-            with c5:
-                price = st.number_input("Preço unitário", min_value=0.0, step=0.01, format="%.8f")
-            with c6:
-                fees = st.number_input("Taxas", min_value=0.0, step=0.01, format="%.2f")
-            with c7:
-                note = st.text_input("Obs", placeholder="corretagem, exchange, etc.")
+    if not assets:
+        st.warning("Cadastre um ativo primeiro.")
+    else:
+        c1, c2, c3, c4 = st.columns([1.4, 1.0, 1.0, 1.0])
+        with c1:
+            sym = st.selectbox("Ativo", list(asset_label.keys()), key="trade_sym")
+        with c2:
+            trade_date = st.date_input("Data", key="trade_date")
+        with c3:
+            side = st.selectbox("Tipo", ["BUY", "SELL"], key="trade_side")
+        with c4:
+            qty = st.number_input("Quantidade", min_value=0.0, step=1.0, format="%.8f", key="trade_qty")
 
-            if st.button("Salvar operação", type="primary"):
-                invest_repo.insert_trade(
-                    asset_id=asset_label[sym],
-                    date=date.strftime("%Y-%m-%d"),
-                    side=side,
-                    quantity=float(qty),
-                    price=float(price),
-                    fees=float(fees),
-                    taxes=0.0,
-                    note=note if note.strip() else None
+        c5, c6, c7 = st.columns([1.0, 1.0, 2.0])
+        with c5:
+            price = st.number_input("Preço unitário", min_value=0.0, step=0.01, format="%.8f", key="trade_price")
+        with c6:
+            fees = st.number_input("Taxas", min_value=0.0, step=0.01, format="%.2f", key="trade_fees")
+        with c7:
+            note = st.text_input("Obs", placeholder="corretagem, exchange, etc.", key="trade_note")
+
+        # Anti-duplicação (Streamlit rerun / duplo clique)
+        if "last_trade_key" not in st.session_state:
+            st.session_state["last_trade_key"] = None
+
+        if st.button("Salvar operação", type="primary", key="btn_save_trade"):
+
+            # Validação
+            if float(qty) <= 0 or float(price) <= 0:
+                st.error("Quantidade e preço devem ser maiores que zero.")
+                st.stop()
+
+            note_norm = (note.strip() if note else "")
+
+            # Chave única da operação (inclui note)
+            trade_key = (
+                sym,
+                side,
+                round(float(qty), 8),
+                round(float(price), 8),
+                round(float(fees), 2),
+                trade_date.strftime("%Y-%m-%d"),
+                note_norm
+            )
+
+            if st.session_state["last_trade_key"] == trade_key:
+                st.warning("Operação já registrada (bloqueio anti-duplicação).")
+                st.stop()
+
+            st.session_state["last_trade_key"] = trade_key
+
+            # 1) Salvar trade (Investimentos)
+            invest_repo.insert_trade(
+                asset_id=asset_label[sym],
+                date=trade_date.strftime("%Y-%m-%d"),
+                side=side,
+                quantity=float(qty),
+                price=float(price),
+                fees=float(fees),
+                taxes=0.0,
+                note=note_norm if note_norm else None
+            )
+            st.success("Operação salva.")
+
+            # 2) Integração Financeiro ↔ Investimentos (gera lançamento na corretora)
+            asset = invest_repo.get_asset(asset_label[sym])
+            broker_acc_id = asset["broker_account_id"]
+
+            if broker_acc_id:
+                cat_id = repo.ensure_category("Investimentos", "Transferencia")
+
+                gross = float(qty) * float(price)
+
+                if side == "BUY":
+                    cash = -(gross + float(fees))
+                    desc = f"INV BUY {sym}"
+                else:
+                    cash = +(gross - float(fees))
+                    desc = f"INV SELL {sym}"
+
+                repo.create_transaction(
+                    date=trade_date.strftime("%Y-%m-%d"),
+                    description=desc,
+                    amount=float(cash),
+                    category_id=cat_id,
+                    account_id=broker_acc_id,
+                    method="INV",
+                    notes=note_norm if note_norm else None
                 )
-                st.success("Operação salva.")
 
-                # Integração com financeiro (opcional): gera lançamento na conta corretora se houver
-                # BUY = saída / SELL = entrada
-                # Se você quiser ativar SEMPRE, me diga e eu ajusto para buscar broker_account_id do ativo.
-                # (Mantive opcional pra não bagunçar seu caixa sem você querer.)
+                st.info(f"Lançamento financeiro criado na corretora (R$ {cash:.2f}).")
+            else:
+                st.warning(
+                    "Ativo sem conta corretora vinculada. "
+                    "Vá em Ativos e selecione a conta corretora do ativo."
+                )
 
-        st.divider()
-        st.markdown("### Operações recentes")
-        trades = invest_repo.list_trades()
-        if trades:
-            df = pd.DataFrame([dict(r) for r in trades]).head(50)
-            st.dataframe(df[["id","date","symbol","asset_class","side","quantity","price","fees","taxes","note"]], use_container_width=True, hide_index=True)
+            st.rerun()
 
+    st.divider()
+    st.markdown("### Operações recentes")
+    trades = invest_repo.list_trades()
+    if trades:
+        df = pd.DataFrame([dict(r) for r in trades]).head(50)
+        st.dataframe(
+            df[["id", "date", "symbol", "asset_class", "side", "quantity", "price", "fees", "taxes", "note"]],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Sem operações ainda.")
+   
     # ===== Proventos =====
-    with subtabs[2]:
-        st.markdown("### Registrar provento/juros")
-        if not assets:
-            st.warning("Cadastre um ativo primeiro.")
-        else:
-            c1, c2, c3, c4 = st.columns([1.5, 1.0, 1.0, 1.5])
-            with c1:
-                sym = st.selectbox("Ativo", list(asset_label.keys()), key="inc_sym")
-            with c2:
-                date = st.date_input("Data", key="inc_date")
-            with c3:
-                typ = st.selectbox("Tipo", invest_repo.INCOME_TYPES)
-            with c4:
-                amount = st.number_input("Valor recebido", min_value=0.0, step=1.0, format="%.2f")
+with subtabs[2]:
+    st.markdown("### Registrar provento/juros")
 
-            note = st.text_input("Obs (opcional)", key="inc_note")
-            if st.button("Salvar provento", type="primary"):
-                invest_repo.insert_income(
-                    asset_id=asset_label[sym],
-                    date=date.strftime("%Y-%m-%d"),
-                    type_=typ,
+    if not assets:
+        st.warning("Cadastre um ativo primeiro.")
+    else:
+        c1, c2, c3, c4 = st.columns([1.5, 1.0, 1.0, 1.5])
+        with c1:
+            sym_p = st.selectbox("Ativo", list(asset_label.keys()), key="inc_sym")
+        with c2:
+            date_p = st.date_input("Data", key="inc_date")
+        with c3:
+            typ = st.selectbox("Tipo", invest_repo.INCOME_TYPES, key="inc_type")
+        with c4:
+            amount = st.number_input("Valor recebido", min_value=0.0, step=1.0, format="%.2f", key="inc_amount")
+
+        note = st.text_input("Obs (opcional)", key="inc_note")
+
+        if st.button("Salvar provento", type="primary", key="btn_save_income"):
+
+            # Validação
+            if float(amount) <= 0:
+                st.error("O valor do provento deve ser maior que zero.")
+                st.stop()
+
+            note_norm = note.strip() if note else ""
+
+            # 1) Salvar provento (Investimentos) - POSICIONAL (sem keyword 'type')
+            invest_repo.insert_income(
+                asset_label[sym_p],
+                date_p.strftime("%Y-%m-%d"),
+                typ,
+                float(amount),
+                note_norm if note_norm else None
+            )
+            st.success("Provento salvo.")
+
+            # 2) Integração Financeiro ↔ Proventos
+            asset = invest_repo.get_asset(asset_label[sym_p])
+            broker_acc_id = asset["broker_account_id"]
+
+            if broker_acc_id:
+                cat_id = repo.ensure_category("Investimentos", "Receita")
+                desc = f"PROVENTO {sym_p} ({typ})"
+
+                repo.create_transaction(
+                    date=date_p.strftime("%Y-%m-%d"),
+                    description=desc,
                     amount=float(amount),
-                    note=note if note.strip() else None
+                    category_id=cat_id,
+                    account_id=broker_acc_id,
+                    method="INV",
+                    notes=note_norm if note_norm else None
                 )
-                st.success("Provento salvo.")
+                st.info(f"Receita registrada na corretora (R$ {amount:.2f}).")
+            else:
+                st.warning(
+                    "Ativo sem conta corretora vinculada. "
+                    "Vá em Ativos e selecione a conta corretora do ativo."
+                )
 
-        st.divider()
-        incs = invest_repo.list_income()
-        if incs:
-            df = pd.DataFrame([dict(r) for r in incs]).head(50)
-            st.dataframe(df[["id","date","symbol","asset_class","type","amount","note"]], use_container_width=True, hide_index=True)
+            st.rerun()
+
+    st.divider()
+    st.markdown("### Proventos recentes")
+    incs = invest_repo.list_income()
+    if incs:
+        df_inc = pd.DataFrame([dict(r) for r in incs]).head(50)
+        st.dataframe(
+            df_inc[["id", "date", "symbol", "asset_class", "type", "amount", "note"]],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Sem proventos ainda.")
 
     # ===== Cotações =====
     with subtabs[3]:
@@ -451,3 +579,4 @@ with tab4:
             if not alloc.empty:
                 fig = px.pie(alloc, names="asset_class", values="market_value")
                 st.plotly_chart(fig, use_container_width=True)
+    

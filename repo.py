@@ -83,3 +83,57 @@ def fetch_transactions(date_from: str | None = None, date_to: str | None = None,
     rows = conn.execute(q, params).fetchall()
     conn.close()
     return rows
+def get_category_by_name(name: str):
+    conn = get_conn()
+    row = conn.execute("SELECT id, name, kind FROM categories WHERE name = ?", (name,)).fetchone()
+    conn.close()
+    return row
+
+def ensure_category(name: str, kind: str = "Transferencia"):
+    row = get_category_by_name(name)
+    if row:
+        return row["id"]
+    conn = get_conn()
+    conn.execute("INSERT INTO categories(name, kind) VALUES (?, ?)", (name, kind))
+    conn.commit()
+    row = conn.execute("SELECT id FROM categories WHERE name = ?", (name,)).fetchone()
+    conn.close()
+    return row["id"]
+
+def create_transaction(date: str, description: str, amount: float, category_id: int, account_id: int,
+                       method: str | None = None, notes: str | None = None):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO transactions(date, description, amount, category_id, account_id, method, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (date, description, float(amount), int(category_id), int(account_id), method, notes))
+    conn.commit()
+    conn.close()
+def delete_transactions_by_description_prefix(prefix: str):
+    conn = get_conn()
+    conn.execute("DELETE FROM transactions WHERE description LIKE ?", (f"{prefix}%",))
+    conn.commit()
+    conn.close()
+
+def delete_transactions_by_description_prefix(prefix: str) -> int:
+    """
+    Apaga transações cuja descrição começa com `prefix`.
+    Retorna a quantidade apagada.
+    """
+    conn = get_conn()
+    cur = conn.execute(
+        "DELETE FROM transactions WHERE description LIKE ?",
+        (f"{prefix}%",)
+    )
+    conn.commit()
+    deleted = cur.rowcount if cur.rowcount is not None else 0
+    conn.close()
+    return deleted
+
+def delete_transactions_by_description_exact(desc: str) -> int:
+    conn = get_conn()
+    cur = conn.execute("DELETE FROM transactions WHERE description = ?", (desc,))
+    conn.commit()
+    deleted = cur.rowcount if cur.rowcount is not None else 0
+    conn.close()
+    return deleted

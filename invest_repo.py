@@ -140,3 +140,13 @@ def delete_income(income_id: int):
     conn.execute("DELETE FROM income_events WHERE id=?", (int(income_id),))
     conn.commit()
     conn.close()
+
+def get_asset(asset_id: int):
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT id, symbol, name, asset_class, broker_account_id
+        FROM assets
+        WHERE id = ?
+    """, (int(asset_id),)).fetchone()
+    conn.close()
+    return row    
