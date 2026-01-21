@@ -457,6 +457,10 @@ with subtabs[2]:
 
         note = st.text_input("Obs (opcional)", key="inc_note")
 
+        # Anti-duplicação (Streamlit rerun / duplo clique)
+        if "last_income_key" not in st.session_state:
+            st.session_state["last_income_key"] = None
+
         if st.button("Salvar provento", type="primary", key="btn_save_income"):
 
             # Validação
@@ -466,6 +470,20 @@ with subtabs[2]:
 
             note_norm = note.strip() if note else ""
 
+            income_key = (
+            sym_p,
+            date_p.strftime("%Y-%m-%d"),
+            typ,
+            round(float(amount), 2),
+            (note_norm or "")
+        )
+
+            if st.session_state["last_income_key"] == income_key:
+                st.warning("Provento já registrado (bloqueio anti-duplicação).")
+                st.stop()
+
+            st.session_state["last_income_key"] = income_key
+
             # 1) Salvar provento (Investimentos) - POSICIONAL (sem keyword 'type')
             invest_repo.insert_income(
                 asset_label[sym_p],
@@ -474,7 +492,7 @@ with subtabs[2]:
                 float(amount),
                 note_norm if note_norm else None
             )
-            st.success("Provento salvo.")
+            st.success("Provento salvo.")  
 
             # 2) Integração Financeiro ↔ Proventos
             asset = invest_repo.get_asset(asset_label[sym_p])
@@ -536,47 +554,150 @@ with subtabs[2]:
 
     # ===== Carteira =====
     with subtabs[4]:
-        st.markdown("### Carteira (posição, preço médio, P&L)")
-        pos, tdf, incdf = invest_reports.portfolio_view()
+        st.markdown("### 📌 Carteira (visão consolidada)")
+
+        # filtro opcional por classe
+        classes = ["(todas)"] + list(invest_repo.ASSET_CLASSES)
+        cls_filter = st.selectbox("Filtrar por classe", classes, index=0)
+
+        # pega visão da carteira
+        pos, tdf, inc = invest_reports.portfolio_view()
 
         if pos.empty:
-            st.info("Sem operações ainda.")
-        else:
-            # KPIs
-            total_cost = float(pos["cost_basis"].sum())
-            total_mv = float(pos["market_value"].sum())
-            total_unrl = float(pos["unrealized_pnl"].sum())
-            total_rlz = float(pos["realized_pnl"].sum())
-            total_inc = float(pos["income"].sum())
+            st.info("Sem posições ainda. Cadastre um ativo e registre uma operação (BUY) para começar.")
+            st.stop()
 
-            k1, k2, k3, k4, k5 = st.columns(5)
-            k1.metric("Custo (base)", to_brl(total_cost))
-            k2.metric("Valor mercado", to_brl(total_mv))
-            k3.metric("Não realizado", to_brl(total_unrl))
-            k4.metric("Realizado", to_brl(total_rlz))
-            k5.metric("Proventos", to_brl(total_inc))
+        # filtro por classe
+        if cls_filter != "(todas)":
+            pos = pos[pos["asset_class"] == cls_filter].copy()
+
+        # garante colunas esperadas
+        for col in ["income", "realized_pnl", "unrealized_pnl", "market_value", "cost_basis", "price"]:
+            if col not in pos.columns:
+                pos[col] = 0.0
+        if "price_date" not in pos.columns:
+            pos["price_date"] = None
+        if "name" not in pos.columns:
+            pos["name"] = ""
+        if "currency" not in pos.columns:
+            pos["currency"] = "BRL"
+
+        # retorno total e %
+        pos["total_return"] = pos["unrealized_pnl"].fillna(0.0) + pos["realized_pnl"].fillna(0.0) + pos["income"].fillna(0.0)
+        pos["return_pct"] = pos.apply(
+            lambda r: (r["total_return"] / r["cost_basis"] * 100) if float(r["cost_basis"] or 0) > 0 else 0.0,
+            axis=1
+        )
+
+        # KPIs topo
+        total_invested = float(pos["cost_basis"].fillna(0.0).sum())
+        total_mkt = float(pos["market_value"].fillna(0.0).sum())
+        total_income = float(pos["income"].fillna(0.0).sum())
+        total_realized = float(pos["realized_pnl"].fillna(0.0).sum())
+        total_unreal = float(pos["unrealized_pnl"].fillna(0.0).sum())
+        total_ret = float(pos["total_return"].fillna(0.0).sum())
+        total_ret_pct = (total_ret / total_invested * 100) if total_invested > 0 else 0.0
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Investido", to_brl(total_invested))
+        k2.metric("Valor de Mercado", to_brl(total_mkt))
+        k3.metric("Proventos", to_brl(total_income))
+        k4.metric("Retorno Total", to_brl(total_ret), f"{total_ret_pct:.2f}%")
+        k5.metric("P&L Não Realizado", to_brl(total_unreal))
+
+        st.divider()
+
+        # gráfico: distribuição por valor de mercado
+        chart_df = pos.copy()
+        chart_df["market_value_abs"] = chart_df["market_value"].fillna(0.0)
+        chart_df = chart_df[chart_df["market_value_abs"] > 0].sort_values("market_value_abs", ascending=False)
+
+        left, right = st.columns([1.2, 1.0])
+
+        with left:
+            st.markdown("#### 🧾 Posições")
+            view = pos.copy()
+
+            # formata datas e valores
+            if "price_date" in view.columns:
+                view["price_date"] = view["price_date"].fillna("").astype(str)
+
+            view["qty"] = view["qty"].astype(float)
+            view["avg_cost"] = view["avg_cost"].astype(float)
+            view["cost_basis_fmt"] = view["cost_basis"].apply(to_brl)
+            view["price_fmt"] = view["price"].apply(lambda x: to_brl(float(x)) if str(view["currency"].iloc[0]) == "BRL" else f"{float(x):.4f}")
+            view["market_value_fmt"] = view["market_value"].apply(to_brl)
+            view["unreal_fmt"] = view["unrealized_pnl"].apply(to_brl)
+            view["realized_fmt"] = view["realized_pnl"].apply(to_brl)
+            view["income_fmt"] = view["income"].apply(to_brl)
+            view["total_return_fmt"] = view["total_return"].apply(to_brl)
+            view["return_pct_fmt"] = view["return_pct"].apply(lambda x: f"{float(x):.2f}%")
+
+            cols = [
+                "symbol", "name", "asset_class",
+                "qty", "avg_cost",
+                "price_date", "price_fmt",
+                "cost_basis_fmt", "market_value_fmt",
+                "unreal_fmt", "realized_fmt", "income_fmt",
+                "total_return_fmt", "return_pct_fmt"
+            ]
+
+            # renomeia cabeçalhos
+            rename = {
+                "symbol": "Ativo",
+                "name": "Nome",
+                "asset_class": "Classe",
+                "qty": "Qtd",
+                "avg_cost": "Preço Médio",
+                "price_date": "Data Preço",
+                "price_fmt": "Preço",
+                "cost_basis_fmt": "Investido",
+                "market_value_fmt": "Mercado",
+                "unreal_fmt": "P&L Não Real.",
+                "realized_fmt": "P&L Real.",
+                "income_fmt": "Proventos",
+                "total_return_fmt": "Retorno Total",
+                "return_pct_fmt": "% Retorno",
+            }
+
+            table = view[cols].rename(columns=rename).sort_values(["Classe", "Ativo"])
+            st.dataframe(table, use_container_width=True, hide_index=True)
+
+        with right:
+            st.markdown("#### 🥧 Distribuição (Valor de Mercado)")
+            if chart_df.empty:
+                st.info("Sem valores de mercado (adicione preços).")
+            else:
+                fig = px.pie(chart_df, names="symbol", values="market_value_abs")
+                st.plotly_chart(fig, use_container_width=True)
 
             st.divider()
+            st.markdown("#### 🔎 Alertas rápidos")
+            # preço faltando
+            missing = pos[pos["price"].fillna(0.0) <= 0]
+            if not missing.empty:
+                st.warning("Alguns ativos estão sem preço. Vá em **Cotações** e registre o preço manual por enquanto.")
+                st.write(", ".join(missing["symbol"].tolist()))
+            else:
+                st.success("Todos os ativos possuem preço registrado.")
 
-            view = pos.copy()
-            view["avg_cost"] = view["avg_cost"].fillna(0.0)
-            view["price"] = view["price"].fillna(0.0)
+        st.divider()
+        st.markdown("#### Totais por classe")
+        by_cls = pos.groupby("asset_class", as_index=False).agg(
+            invested=("cost_basis", "sum"),
+            market=("market_value", "sum"),
+            income=("income", "sum"),
+            total_return=("total_return", "sum"),
+        )
+        by_cls["invested"] = by_cls["invested"].apply(to_brl)
+        by_cls["market"] = by_cls["market"].apply(to_brl)
+        by_cls["income"] = by_cls["income"].apply(to_brl)
+        by_cls["total_return"] = by_cls["total_return"].apply(to_brl)
 
-            # tabela
-            show = view[["symbol","asset_class","qty","avg_cost","price","cost_basis","market_value","unrealized_pnl","realized_pnl","income"]].copy()
-            show["avg_cost"] = show["avg_cost"].apply(to_brl)
-            show["price"] = show["price"].apply(to_brl)
-            show["cost_basis"] = show["cost_basis"].apply(to_brl)
-            show["market_value"] = show["market_value"].apply(to_brl)
-            show["unrealized_pnl"] = show["unrealized_pnl"].apply(to_brl)
-            show["realized_pnl"] = show["realized_pnl"].apply(to_brl)
-            show["income"] = show["income"].apply(to_brl)
-
-            st.dataframe(show, use_container_width=True, hide_index=True)
-
-            # alocação por classe
-            alloc = pos.groupby("asset_class")["market_value"].sum().reset_index()
-            if not alloc.empty:
-                fig = px.pie(alloc, names="asset_class", values="market_value")
-                st.plotly_chart(fig, use_container_width=True)
-    
+        st.dataframe(by_cls.rename(columns={
+            "asset_class": "Classe",
+            "invested": "Investido",
+            "market": "Mercado",
+            "income": "Proventos",
+            "total_return": "Retorno Total"
+        }), use_container_width=True, hide_index=True)
