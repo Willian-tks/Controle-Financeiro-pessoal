@@ -1,5 +1,6 @@
 # invest_reports.py
 import pandas as pd
+import invest_repo
 from db import get_conn
 
 def df_assets():
@@ -61,7 +62,7 @@ def df_income(date_from=None, date_to=None):
 def df_latest_prices():
     conn = get_conn()
     df = pd.read_sql_query("""
-        SELECT p.asset_id, p.date, p.price
+        SELECT p.asset_id, p.date AS price_date, p.price
         FROM prices p
         JOIN (
             SELECT asset_id, MAX(date) AS max_date
@@ -140,21 +141,52 @@ def portfolio_view(date_from=None, date_to=None):
     tdf = df_trades(date_from, date_to)
     pos = positions_avg_cost(tdf)
 
+    # ===== Preços (último preço por ativo) =====
     prices = df_latest_prices()
     if not prices.empty and not pos.empty:
-        pos = pos.merge(prices[["asset_id", "price"]], on="asset_id", how="left")
+        pos = pos.merge(
+            prices[["asset_id", "price", "price_date"]],
+            on="asset_id",
+            how="left"
+        )
     else:
-        pos["price"] = None
+        # garante colunas existirem mesmo sem preços
+        pos["price"] = 0.0
+        pos["price_date"] = None
 
-    # market value e pnl não realizado
-    pos["market_value"] = pos["qty"] * pos["price"].fillna(0.0)
+    # garante preço numérico sempre
+    pos["price"] = pd.to_numeric(pos.get("price", 0.0), errors="coerce").fillna(0.0)
+
+    # ===== Dados do ativo (nome/moeda) =====
+    assets = df_assets()
+    if not assets.empty and not pos.empty:
+        pos = pos.merge(
+            assets.rename(columns={"id": "asset_id"})[["asset_id", "name", "currency"]],
+            on="asset_id",
+            how="left"
+        )
+    else:
+        # se pos vazio, garante colunas para evitar erro no app
+        if "name" not in pos.columns:
+            pos["name"] = None
+        if "currency" not in pos.columns:
+            pos["currency"] = None
+
+    # ===== Cálculos =====
+    pos["market_value"] = pos["qty"] * pos["price"]
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
 
-    # proventos
+    # ===== Proventos =====
     inc = df_income(date_from, date_to)
-    if not inc.empty:
-        inc_sum = inc.groupby("asset_id")["amount"].sum().reset_index().rename(columns={"amount": "income"})
+    if not inc.empty and not pos.empty:
+        inc_sum = (
+            inc.groupby("asset_id")["amount"]
+            .sum()
+            .reset_index()
+            .rename(columns={"amount": "income"})
+        )
         pos = pos.merge(inc_sum, on="asset_id", how="left")
+
     # garante coluna income sempre
     if "income" not in pos.columns:
         pos["income"] = 0.0

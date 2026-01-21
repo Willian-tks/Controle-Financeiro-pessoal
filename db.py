@@ -105,14 +105,14 @@ def init_db():
     CREATE TABLE IF NOT EXISTS prices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         asset_id INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        price REAL NOT NULL,
-        source TEXT,
+        date TEXT NOT NULL,                 -- YYYY-MM-DD
+        price REAL NOT NULL,                -- preço unitário
+        source TEXT,                        -- 'manual'
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(asset_id, date),
         FOREIGN KEY(asset_id) REFERENCES assets(id)
-    );
-    """)
+);
+""")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(date);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
