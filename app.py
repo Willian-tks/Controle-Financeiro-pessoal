@@ -125,29 +125,30 @@ else:
                 st.warning("Informe um ID > 0.")
 
     st.divider()
-    st.markdown("#### Limpeza rápida")
+    #st.markdown("#### Limpeza rápida")
 
-    cA, cB = st.columns([1.2, 2.0])
-    with cA:
-        if st.button("🧹 Limpar lançamentos INV (teste)"):
-            deleted = repo.delete_transactions_by_description_prefix("INV ")
-            st.success(f"Removidos {deleted} lançamentos INV.")
-            st.rerun()
+    #cA, cB = st.columns([1.2, 2.0])
+    #with cA:
+        #if st.button("🧹 Limpar lançamentos INV (teste)"):
+           # deleted = repo.delete_transactions_by_description_prefix("INV ")
+            #st.success(f"Removidos {deleted} lançamentos INV.")
+           # st.rerun()
 
-    with cB:
-        st.caption("Remove tudo que começa com 'INV ' (ex: INV BUY..., INV SELL...).")
+    #with cB:
+        #st.caption("Remove tudo que começa com 'INV ' (ex: INV BUY..., INV SELL...).")
 # ========== TAB 2: Dashboard ==========
 with tab2:
     st.subheader("Filtros")
 
-    c1, c2, c3 = st.columns([1.2, 1.2, 2.0])
-    with c1:
-        date_from = st.date_input("De", value=None)
-    with c2:
-        date_to = st.date_input("Até", value=None)
-    with c3:
-        acc_filter = st.selectbox("Conta", ["(todas)"] + list(acc_map.keys()))
+    f1, f2, f3 = st.columns([1.2, 1.2, 2.0])
+    with f1:
+        date_from = st.date_input("De", value=None, key="dash_date_from")
+    with f2:
+        date_to = st.date_input("Até", value=None, key="dash_date_to")
+    with f3:
+        acc_filter = st.selectbox("Conta", ["(todas)"] + list(acc_map.keys()), key="dash_acc_filter")
 
+    # ----- Dados filtrados (transações) -----
     df = reports.df_transactions(
         date_from.strftime("%Y-%m-%d") if date_from else None,
         date_to.strftime("%Y-%m-%d") if date_to else None
@@ -156,6 +157,7 @@ with tab2:
     if acc_filter != "(todas)" and not df.empty:
         df = df[df["account"] == acc_filter]
 
+    # ----- KPIs -----
     k = reports.kpis(df)
     k1, k2, k3 = st.columns(3)
     k1.metric("Receitas", to_brl(k["receitas"]))
@@ -164,41 +166,125 @@ with tab2:
 
     st.divider()
 
-    left, right = st.columns([1.2, 1.0])
+    # =========================
+    # 1) RESUMO FINANCEIRO
+    # =========================
+    st.markdown("## 📊 Resumo financeiro do período")
 
-    with left:
-        st.markdown("#### Saldo por mês")
-        ms = reports.monthly_summary(df)
-        if ms.empty:
-            st.info("Sem dados para o período.")
+    st.markdown("### Saldo por mês")
+ms = reports.monthly_summary(df)
+
+if ms.empty:
+    st.info("Sem dados para o período.")
+else:
+    ms_plot = ms.copy()
+
+    # deixa o eixo X bonitinho e ordenável
+    ms_plot["month"] = pd.to_datetime(
+        ms_plot["month"].astype(str) + "-01",
+        errors="coerce"
+    )
+
+    fig = px.line(ms_plot, x="month", y="saldo", markers=True)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### Resumo mensal")
+    ms_fmt = ms.copy()
+    ms_fmt["receitas"] = ms_fmt["receitas"].apply(to_brl)
+    ms_fmt["despesas"] = ms_fmt["despesas"].apply(to_brl)
+    ms_fmt["saldo"] = ms_fmt["saldo"].apply(to_brl)
+
+    st.dataframe(ms_fmt, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # =========================
+    # 2) DETALHES (categoria / conta)
+    # =========================
+    st.markdown("### Despesas por categoria")
+ce = reports.category_expenses(df)
+
+if ce.empty:
+    st.info("Sem despesas no período.")
+else:
+    fig2 = px.bar(
+        ce.head(15),
+        x="valor",
+        y="category",
+        orientation="h"
+    )
+    st.plotly_chart(fig2, use_container_width=True)
+
+st.markdown("### Saldo por conta")
+ab = reports.account_balance(df)
+
+if ab.empty:
+    st.info("Sem dados.")
+else:
+    ab_fmt = ab.copy()
+    ab_fmt["saldo"] = ab_fmt["saldo"].apply(to_brl)
+    st.dataframe(ab_fmt, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # =========================
+    # 3) PATRIMÔNIO (por dia) - recolhido
+    # =========================
+    with st.expander("📌 Patrimônio (por dia) — abrir", expanded=False):
+        st.caption(
+            "ℹ️ Este gráfico depende de cotações salvas. Dias sem cotação podem aparecer zerados e gerar saltos — "
+            "isso é normal enquanto você ainda tem poucos dados."
+        )
+
+        # intervalo padrão só para o patrimônio
+        if not date_from or not date_to:
+            end = pd.Timestamp.today().normalize()
+            start = end - pd.Timedelta(days=90)
+            d_from = start.strftime("%Y-%m-%d")
+            d_to = end.strftime("%Y-%m-%d")
         else:
-            fig = px.line(ms, x="month", y="saldo", markers=True)
-            st.plotly_chart(fig, use_container_width=True)
+            d_from = date_from.strftime("%Y-%m-%d")
+            d_to = date_to.strftime("%Y-%m-%d")
 
-            ms_fmt = ms.copy()
-            ms_fmt["receitas"] = ms_fmt["receitas"].apply(to_brl)
-            ms_fmt["despesas"] = ms_fmt["despesas"].apply(to_brl)
-            ms_fmt["saldo"] = ms_fmt["saldo"].apply(to_brl)
-            st.dataframe(ms_fmt, use_container_width=True, hide_index=True)
+        cash_ts = reports.cash_balance_timeseries(d_from, d_to)
+        inv_ts = invest_reports.investments_value_timeseries(d_from, d_to)
 
-    with right:
-        st.markdown("#### Despesas por categoria")
-        ce = reports.category_expenses(df)
-        if ce.empty:
-            st.info("Sem despesas no período.")
+        if inv_ts.empty and cash_ts.empty:
+            st.info("Sem dados suficientes para patrimônio ainda.")
         else:
-            fig2 = px.bar(ce.head(15), x="valor", y="category", orientation="h")
-            st.plotly_chart(fig2, use_container_width=True)
+            # base por dia
+            if inv_ts.empty:
+                base = cash_ts.copy()
+                base["invest_market_value"] = 0.0
+            elif cash_ts.empty:
+                base = inv_ts.copy()
+                base["cash_balance"] = 0.0
+            else:
+                base = pd.merge(inv_ts, cash_ts, on="date", how="outer").sort_values("date")
 
-        st.markdown("#### Saldo por conta")
-        ab = reports.account_balance(df)
-        if ab.empty:
-            st.info("Sem dados.")
-        else:
-            ab_fmt = ab.copy()
-            ab_fmt["saldo"] = ab_fmt["saldo"].apply(to_brl)
-            st.dataframe(ab_fmt, use_container_width=True, hide_index=True)
+            # ffill só no caixa (pra manter saldo de conta consistente)
+            if "cash_balance" in base.columns:
+                base["cash_balance"] = base["cash_balance"].fillna(method="ffill").fillna(0.0)
+            else:
+                base["cash_balance"] = 0.0
 
+            if "invest_market_value" not in base.columns:
+                base["invest_market_value"] = 0.0
+            base["invest_market_value"] = base["invest_market_value"].fillna(0.0)
+
+            base["net_worth"] = base["cash_balance"] + base["invest_market_value"]
+
+            fignw = px.line(base, x="date", y="net_worth", markers=False)
+            st.plotly_chart(fignw, use_container_width=True)
+
+            # tabela opcional, mas dentro do expander
+            view = base.copy()
+            view["date"] = pd.to_datetime(view["date"]).dt.strftime("%Y-%m-%d")
+            st.dataframe(view.tail(30), use_container_width=True, hide_index=True)
+
+    # =========================
+    # 4) EXPORTAR
+    # =========================
     st.divider()
     st.markdown("#### Exportar")
     if df.empty:
@@ -207,8 +293,12 @@ with tab2:
         export_df = df.copy()
         export_df["date"] = export_df["date"].dt.strftime("%Y-%m-%d")
         csv = export_df.to_csv(index=False).encode("utf-8")
-        st.download_button("Baixar CSV (transações filtradas)", data=csv, file_name="transacoes_filtradas.csv", mime="text/csv")
-
+        st.download_button(
+            "Baixar CSV (transações filtradas)",
+            data=csv,
+            file_name="transacoes_filtradas.csv",
+            mime="text/csv"
+        )
 # ========== TAB 3: Importar CSV ==========
 with tab3:
     st.subheader("Importação (modelo genérico)")

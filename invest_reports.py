@@ -157,6 +157,8 @@ def portfolio_view(date_from=None, date_to=None):
     # garante preço numérico sempre
     pos["price"] = pd.to_numeric(pos.get("price", 0.0), errors="coerce").fillna(0.0)
 
+    
+
     # ===== Dados do ativo (nome/moeda) =====
     assets = df_assets()
     if not assets.empty and not pos.empty:
@@ -194,3 +196,65 @@ def portfolio_view(date_from=None, date_to=None):
         pos["income"] = pos["income"].fillna(0.0)
 
     return pos, tdf, inc
+def df_prices_upto(up_to_date: str) -> pd.DataFrame:
+    """
+    Retorna o último preço conhecido (<= up_to_date) por ativo.
+    up_to_date: 'YYYY-MM-DD'
+    """
+    conn = get_conn()
+    df = pd.read_sql_query("""
+        SELECT p.asset_id, p.date AS price_date, p.price
+        FROM prices p
+        JOIN (
+            SELECT asset_id, MAX(date) AS max_date
+            FROM prices
+            WHERE date <= ?
+            GROUP BY asset_id
+        ) m ON m.asset_id = p.asset_id AND m.max_date = p.date
+    """, conn, params=[up_to_date])
+    conn.close()
+    return df
+
+
+def investments_value_timeseries(date_from: str, date_to: str) -> pd.DataFrame:
+    """
+    Série diária do valor de mercado dos investimentos entre date_from e date_to.
+    Retorna colunas: date, invest_market_value
+    """
+    # trades do período (na prática, você precisa considerar posições anteriores também,
+    # mas para MVP vamos considerar tudo até date_to e filtrar por dia)
+    tdf = df_trades(None, date_to)
+    if tdf.empty:
+        # retorna datas com 0
+        dates = pd.date_range(date_from, date_to, freq="D")
+        return pd.DataFrame({"date": dates, "invest_market_value": 0.0})
+
+    # garante datetime
+    tdf = tdf.copy()
+    tdf["date"] = pd.to_datetime(tdf["date"])
+
+    dates = pd.date_range(date_from, date_to, freq="D")
+    out = []
+
+    for d in dates:
+        d_str = d.strftime("%Y-%m-%d")
+
+        # trades até o dia D
+        t_day = tdf[tdf["date"] <= d].copy()
+        pos = positions_avg_cost(t_day)
+        if pos.empty:
+            out.append({"date": d, "invest_market_value": 0.0})
+            continue
+
+        prices = df_prices_upto(d_str)
+        if not prices.empty:
+            pos = pos.merge(prices[["asset_id", "price"]], on="asset_id", how="left")
+        else:
+            pos["price"] = 0.0
+
+        pos["price"] = pd.to_numeric(pos["price"], errors="coerce").fillna(0.0)
+        pos["market_value"] = pos["qty"] * pos["price"]
+
+        out.append({"date": d, "invest_market_value": float(pos["market_value"].sum())})
+
+    return pd.DataFrame(out)

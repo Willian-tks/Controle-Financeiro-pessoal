@@ -76,3 +76,20 @@ def account_balance(df: pd.DataFrame):
     out = df.groupby("account")["amount"].sum().reset_index().rename(columns={"amount": "saldo"})
     out = out.sort_values("saldo", ascending=False)
     return out
+
+def cash_balance_timeseries(date_from=None, date_to=None) -> pd.DataFrame:
+    """
+    Série diária do saldo acumulado (caixa) baseado nas transações.
+    Retorna colunas: date, cash_balance
+    """
+    df = df_transactions(date_from, date_to)
+    if df.empty:
+        return pd.DataFrame(columns=["date", "cash_balance"])
+
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"]).dt.normalize()
+
+    daily = d.groupby("date")["amount"].sum().reset_index()
+    daily = daily.sort_values("date")
+    daily["cash_balance"] = daily["amount"].cumsum()
+    return daily[["date", "cash_balance"]]
