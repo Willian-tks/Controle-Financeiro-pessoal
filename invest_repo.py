@@ -1,8 +1,29 @@
 # invest_repo.py
 from db import get_conn
 
-ASSET_CLASSES = ["STOCK_FII", "CRYPTO", "FIXED_INCOME"]
-INCOME_TYPES = ["DIVIDEND", "JCP", "INTEREST", "COUPON"]
+ASSET_CLASSES = {
+    "Ações BR": "ACAO_BR",
+    "FIIs": "FII",
+    "ETFs BR": "ETF_BR",
+    "BDRs": "BDR",
+    "Stocks US": "STOCK_US",
+    "ETFs US": "ETF_US",
+    "Cripto": "CRYPTO",
+    "Renda Fixa": "RENDA_FIXA",
+    "Caixa": "CAIXA",
+    "Tesouro Direto": "TESOURO_DIRETO",
+    "Fundos": "FUNDOS",
+    "Coe": "COE",
+    "Outros": "OUTROS",
+}
+INCOME_TYPES = {
+    "Dividendos": "DIVIDEND",
+    "JCP": "JCP",
+    "Juros": "INTEREST",
+    "Cupom": "COUPON",
+    "Rend. RF": "RF_YIELD",
+    "Aluguel (FII)": "FII_RENT",
+}
 
 def list_assets():
     conn = get_conn()
@@ -150,3 +171,24 @@ def get_asset(asset_id: int):
     """, (int(asset_id),)).fetchone()
     conn.close()
     return row    
+
+#Esta linha foi criada para fazer deletes de lançamentos de teste durante a construção!!!!
+def clear_invest_movements():
+    conn = get_conn()
+    c1 = conn.execute("DELETE FROM trades").rowcount
+    c2 = conn.execute("DELETE FROM income_events").rowcount
+    c3 = conn.execute("DELETE FROM prices").rowcount
+    conn.commit()
+    conn.close()
+    return {"trades": c1, "income_events": c2, "prices": c3}
+
+def clear_assets():
+    """
+    Remove TODOS os ativos.
+    Requer que trades, income_events e prices já estejam vazios.
+    """
+    conn = get_conn()
+    cur = conn.execute("DELETE FROM assets")
+    conn.commit()
+    conn.close()
+    return cur.rowcount
