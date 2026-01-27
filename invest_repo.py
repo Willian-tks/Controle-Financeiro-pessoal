@@ -28,23 +28,49 @@ INCOME_TYPES = {
 def list_assets():
     conn = get_conn()
     rows = conn.execute("""
-        SELECT a.*, ac.name AS broker_account
+        SELECT
+            a.*,
+            ac.name AS broker_account,
+            sc.name AS source_account
         FROM assets a
         LEFT JOIN accounts ac ON ac.id = a.broker_account_id
+        LEFT JOIN accounts sc ON sc.id = a.source_account_id
         ORDER BY a.asset_class, a.symbol
     """).fetchall()
     conn.close()
     return rows
 
-def create_asset(symbol: str, name: str, asset_class: str, currency: str = "BRL",
-                 broker_account_id=None, issuer=None, rate_type=None, rate_value=None, maturity_date=None):
+def create_asset(
+    symbol: str,
+    name: str,
+    asset_class: str,
+    currency: str = "BRL",
+    broker_account_id=None,
+    source_account_id=None,
+    issuer=None,
+    rate_type=None,
+    rate_value=None,
+    maturity_date=None
+):
     conn = get_conn()
     conn.execute("""
         INSERT OR IGNORE INTO assets
-        (symbol, name, asset_class, currency, broker_account_id, issuer, rate_type, rate_value, maturity_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (symbol.strip().upper(), name.strip(), asset_class, currency,
-          broker_account_id, issuer, rate_type, rate_value, maturity_date))
+        (symbol, name, asset_class, currency,
+         broker_account_id, source_account_id,
+         issuer, rate_type, rate_value, maturity_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        symbol.strip().upper(),
+        name.strip(),
+        asset_class,
+        currency,
+        broker_account_id,
+        source_account_id,
+        issuer,
+        rate_type,
+        rate_value,
+        maturity_date
+    ))
     conn.commit()
     conn.close()
 

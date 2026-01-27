@@ -15,6 +15,29 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
+    # criação das tabelas (se já existir, ok)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT UNIQUE,
+            name TEXT,
+            asset_class TEXT,
+            currency TEXT,
+            broker_account_id INTEGER,
+            issuer TEXT,
+            rate_type TEXT,
+            rate_value REAL,
+            maturity_date TEXT
+        )
+    """)
+
+    # --- MIGRAÇÃO SEGURA: adiciona source_account_id se não existir ---
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(assets)").fetchall()]
+    if "source_account_id" not in cols:
+        conn.execute("ALTER TABLE assets ADD COLUMN source_account_id INTEGER")
+
+    
+
     # ===== FINANCEIRO =====
     cur.execute("""
     CREATE TABLE IF NOT EXISTS accounts (

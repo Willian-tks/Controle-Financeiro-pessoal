@@ -544,6 +544,18 @@ with tab4:
             issuer = st.text_input("Emissor (RF opcional)", placeholder="Banco X", key="asset_issuer")
         with c7:
             maturity_date = st.text_input("Vencimento (RF opcional)", placeholder="YYYY-MM-DD", key="asset_maturity")
+       
+        # contas que podem ser origem (não-corretora)
+        source_accounts = [r for r in accounts if r["type"] != "Corretora"]
+        source_map = {r["name"]: r["id"] for r in source_accounts}
+
+        src_name = st.selectbox(
+            "Conta origem (opcional) — para transferir automaticamente",
+            ["(não transferir)"] + list(source_map.keys()),
+            key="trade_src_acc",
+        )
+
+        source_account_id = None if src_name == "(não transferir)" else source_map[src_name]
 
         if st.button("Salvar ativo", type="primary", key="btn_save_asset"):
             if not symbol.strip() or not name.strip():
@@ -553,6 +565,7 @@ with tab4:
                     symbol=symbol.strip(),
                     name=name.strip(),
                     asset_class=asset_class,
+                    source_account_id=source_account_id,
                     currency=currency,
                     broker_account_id=None if broker == "(sem)" else broker_map[broker],
                     issuer=issuer.strip() if issuer.strip() else None,
