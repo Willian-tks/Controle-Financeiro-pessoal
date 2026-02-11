@@ -11,6 +11,7 @@ from utils import to_brl, normalize_import_df
 
 import invest_repo
 import invest_reports
+import invest_quotes
 
 
 # ----------------------------
@@ -33,13 +34,14 @@ def load_accounts_categories():
     categories_ = repo.list_categories() or []
 
     acc_map_ = {r["name"]: r["id"] for r in accounts_}
+    acc_type_map = {r["name"]: r["type"] for r in accounts_}
     cat_map_ = {r["name"]: r["id"] for r in categories_}
     cat_kind_map_ = {r["name"]: r["kind"] for r in categories_}
 
-    return accounts_, categories_, acc_map_, cat_map_, cat_kind_map_
+    return accounts_, categories_, acc_map_, acc_type_map, cat_map_, cat_kind_map_
 
 
-accounts, categories, acc_map, cat_map, cat_kind_map = load_accounts_categories()
+accounts, categories, acc_map,acc_type_map, cat_map, cat_kind_map = load_accounts_categories()
 
 
 # =========================================================
@@ -72,7 +74,7 @@ with cad_tab1:
         acc_names = [f'{r["id"]} - {r["name"]} ({r["type"]})' for r in accounts_list]
         acc_pick = st.selectbox("Selecione", acc_names, key="acc_pick")
 
-        acc_id = int(acc_pick.split(" - ")[0])
+        acc_id = int(acc_pick.split(" - ")[0])  
         acc_row = next(r for r in accounts_list if int(r["id"]) == acc_id)
 
         new_name = st.text_input("Editar nome", value=acc_row["name"], key="acc_edit_name")
@@ -218,13 +220,36 @@ with c4:
         st.sidebar.success("Base de investimentos zerada.")
         st.rerun()
 # Recarrega mapas (pois sidebar pode ter alterado)
-accounts, categories, acc_map, cat_map, cat_kind_map = load_accounts_categories()
+accounts, categories, acc_map, acc_type_map, cat_map, cat_kind_map = load_accounts_categories()
 
 
 # =========================================================
 # Tabs principais
 # =========================================================
-tab1, tab2, tab3, tab4 = st.tabs(["➕ Lançamentos", "📈 Dashboard", "📥 Importar CSV", "💼 Investimentos"])
+tab0, tab1, tab2, tab3, tab4 = st.tabs(["🏦 Contas","➕ Lançamentos", "📈 Dashboard", "📥 Importar CSV", "💼 Investimentos"])
+
+# ========== TAB 0: Contas (Saldos) ==========
+with tab0:
+    st.subheader("Saldos das contas")
+
+    df_all = reports.df_transactions()
+
+    ab = reports.account_balance(df_all)
+
+    if ab.empty:
+        st.info("Sem lançamentos ainda.")
+    else:
+        ab_show = ab.copy()
+        ab_show["saldo_brl"] = ab_show["saldo"].apply(to_brl)
+
+        st.dataframe(
+            ab_show[["account", "saldo_brl"]],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        total = float(ab_show["saldo"].sum())
+        st.metric("Saldo total (somando todas as contas)", to_brl(total))
 
 
 # =========================================================
@@ -239,7 +264,9 @@ with tab1:
     with col2:
         desc = st.text_input("Descrição", key="tx_desc")
     with col3:
-        amount_abs = st.number_input("Valor", min_value=0.0, value=0.0, step=10.0, format="%.2f", key="tx_amount")
+        amount_abs = st.number_input(
+            "Valor", min_value=0.0, value=0.0, step=10.0, format="%.2f", key="tx_amount"
+        )
     with col4:
         account_name = st.selectbox(
             "Conta",
@@ -259,35 +286,117 @@ with tab1:
     with col7:
         notes = st.text_input("Obs (opcional)", key="tx_notes")
 
+    # ---------- (A) Detecta o tipo da categoria selecionada ----------
+    kind = cat_kind_map.get(category_name) if category_name != "(sem)" else None
+
+    # ---------- (B) Se for Transferência, mostra a Conta Origem ----------
+    source_account_name = None
+    if kind == "Transferencia":
+        # garante que exista acc_type_map no app.py (mapa nome -> tipo)
+        # acc_type_map = {r["name"]: r["type"] for r in accounts}
+        non_broker_accounts = [n for n in acc_map.keys() if acc_type_map.get(n) != "Corretora"]
+
+        source_account_name = st.selectbox(
+            "Conta origem (Transferência)",
+            ["(selecione)"] + non_broker_accounts,
+            key="tx_source_account"
+        )
+
     if st.button("Salvar lançamento", type="primary", key="btn_save_tx"):
         if not acc_map:
             st.error("Cadastre uma conta antes.")
-        elif not desc.strip():
+            st.stop()
+
+        if not desc.strip():
             st.error("Informe a descrição.")
-        else:
-            account_id = acc_map.get(account_name)
-            category_id = None if category_name == "(sem)" else cat_map.get(category_name)
+            st.stop()
 
-            amount_signed = float(amount_abs)
-            kind = cat_kind_map.get(category_name) if category_name != "(sem)" else None
+        account_id = acc_map.get(account_name)  # DESTINO
+        category_id = None if category_name == "(sem)" else cat_map.get(category_name)
+        amount = float(amount_abs)
 
-            # Regra do sinal:
-            if kind == "Despesa":
-                amount_signed = -abs(amount_signed)
+        # -------------------------
+        # TRANSFERÊNCIA (2 lançamentos)
+        # -------------------------
+        if kind == "Transferencia":
+            if not source_account_name or source_account_name == "(selecione)":
+                st.error("Selecione a conta ORIGEM da transferência.")
+                st.stop()
+
+            if source_account_name == account_name:
+                st.error("Conta origem e destino não podem ser a mesma.")
+                st.stop()
+
+            # destino precisa ser corretora
+            if acc_type_map.get(account_name) != "Corretora":
+                st.error("Para Transferência, a conta DESTINO precisa ser do tipo Corretora.")
+                st.stop()
+
+            # origem não pode ser corretora
+            if acc_type_map.get(source_account_name) == "Corretora":
+                st.error("A conta ORIGEM não pode ser Corretora.")
+                st.stop()
+
+            source_account_id = acc_map[source_account_name]
+
+            # saldo da origem (somatório dos lançamentos dessa conta)
+            df_all = reports.df_transactions()
+            if df_all.empty:
+                source_balance = 0.0
             else:
-                amount_signed = abs(amount_signed)
+                source_balance = float(df_all[df_all["account"] == source_account_name]["amount"].sum())
 
+            if source_balance < amount:
+                st.error(
+                    f"Saldo insuficiente na conta origem ({to_brl(source_balance)}). "
+                    f"Precisa de {to_brl(amount)}."
+                )
+                st.stop()
+
+            # 1) débito na origem
             repo.insert_transaction(
                 date=date.strftime("%Y-%m-%d"),
-                description=desc.strip(),
-                amount=amount_signed,
+                description=f"TRANSF -> {account_name} | {desc.strip()}",
+                amount=-abs(amount),
+                account_id=source_account_id,
+                category_id=category_id,
+                method=method.strip() if method.strip() else None,
+                notes=notes.strip() if notes.strip() else None
+            )
+
+            # 2) crédito no destino (corretora)
+            repo.insert_transaction(
+                date=date.strftime("%Y-%m-%d"),
+                description=f"TRANSF <- {source_account_name} | {desc.strip()}",
+                amount=abs(amount),
                 account_id=account_id,
                 category_id=category_id,
                 method=method.strip() if method.strip() else None,
                 notes=notes.strip() if notes.strip() else None
             )
-            st.success("Lançamento salvo.")
+
+            st.success("Transferência registrada (origem debitada e corretora creditada).")
             st.rerun()
+
+        # -------------------------
+        # DESPESA / RECEITA / (sem)
+        # -------------------------
+        amount_signed = abs(amount)
+        if kind == "Despesa":
+            amount_signed = -abs(amount_signed)
+
+        repo.insert_transaction(
+            date=date.strftime("%Y-%m-%d"),
+            description=desc.strip(),
+            amount=amount_signed,
+            account_id=account_id,
+            category_id=category_id,
+            method=method.strip() if method.strip() else None,
+            notes=notes.strip() if notes.strip() else None
+        )
+
+        st.success("Lançamento salvo.")
+        st.rerun()
 
     st.divider()
     st.subheader("Lançamentos recentes")
@@ -299,6 +408,7 @@ with tab1:
         show = df_tx.sort_values("date", ascending=False).head(50).copy()
         show["date"] = show["date"].dt.strftime("%Y-%m-%d")
         show["amount_brl"] = show["amount"].apply(to_brl)
+
         st.dataframe(
             show[["id", "date", "description", "account", "category", "amount_brl"]],
             use_container_width=True,
@@ -518,11 +628,14 @@ with tab4:
 
     # dados para investimentos
     accounts_i = repo.list_accounts() or []
-    broker_accounts = [r for r in accounts_i if r["type"] == "Corretora"]
+    broker_accounts = [r for r in repo.list_accounts() if r["type"] == "Corretora"]
+    broker_cash = 0.0
+    for a in broker_accounts:
+        broker_cash += repo.account_balance_value(int(a["id"]))
     broker_map = {r["name"]: r["id"] for r in broker_accounts}
 
     assets = invest_repo.list_assets() or []
-    asset_label = {r["symbol"]: r["id"] for r in assets}
+    asset_label = {r["symbol"]: r["id"] for r in assets} 
 
     # ===== Ativos =====
     with subtabs[0]:
@@ -586,106 +699,165 @@ with tab4:
                 hide_index=True
             )
 
-    # ===== Operações =====
-    with subtabs[1]:
-        st.markdown("### Nova operação (BUY/SELL)")
+# ===== Operações =====
+with subtabs[1]:
+    st.markdown("### Nova operação (BUY/SELL)")
 
-        if not assets:
-            st.warning("Cadastre um ativo primeiro.")
-        else:
-            c1, c2, c3, c4 = st.columns([1.4, 1.0, 1.0, 1.0])
-            with c1:
-                sym = st.selectbox("Ativo", list(asset_label.keys()), key="trade_sym")
-            with c2:
-                trade_date = st.date_input("Data", key="trade_date")
-            with c3:
-                side = st.selectbox("Tipo", ["BUY", "SELL"], key="trade_side")
-            with c4:
-                qty = st.number_input("Quantidade", min_value=0.0, step=1.0, format="%.8f", key="trade_qty")
+    if not assets:
+        st.warning("Cadastre um ativo primeiro.")
+        st.stop()
 
-            c5, c6, c7 = st.columns([1.0, 1.0, 2.0])
-            with c5:
-                price = st.number_input("Preço unitário", min_value=0.0, step=0.01, format="%.8f", key="trade_price")
-            with c6:
-                fees = st.number_input("Taxas", min_value=0.0, step=0.01, format="%.2f", key="trade_fees")
-            with c7:
-                note = st.text_input("Obs", placeholder="corretagem, exchange, etc.", key="trade_note")
+    c1, c2, c3, c4 = st.columns([1.4, 1.0, 1.0, 1.0])
+    with c1:
+        sym = st.selectbox("Ativo", list(asset_label.keys()), key="trade_sym")
+    with c2:
+        trade_date = st.date_input("Data", key="trade_date")
+    with c3:
+        side = st.selectbox("Tipo", ["BUY", "SELL"], key="trade_side")
+    with c4:
+        qty = st.number_input("Quantidade", min_value=0.0, step=1.0, format="%.8f", key="trade_qty")
 
-            st.session_state.setdefault("last_trade_key", None)
+    c5, c6, c7 = st.columns([1.0, 1.0, 2.0])
+    with c5:
+        price = st.number_input("Preço unitário", min_value=0.0, step=0.01, format="%.8f", key="trade_price")
+    with c6:
+        fees = st.number_input("Taxas", min_value=0.0, step=0.01, format="%.2f", key="trade_fees")
+    with c7:
+        note = st.text_input("Obs", placeholder="corretagem, exchange, etc.", key="trade_note")
 
-            if st.button("Salvar operação", type="primary", key="btn_save_trade"):
-                if float(qty) <= 0 or float(price) <= 0:
-                    st.error("Quantidade e preço devem ser maiores que zero.")
-                    st.stop()
+    # anti-duplo clique
+    st.session_state.setdefault("last_trade_key", None)
 
-                note_norm = (note.strip() if note else "")
-                trade_key = (
-                    sym, side,
-                    round(float(qty), 8),
-                    round(float(price), 8),
-                    round(float(fees), 2),
-                    trade_date.strftime("%Y-%m-%d"),
-                    note_norm
+    if st.button("Salvar operação", type="primary", key="btn_save_trade"):
+        # validações
+        if float(qty) <= 0 or float(price) <= 0:
+            gross = float(qty) * float(price)
+            total_cost = gross + float(fees)
+            st.error("Quantidade e preço devem ser maiores que zero.")
+            st.stop()
+
+        note_norm = (note.strip() if note else "")
+        trade_key = (
+            sym, side,
+            round(float(qty), 8),
+            round(float(price), 8),
+            round(float(fees), 2),
+            trade_date.strftime("%Y-%m-%d"),
+            note_norm
+        )
+
+        # se for duplicado, bloqueia e para AQUI
+        if st.session_state["last_trade_key"] == trade_key:
+            st.warning("Operação já registrada (bloqueio anti-duplicação).")
+            st.stop()
+
+        # marca como último (tem que ser FORA do if de duplicidade)
+        st.session_state["last_trade_key"] = trade_key
+        
+        # calcula valor da operação
+        gross = float(qty) * float(price)
+        total_cost = gross + float(fees)
+
+        # pega dados do ativo
+        asset = invest_repo.get_asset(asset_label[sym])
+        broker_acc_id = asset["broker_account_id"] if asset and "broker_account_id" in asset.keys() else None
+        source_acc_id = asset["source_account_id"] if asset and "source_account_id" in asset.keys() else None
+        
+        # pega saldo da corretora
+        broker_cash = reports.account_balance_by_id(broker_acc_id)
+        
+        if side == "BUY":
+             if broker_cash < total_cost:
+                st.error(
+                    f"Saldo insuficiente na corretora.\n\n"
+                    f"Disponível: {to_brl(broker_cash)}\n"
+                    f"Necessário: {to_brl(total_cost)}"
                 )
+                st.stop()
+    
 
-                if st.session_state["last_trade_key"] == trade_key:
-                    st.warning("Operação já registrada (bloqueio anti-duplicação).")
-                    st.stop()
+        if not broker_acc_id:
+            st.error("Ativo sem conta corretora vinculada. Vá em Ativos e selecione a conta corretora do ativo.")
+            st.stop()
 
-                st.session_state["last_trade_key"] = trade_key
+        # categoria de transferência
+        if broker_acc_id:
+            cat_id = repo.ensure_category("Investimentos", "Transferencia")
 
-                invest_repo.insert_trade(
-                    asset_id=asset_label[sym],
-                    date=trade_date.strftime("%Y-%m-%d"),
-                    side=side,
-                    quantity=float(qty),
-                    price=float(price),
-                    fees=float(fees),
-                    taxes=0.0,
-                    note=note_norm if note_norm else None
-                )
-                st.success("Operação salva.")
+        # ===== 1) se BUY e tiver conta origem, faz aporte Banco -> Corretora (com validação de saldo) =====
+        if side == "BUY" and source_acc_id:
+            available = repo.account_balance_value(int(source_acc_id))
+            if available < need:
+                st.error(f"Saldo insuficiente na conta de origem. Disponível: {to_brl(available)} | Necessário: {to_brl(need)}")
+                st.stop()
 
-                asset = invest_repo.get_asset(asset_label[sym])
-                broker_acc_id = asset["broker_account_id"]
-
-                if broker_acc_id:
-                    cat_id = repo.ensure_category("Investimentos", "Transferencia")
-                    gross = float(qty) * float(price)
-
-                    if side == "BUY":
-                        cash = -(gross + float(fees))
-                        desc = f"INV BUY {sym}"
-                    else:
-                        cash = +(gross - float(fees))
-                        desc = f"INV SELL {sym}"
-
-                    repo.create_transaction(
-                        date=trade_date.strftime("%Y-%m-%d"),
-                        description=desc,
-                        amount=float(cash),
-                        category_id=cat_id,
-                        account_id=broker_acc_id,
-                        method="INV",
-                        notes=note_norm if note_norm else None
-                    )
-                else:
-                    st.warning("Ativo sem conta corretora vinculada. Cadastre em Ativos.")
-
-                st.rerun()
-
-        st.divider()
-        st.markdown("### Operações recentes")
-        trades = invest_repo.list_trades()
-        if trades:
-            df_trades = pd.DataFrame([dict(r) for r in trades]).head(50)
-            st.dataframe(
-                df_trades[["id", "date", "symbol", "asset_class", "side", "quantity", "price", "fees", "taxes", "note"]],
-                use_container_width=True,
-                hide_index=True
+            # saída do banco
+            repo.create_transaction(
+                date=trade_date.strftime("%Y-%m-%d"),
+                description=f"APORTE CORRETORA (para compra {sym})",
+                amount=-need,
+                category_id=cat_id,
+                account_id=int(source_acc_id),
+                method="INV",
+                notes=note_norm if note_norm else None,
             )
+
+            # entrada na corretora
+            repo.create_transaction(
+                date=trade_date.strftime("%Y-%m-%d"),
+                description=f"APORTE CORRETORA (para compra {sym})",
+                amount=+need,
+                category_id=cat_id,
+                account_id=int(broker_acc_id),
+                method="INV",
+                notes=note_norm if note_norm else None,
+            )
+
+        # ===== 2) movimento do trade dentro da conta corretora =====
+        if side == "BUY":
+            cash = -total_cost
+            desc_cash = f"INV BUY {sym}"
         else:
-            st.info("Sem operações ainda.")
+            cash = +(gross - float(fees))
+            desc = f"INV SELL {sym}"
+
+        repo.create_transaction(
+            date=trade_date.strftime("%Y-%m-%d"),
+            description=desc_cash,
+            amount=float(cash),
+            category_id=cat_id,
+            account_id=int(broker_acc_id),
+            method="INV",
+            notes=note_norm if note_norm else None,
+        )
+
+        # ===== 3) registra o trade na tabela de investimentos =====
+        invest_repo.insert_trade(
+            asset_id=asset_label[sym],
+            date=trade_date.strftime("%Y-%m-%d"),
+            side=side,
+            quantity=float(qty),
+            price=float(price),
+            fees=float(fees),
+            taxes=0.0,
+            note=note_norm if note_norm else None
+        )
+
+        st.success("Operação salva.")
+        st.rerun()
+
+    st.divider()
+    st.markdown("### Operações recentes")
+    trades = invest_repo.list_trades()
+    if trades:
+        df_trades = pd.DataFrame([dict(r) for r in trades]).head(50)
+        st.dataframe(
+            df_trades[["id", "date", "symbol", "asset_class", "side", "quantity", "price", "fees", "taxes", "note"]],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Sem operações ainda.")
 
     # ===== Proventos =====
     with subtabs[2]:
@@ -765,6 +937,33 @@ with tab4:
 
     # ===== Cotações =====
     with subtabs[3]:
+        st.markdown("### 📡 Cotações automáticas")
+
+        if st.button("Atualizar cotações agora", type="primary", key="btn_update_quotes"):
+            assets_rows = invest_repo.list_assets()
+            assets_list = [dict(r) for r in assets_rows]  # garante dict (evita sqlite3.Row dar erro)
+
+            rep = invest_quotes.update_all_prices(assets_list)
+
+            # grava no banco
+            date_str = invest_quotes.today_str()
+            saved = 0
+            skipped = 0
+
+            for r in rep:
+                if r["ok"]:
+                    asset_id = next(a["id"] for a in assets_list if a["symbol"] == r["symbol"])
+                    invest_repo.upsert_price(asset_id, date_str, float(r["price"]), "auto:yfinance")
+                    saved += 1
+                else:
+                    skipped += 1
+
+            st.success(f"Cotações atualizadas: {saved} salvas | {skipped} sem cotação.")
+            st.dataframe(rep, use_container_width=True, hide_index=True)
+            st.rerun()
+
+        st.divider()
+
         st.markdown("### Cadastrar cotação manual")
         if not assets:
             st.warning("Cadastre um ativo primeiro.")
@@ -791,45 +990,85 @@ with tab4:
         cls_filter = st.selectbox("Filtrar por classe", classes, index=0, key="pf_class_filter")
 
         pos, tdf, inc = invest_reports.portfolio_view()
-        if pos.empty:
-            st.info("Sem posições ainda. Cadastre um ativo e registre um BUY para começar.")
-            st.stop()
 
-        if cls_filter != "(todas)":
-            pos = pos[pos["asset_class"] == cls_filter].copy()
+        # Sempre calcula saldo corretora (mesmo sem posições)
+        # Regra simples: soma saldo de todas as contas do tipo "Corretora"
+        all_tx = reports.df_transactions()  # pega tudo (sem filtro de data)
+        broker_names = [a["name"] for a in accounts if a["type"] == "Corretora"]
 
-        for col in ["income", "realized_pnl", "unrealized_pnl", "market_value", "cost_basis", "price"]:
-            if col not in pos.columns:
-                pos[col] = 0.0
-        if "price_date" not in pos.columns:
-            pos["price_date"] = None
-        if "name" not in pos.columns:
-            pos["name"] = ""
-        if "currency" not in pos.columns:
-            pos["currency"] = "BRL"
+        if all_tx.empty or not broker_names:
+            broker_balance = 0.0
+        else:
+            broker_balance = float(all_tx[all_tx["account"].isin(broker_names)]["amount"].sum())
 
-        pos["total_return"] = pos["unrealized_pnl"].fillna(0.0) + pos["realized_pnl"].fillna(0.0) + pos["income"].fillna(0.0)
-        pos["return_pct"] = pos.apply(
-            lambda r: (r["total_return"] / r["cost_basis"] * 100) if float(r["cost_basis"] or 0) > 0 else 0.0,
-            axis=1
-        )
+        # Se quiser usar só a corretora vinculada aos ativos (mais preciso),
+        # dá pra refinar depois. Por enquanto isso já resolve o "Saldo Corretora".
 
-        total_invested = float(pos["cost_basis"].fillna(0.0).sum())
-        total_mkt = float(pos["market_value"].fillna(0.0).sum())
-        total_income = float(pos["income"].fillna(0.0).sum())
-        total_realized = float(pos["realized_pnl"].fillna(0.0).sum())
-        total_unreal = float(pos["unrealized_pnl"].fillna(0.0).sum())
-        total_ret = float(pos["total_return"].fillna(0.0).sum())
-        total_ret_pct = (total_ret / total_invested * 100) if total_invested > 0 else 0.0
+        # ===== MODO VAZIO: cria colunas esperadas e totals zerados =====
+        is_empty_portfolio = pos.empty
 
-        k1, k2, k3, k4, k5 = st.columns(5)
+        if is_empty_portfolio:
+            # cria um DF vazio com colunas mínimas, pra não quebrar o resto
+            pos = pd.DataFrame(columns=[
+                "asset_id","symbol","name","asset_class","currency",
+                "qty","avg_cost","cost_basis","price","price_date",
+                "market_value","unrealized_pnl","realized_pnl","income"
+            ])
+
+            total_invested = 0.0
+            total_mkt = 0.0
+            total_income = 0.0
+            total_realized = 0.0
+            total_unreal = 0.0
+            total_ret = 0.0
+            total_ret_pct = 0.0
+        else:
+            # garante colunas esperadas
+            for col in ["income", "realized_pnl", "unrealized_pnl", "market_value", "cost_basis", "price"]:
+                if col not in pos.columns:
+                    pos[col] = 0.0
+            if "price_date" not in pos.columns:
+                pos["price_date"] = None
+            if "name" not in pos.columns:
+                pos["name"] = ""
+            if "currency" not in pos.columns:
+                pos["currency"] = "BRL"
+
+            # retorno total e %
+            pos["total_return"] = (
+                pos["unrealized_pnl"].fillna(0.0)
+                + pos["realized_pnl"].fillna(0.0)
+                + pos["income"].fillna(0.0)
+            )
+            pos["return_pct"] = pos.apply(
+                lambda r: (r["total_return"] / r["cost_basis"] * 100) if float(r["cost_basis"] or 0) > 0 else 0.0,
+                axis=1
+            )
+
+            total_invested = float(pos["cost_basis"].fillna(0.0).sum())
+            total_mkt = float(pos["market_value"].fillna(0.0).sum())
+            total_income = float(pos["income"].fillna(0.0).sum())
+            total_realized = float(pos["realized_pnl"].fillna(0.0).sum())
+            total_unreal = float(pos["unrealized_pnl"].fillna(0.0).sum())
+            total_ret = float(pos["total_return"].fillna(0.0).sum())
+            total_ret_pct = (total_ret / total_invested * 100) if total_invested > 0 else 0.0
+
+        # ===== KPIs topo (sempre aparecem) =====
+        k1, k2, kSaldo, k3, k4, k5 = st.columns(6)
         k1.metric("Investido", to_brl(total_invested))
         k2.metric("Valor de Mercado", to_brl(total_mkt))
+        kSaldo.metric("Saldo Corretora", to_brl(broker_balance))
         k3.metric("Proventos", to_brl(total_income))
         k4.metric("Retorno Total", to_brl(total_ret), f"{total_ret_pct:.2f}%")
         k5.metric("P&L Não Realizado", to_brl(total_unreal))
 
         st.divider()
+
+        if is_empty_portfolio:
+            st.info("Ainda não há posições. Cadastre um ativo e registre uma operação (BUY) para começar.")
+            st.caption("Mesmo assim, o Saldo Corretora aparece com base nos lançamentos das contas do tipo Corretora.")
+            # aqui você pode parar o resto da renderização da tabela/gráficos:
+            st.stop()
 
         chart_df = pos.copy()
         chart_df["market_value_abs"] = chart_df["market_value"].fillna(0.0)

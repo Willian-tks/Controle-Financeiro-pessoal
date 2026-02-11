@@ -219,3 +219,12 @@ def clear_transactions():
     conn.commit()
     conn.close()
     return cur.rowcount
+
+def account_balance_value(account_id: int) -> float:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS bal FROM transactions WHERE account_id=?",
+        (int(account_id),)
+    ).fetchone()
+    conn.close()
+    return float(row["bal"] if row else 0.0)

@@ -2,16 +2,21 @@
 import pandas as pd
 from db import get_conn
 
-def df_transactions(date_from=None, date_to=None):
+def df_transactions(date_from: str | None = None, date_to: str | None = None):
     conn = get_conn()
     q = """
         SELECT
-            t.id, t.date, t.description, t.amount,
-            a.name AS account,
-            c.name AS category,
-            COALESCE(c.kind, 'Sem Categoria') AS category_kind
+            t.id,
+            t.date,
+            t.description,
+            t.amount,
+            ac.name AS account,
+            c.name  AS category,
+            c.kind  AS category_kind,
+            t.method,
+            t.notes
         FROM transactions t
-        JOIN accounts a ON a.id = t.account_id
+        JOIN accounts ac ON ac.id = t.account_id
         LEFT JOIN categories c ON c.id = t.category_id
         WHERE 1=1
     """
@@ -22,52 +27,56 @@ def df_transactions(date_from=None, date_to=None):
     if date_to:
         q += " AND t.date <= ?"
         params.append(date_to)
-    q += " ORDER BY t.date ASC, t.id ASC"
 
-    df = pd.read_sql_query(q, conn, params=params)
+    q += " ORDER BY t.date ASC, t.id ASC"
+    rows = conn.execute(q, params).fetchall()
     conn.close()
 
+    df = pd.DataFrame([dict(r) for r in rows])
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
-        df["month"] = df["date"].dt.to_period("M").astype(str)
     return df
 
-def kpis(df: pd.DataFrame):
-    if df.empty:
-        return dict(receitas=0.0, despesas=0.0, saldo=0.0)
+def kpis(df: pd.DataFrame) -> dict:
+    if df is None or df.empty:
+        return {"receitas": 0.0, "despesas": 0.0, "saldo": 0.0}
 
-    receitas = df.loc[df["amount"] > 0, "amount"].sum()
-    despesas = df.loc[df["amount"] < 0, "amount"].sum()  # negativo
-    saldo = df["amount"].sum()
-    return dict(receitas=float(receitas), despesas=float(despesas), saldo=float(saldo))
+    # Transferência não é Receita nem Despesa
+    base = df[df["category_kind"].fillna("") != "Transferencia"].copy()
 
-def monthly_summary(df: pd.DataFrame):
-    if df.empty:
-        return pd.DataFrame(columns=["month", "receitas", "despesas", "saldo"])
+    receitas = float(base.loc[base["amount"] > 0, "amount"].sum())
+    despesas = float(base.loc[base["amount"] < 0, "amount"].sum())  # negativo
+    saldo = receitas + despesas
 
-    g = df.groupby("month")["amount"].sum().reset_index().rename(columns={"amount": "saldo"})
-    receitas = df[df["amount"] > 0].groupby("month")["amount"].sum().reset_index().rename(columns={"amount": "receitas"})
-    despesas = df[df["amount"] < 0].groupby("month")["amount"].sum().reset_index().rename(columns={"amount": "despesas"})
+    return {"receitas": receitas, "despesas": despesas, "saldo": saldo}
 
-    out = g.merge(receitas, on="month", how="left").merge(despesas, on="month", how="left")
-    out["receitas"] = out["receitas"].fillna(0.0)
-    out["despesas"] = out["despesas"].fillna(0.0)  # negativo
-    out = out.sort_values("month")
-    return out
+def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
 
-def category_expenses(df: pd.DataFrame):
-    if df.empty:
-        return pd.DataFrame(columns=["category", "valor"])
+    base = df[df["category_kind"].fillna("") != "Transferencia"].copy()
 
-    d = df[df["amount"] < 0].copy()
+    base["month"] = base["date"].dt.to_period("M").astype(str)
+
+    g = base.groupby("month", as_index=False).agg(
+        receitas=("amount", lambda s: float(s[s > 0].sum())),
+        despesas=("amount", lambda s: float(s[s < 0].sum())),
+    )
+    g["saldo"] = g["receitas"] + g["despesas"]
+    return g
+
+def category_expenses(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    d = df[df["category_kind"] == "Despesa"].copy()
     if d.empty:
-        return pd.DataFrame(columns=["category", "valor"])
+        return pd.DataFrame()
 
-    out = d.groupby("category")["amount"].sum().reset_index()
+    out = d.groupby("category", as_index=False)["amount"].sum()
     out["valor"] = out["amount"].abs()
-    out = out.drop(columns=["amount"]).sort_values("valor", ascending=False)
-    out["category"] = out["category"].fillna("Sem Categoria")
-    return out
+    out = out.sort_values("valor", ascending=False)
+    return out[["category", "valor"]]
 
 def account_balance(df: pd.DataFrame):
     if df.empty:
@@ -93,3 +102,12 @@ def cash_balance_timeseries(date_from=None, date_to=None) -> pd.DataFrame:
     daily = daily.sort_values("date")
     daily["cash_balance"] = daily["amount"].cumsum()
     return daily[["date", "cash_balance"]]
+def account_balance_by_id(account_id: int) -> float:
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT COALESCE(SUM(amount), 0)
+        FROM transactions
+        WHERE account_id = ?
+    """, (account_id,)).fetchone()
+    conn.close()
+    return float(row[0] or 0.0)
