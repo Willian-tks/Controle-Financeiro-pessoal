@@ -258,3 +258,48 @@ def investments_value_timeseries(date_from: str, date_to: str) -> pd.DataFrame:
         out.append({"date": d, "invest_market_value": float(pos["market_value"].sum())})
 
     return pd.DataFrame(out)
+
+# invest_reports.py
+def fetch_last_price(asset: dict) -> float | None:
+    def as_dict(x):
+        return x if isinstance(x, dict) else dict(x)
+
+    """
+    Retorna o último preço do ativo ou None se não conseguir.
+    """
+    asset = as_dict(asset)
+    symbol = (asset.get("symbol") or "").strip().upper()
+    aclass = (asset.get("asset_class") or "").strip().upper()
+
+    # ===== AÇÕES/FIIs (B3) =====
+    if aclass in ("AÇÕES BR", "ACOES BR", "STOCK_FII", "STOCK", "FII"):
+        # yfinance usa .SA para B3
+        ticker = symbol if symbol.endswith(".SA") else f"{symbol}.SA"
+
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        h = t.history(period="1d")
+
+        if h is None or h.empty:
+            return None
+
+        px = float(h["Close"].iloc[-1])
+        return px if px > 0 else None
+
+    # ===== CRIPTO =====
+    if aclass == "CRYPTO":
+        # Ex: BTC -> BTC-USD (você pode melhorar depois p/ BRL)
+        ticker = symbol if "-" in symbol else f"{symbol}-USD"
+
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        h = t.history(period="1d")
+
+        if h is None or h.empty:
+            return None
+
+        px = float(h["Close"].iloc[-1])
+        return px if px > 0 else None
+
+    # ===== RENDA FIXA (sem fonte automática por enquanto) =====
+    return None 

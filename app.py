@@ -1,5 +1,15 @@
 # app.py
+
 import os
+import certifi
+
+# força certificados SSL (resolve curl(77))
+ca = certifi.where()
+os.environ["SSL_CERT_FILE"] = ca
+os.environ["REQUESTS_CA_BUNDLE"] = ca
+os.environ["CURL_CA_BUNDLE"] = ca  # <<< ESTE é o que resolve o curl(77) na maioria dos casos
+os.environ["BRAPI_TOKEN"] = "u7tTrWyF5sCyR5gtLkQqJd"
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -8,10 +18,88 @@ from db import init_db, DB_PATH
 import repo
 import reports
 from utils import to_brl, normalize_import_df
+from utils import card, end_card, badge
 
 import invest_repo
 import invest_reports
 import invest_quotes
+
+def inject_corporate_css():
+    st.markdown("""
+    <style>
+      /* Layout geral */
+      .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1180px; }
+      section[data-testid="stSidebar"] { border-right: 1px solid #e5e7eb; }
+      hr { margin: 1.2rem 0; }
+
+      /* Tipografia */
+      h1, h2, h3 { letter-spacing: -0.02em; }
+      h1 { font-weight: 750; }
+      h2, h3 { font-weight: 700; }
+      p, li, label, div { color: #111827; }
+
+      /* Cards */
+      .card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 16px;
+        padding: 16px 18px;
+        box-shadow: 0 10px 26px rgba(17,24,39,0.06);
+        margin-bottom: 14px;
+      }
+      .card-title {
+        font-weight: 700;
+        margin: 0 0 8px 0;
+      }
+      .muted { color: #6b7280; }
+
+      /* Badges */
+      .badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 650;
+        border: 1px solid #e5e7eb;
+        background: #f9fafb;
+        color: #111827;
+      }
+      .badge-ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+      .badge-warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+      .badge-bad { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+
+      /* Botões */
+      div.stButton > button {
+        border-radius: 12px !important;
+        padding: 0.55rem 1rem !important;
+        font-weight: 650 !important;
+        border: 1px solid #d1d5db !important;
+      }
+
+      /* Inputs */
+      div[data-baseweb="input"] input, textarea {
+        border-radius: 12px !important;
+      }
+      div[data-baseweb="select"] > div {
+        border-radius: 12px !important;
+      }
+
+      /* DataFrame */
+      div[data-testid="stDataFrame"] {
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid #e5e7eb;
+      }
+
+      /* Alertas (deixa mais “corporativo”) */
+      div[data-testid="stAlert"] {
+        border-radius: 14px;
+        border: 1px solid #e5e7eb;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+inject_corporate_css()
 
 
 # ----------------------------
@@ -760,6 +848,8 @@ with subtabs[1]:
 
         # pega dados do ativo
         asset = invest_repo.get_asset(asset_label[sym])
+        st.write("DEBUG asset:", asset)
+        asset = dict(asset)  # força virar dict
         broker_acc_id = asset["broker_account_id"] if asset and "broker_account_id" in asset.keys() else None
         source_acc_id = asset["source_account_id"] if asset and "source_account_id" in asset.keys() else None
         
@@ -785,24 +875,42 @@ with subtabs[1]:
             cat_id = repo.ensure_category("Investimentos", "Transferencia")
 
         # ===== 1) se BUY e tiver conta origem, faz aporte Banco -> Corretora (com validação de saldo) =====
-        if side == "BUY" and source_acc_id:
-            available = repo.account_balance_value(int(source_acc_id))
-            if available < need:
-                st.error(f"Saldo insuficiente na conta de origem. Disponível: {to_brl(available)} | Necessário: {to_brl(need)}")
+            if side == "BUY" and source_acc_id is not None:
+
+                # custo total da compra (o "need" que estava dando warning)
+                gross = float(qty) * float(price)
+                total_cost = gross + float(fees)
+
+                # pega dados do ativo
+                asset = invest_repo.get_asset(asset_label[sym])
+
+                broker_cash = reports.account_balance_by_id(broker_acc_id)
+
+                available = broker_cash          # <<< ESTA LINHA É O CONSERTO
+
+                if side == "BUY":
+                    if available < total_cost:
+                        st.error(
+                            f"Saldo insuficiente na corretora.\n\n"
+                            f"Disponível: {to_brl(available)}\n"
+                            f"Necessário: {to_brl(total_cost)}"
+                )
                 st.stop()
 
-            # saída do banco
-            repo.create_transaction(
-                date=trade_date.strftime("%Y-%m-%d"),
-                description=f"APORTE CORRETORA (para compra {sym})",
-                amount=-need,
-                category_id=cat_id,
-                account_id=int(source_acc_id),
-                method="INV",
-                notes=note_norm if note_norm else None,
-            )
-
-            # entrada na corretora
+            # saída do banco (origem)
+                repo.create_transaction(
+                    date=trade_date.strftime("%Y-%m-%d"),
+                    description=f"APORTE CORRETORA (para compra {sym})",
+                    amount=-need,
+                    category_id=cat_id,
+                    account_id=int(source_acc_id),
+                    method="INV",
+                    notes=note_norm if note_norm else None,
+                )
+            
+            
+            # entrada na corretora (destino)
+            need = total_cost
             repo.create_transaction(
                 date=trade_date.strftime("%Y-%m-%d"),
                 description=f"APORTE CORRETORA (para compra {sym})",
@@ -935,34 +1043,49 @@ with subtabs[1]:
         else:
             st.info("Sem proventos ainda.")
 
+   # ===== Cotações =====
     # ===== Cotações =====
-    with subtabs[3]:
-        st.markdown("### 📡 Cotações automáticas")
+        with subtabs[3]:
+            st.markdown("### 📡 Cotações automáticas")
 
-        if st.button("Atualizar cotações agora", type="primary", key="btn_update_quotes"):
-            assets_rows = invest_repo.list_assets()
-            assets_list = [dict(r) for r in assets_rows]  # garante dict (evita sqlite3.Row dar erro)
+            if st.button("Atualizar cotação agora", key="btn_update_quotes"):
+                try:
+                    assets = invest_repo.list_assets()
+                    report = invest_quotes.update_all_prices(assets)
 
-            rep = invest_quotes.update_all_prices(assets_list)
+                    saved = 0
+                    for r in report:
+                        if r.get("ok"):
+                            invest_repo.upsert_price(
+                                asset_id=int(r["asset_id"]),
+                                date=str(r["px_date"]),          # YYYY-MM-DD
+                                price=float(r["price"]),
+                                source=r.get("src") or "brapi",
+                            )
+                            saved += 1
 
-            # grava no banco
-            date_str = invest_quotes.today_str()
-            saved = 0
-            skipped = 0
+                    st.success(f"Cotações salvas: {saved}/{len(report)}")
+                    st.dataframe(pd.DataFrame(report), use_container_width=True)
 
-            for r in rep:
-                if r["ok"]:
-                    asset_id = next(a["id"] for a in assets_list if a["symbol"] == r["symbol"])
-                    invest_repo.upsert_price(asset_id, date_str, float(r["price"]), "auto:yfinance")
-                    saved += 1
-                else:
-                    skipped += 1
+                except Exception as e:
+                    st.error(f"Erro ao atualizar cotação: {e}")
 
-            st.success(f"Cotações atualizadas: {saved} salvas | {skipped} sem cotação.")
-            st.dataframe(rep, use_container_width=True, hide_index=True)
-            st.rerun()
+            st.divider()
 
-        st.divider()
+        # =============================
+        # Mostrar última cotação salva
+        # =============================
+
+        last = invest_repo.get_last_price_by_symbol(symbol)
+
+        if last:
+            last = dict(last)  # sqlite Row → dict
+            st.info(
+                f"Última cotação salva: {last['symbol']} = "
+                f"{to_brl(last['price'])} em {last['date']} ({last.get('source','')})"
+            )
+        else:
+            st.warning("Ainda não existe cotação salva para este ativo.")
 
         st.markdown("### Cadastrar cotação manual")
         if not assets:
@@ -1074,21 +1197,21 @@ with subtabs[1]:
         chart_df["market_value_abs"] = chart_df["market_value"].fillna(0.0)
         chart_df = chart_df[chart_df["market_value_abs"] > 0].sort_values("market_value_abs", ascending=False)
 
-        left, right = st.columns([1.2, 1.0])
-        with left:
-            st.markdown("#### 🧾 Posições")
-            view = pos.copy()
-            view["price_date"] = view["price_date"].fillna("").astype(str)
+        #left, right = st.columns([1.2, 1.0])
+       # with left:
+        st.markdown("#### 🧾 Posições")
+        view = pos.copy()
+        view["price_date"] = view["price_date"].fillna("").astype(str)
 
-            view["cost_basis_fmt"] = view["cost_basis"].apply(to_brl)
-            view["market_value_fmt"] = view["market_value"].apply(to_brl)
-            view["unreal_fmt"] = view["unrealized_pnl"].apply(to_brl)
-            view["realized_fmt"] = view["realized_pnl"].apply(to_brl)
-            view["income_fmt"] = view["income"].apply(to_brl)
-            view["total_return_fmt"] = view["total_return"].apply(to_brl)
-            view["return_pct_fmt"] = view["return_pct"].apply(lambda x: f"{float(x):.2f}%")
+        view["cost_basis_fmt"] = view["cost_basis"].apply(to_brl)
+        view["market_value_fmt"] = view["market_value"].apply(to_brl)
+        view["unreal_fmt"] = view["unrealized_pnl"].apply(to_brl)
+        view["realized_fmt"] = view["realized_pnl"].apply(to_brl)
+        view["income_fmt"] = view["income"].apply(to_brl)
+        view["total_return_fmt"] = view["total_return"].apply(to_brl)
+        view["return_pct_fmt"] = view["return_pct"].apply(lambda x: f"{float(x):.2f}%")
 
-            cols = [
+        cols = [
                 "symbol", "name", "asset_class",
                 "qty", "avg_cost",
                 "price_date", "price",
@@ -1097,7 +1220,7 @@ with subtabs[1]:
                 "total_return_fmt", "return_pct_fmt"
             ]
 
-            rename = {
+        rename = {
                 "symbol": "Ativo",
                 "name": "Nome",
                 "asset_class": "Classe",
@@ -1114,24 +1237,24 @@ with subtabs[1]:
                 "return_pct_fmt": "% Retorno",
             }
 
-            table = view[cols].rename(columns=rename).sort_values(["Classe", "Ativo"])
-            st.dataframe(table, use_container_width=True, hide_index=True)
+        table = view[cols].rename(columns=rename).sort_values(["Classe", "Ativo"])
+        st.dataframe(table, use_container_width=True, hide_index=True)
 
-        with right:
-            st.markdown("#### 🥧 Distribuição (Valor de Mercado)")
-            if chart_df.empty:
+        #with right:
+        st.markdown("#### 🥧 Distribuição (Valor de Mercado)")
+        if chart_df.empty:
                 st.info("Sem valores de mercado (adicione preços).")
-            else:
+        else:
                 fig = px.pie(chart_df, names="symbol", values="market_value_abs")
                 st.plotly_chart(fig, use_container_width=True)
 
-            st.divider()
-            st.markdown("#### 🔎 Alertas rápidos")
-            missing = pos[pos["price"].fillna(0.0) <= 0]
-            if not missing.empty:
+        st.divider()
+        st.markdown("#### 🔎 Alertas rápidos")
+        missing = pos[pos["price"].fillna(0.0) <= 0]
+        if not missing.empty:
                 st.warning("Alguns ativos estão sem preço. Vá em **Cotações** e registre o preço manual.")
                 st.write(", ".join(missing["symbol"].tolist()))
-            else:
+        else:
                 st.success("Todos os ativos possuem preço registrado.")
 
         st.divider()

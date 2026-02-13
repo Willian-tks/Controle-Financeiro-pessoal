@@ -1,5 +1,7 @@
 # invest_repo.py
+import sqlite3
 from db import get_conn
+from db import DB_PATH
 
 ASSET_CLASSES = {
     "Ações BR": "ACAO_BR",
@@ -218,3 +220,87 @@ def clear_assets():
     conn.commit()
     conn.close()
     return cur.rowcount
+
+def insert_price(asset_id: int, date: str, price: float, source: str = "yahoo"):
+    """
+    Salva (upsert) a cotação do ativo no dia.
+    """
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO asset_prices (asset_id, date, price, source)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(asset_id, date, source)
+        DO UPDATE SET price = excluded.price
+        """,
+        (int(asset_id), str(date), float(price), str(source)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_last_price(asset_id: int):
+    """
+    Retorna a última cotação salva do ativo (row) ou None.
+    """
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT asset_id, date, price, source
+        FROM asset_prices
+        WHERE asset_id = ?
+        ORDER BY date DESC, id DESC
+        LIMIT 1
+        """,
+        (int(asset_id),),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_last_price_by_symbol(symbol: str):
+    """
+    Útil pro UI: busca a última cotação pelo symbol.
+    """
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT p.asset_id, p.date, p.price, p.source, a.symbol
+        FROM asset_prices p
+        JOIN assets a ON a.id = p.asset_id
+        WHERE UPPER(a.symbol) = UPPER(?)
+        ORDER BY p.date DESC, p.id DESC
+        LIMIT 1
+        """,
+        (symbol.strip(),),
+    ).fetchone()
+    conn.close()
+    return row
+def _conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def upsert_quote(asset_id: int, px_date: str, price: float, src: str | None = None) -> None:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO invest_quotes (asset_id, px_date, price, src)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(asset_id, px_date)
+        DO UPDATE SET price=excluded.price, src=excluded.src
+    """, (asset_id, px_date, float(price), src))
+    conn.commit()
+    conn.close()
+
+def get_last_quote(asset_id: int):
+    conn = _conn()
+    row = conn.execute("""
+        SELECT px_date, price, src
+        FROM invest_quotes
+        WHERE asset_id = ?
+        ORDER BY px_date DESC
+        LIMIT 1
+    """, (asset_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
