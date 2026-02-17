@@ -304,3 +304,57 @@ def get_last_quote(asset_id: int):
     """, (asset_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+def delete_asset(asset_id: int) -> tuple[bool, str]:
+    from db import get_conn
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+
+        # verifica se há operações
+        cur.execute("SELECT COUNT(*) FROM trades WHERE asset_id = ?", (asset_id,))
+        trades_count = cur.fetchone()[0]
+
+        # verifica se há cotações
+        cur.execute("SELECT COUNT(*) FROM quotes WHERE asset_id = ?", (asset_id,))
+        quotes_count = cur.fetchone()[0]
+
+        if trades_count > 0 or quotes_count > 0:
+            return False, "Ativo possui operações ou cotações registradas."
+
+        cur.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+        conn.commit()
+
+    return True, "Ativo excluído com sucesso."
+
+def update_asset(asset_id: int, symbol: str, name: str, asset_class: str,
+                 currency: str, broker_account_id: int | None):
+
+    from db import get_conn
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            UPDATE assets
+            SET symbol = ?, name = ?, asset_class = ?, currency = ?, broker_account_id = ?
+            WHERE id = ?
+        """, (symbol, name, asset_class, currency, broker_account_id, asset_id))
+
+        conn.commit()
+
+def get_asset_by_id(asset_id: int):
+    from db import get_conn
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT *
+            FROM assets
+            WHERE id = ?
+            """,
+            (asset_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None

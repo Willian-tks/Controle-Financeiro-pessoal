@@ -12,6 +12,7 @@ os.environ["BRAPI_TOKEN"] = "u7tTrWyF5sCyR5gtLkQqJd"
 
 import streamlit as st
 import pandas as pd
+import sqlite3
 import plotly.express as px
 
 from db import init_db, DB_PATH
@@ -781,11 +782,53 @@ with tab4:
             st.info("Nenhum ativo cadastrado ainda.")
         else:
             df_assets = pd.DataFrame([dict(r) for r in assets])
-            st.dataframe(
-                df_assets[["id", "symbol", "name", "asset_class", "currency", "broker_account"]],
-                use_container_width=True,
-                hide_index=True
-            )
+            assets = invest_repo.list_assets()
+
+        for a in assets:
+            if isinstance(a, sqlite3.Row):
+                a = dict(a)
+
+            col1, col2, col3, col4 = st.columns([3,3,2,1])
+
+            col1.write(a["symbol"])
+            col2.write(a["name"])
+            col3.write(a["asset_class"])
+
+            with col4:
+                if st.button("✏️", key=f"edit_{a['id']}"):
+                    st.session_state["edit_asset_id"] = a["id"]
+
+                if st.button("🗑", key=f"del_{a['id']}"):
+                    ok, msg = invest_repo.delete_asset(a["id"])
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.warning(msg)
+if "edit_asset_id" in st.session_state:
+    asset = invest_repo.get_asset_by_id(st.session_state["edit_asset_id"])
+    asset = dict(asset)
+
+    st.markdown("### ✏️ Editar ativo")
+
+    symbol = st.text_input("Symbol", value=asset["symbol"])
+    name = st.text_input("Nome", value=asset["name"])
+    asset_class = st.text_input("Classe", value=asset["asset_class"])
+    currency = st.text_input("Moeda", value=asset["currency"])
+
+    if st.button("Salvar alterações"):
+        invest_repo.update_asset(
+            asset_id=asset["id"],
+            symbol=symbol,
+            name=name,
+            asset_class=asset_class,
+            currency=currency,
+            broker_account_id=asset.get("broker_account_id")
+        )
+
+        st.success("Ativo atualizado com sucesso.")
+        del st.session_state["edit_asset_id"]
+        st.rerun()    
 
 # ===== Operações =====
 with subtabs[1]:
@@ -915,6 +958,25 @@ with subtabs[1]:
                 date=trade_date.strftime("%Y-%m-%d"),
                 description=f"APORTE CORRETORA (para compra {sym})",
                 amount=+need,
+                category_id=cat_id,
+                account_id=int(broker_acc_id),
+                method="INV",
+                notes=note_norm if note_norm else None,
+            )
+
+        # ===== 2) movimento da compra/venda dentro da corretora =====
+            
+            if side == "BUY":
+                cash = -total_cost
+                desc_cash = f"INV BUY {sym}"
+            else:
+                cash = +(gross - float(fees))
+                desc_cash = f"INV SELL {sym}"
+
+            repo.create_transaction(
+                date=trade_date.strftime("%Y-%m-%d"),
+                description=desc_cash,
+                amount=cash,
                 category_id=cat_id,
                 account_id=int(broker_acc_id),
                 method="INV",
