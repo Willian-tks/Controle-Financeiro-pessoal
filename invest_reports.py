@@ -3,20 +3,6 @@ import pandas as pd
 import invest_repo
 from db import get_conn
 
-<<<<<<< HEAD
-def df_assets():
-    conn = get_conn()
-    df = pd.read_sql_query("""
-        SELECT id, symbol, name, asset_class, currency
-        FROM assets
-        ORDER BY asset_class, symbol
-    """, conn)
-    conn.close()
-    return df
-
-def df_trades(date_from=None, date_to=None):
-    conn = get_conn()
-=======
 def _query_df(query: str, params: list | tuple | None = None) -> pd.DataFrame:
     conn = get_conn()
     rows = conn.execute(query, params or ()).fetchall()
@@ -32,7 +18,6 @@ def df_assets():
     return df
 
 def df_trades(date_from=None, date_to=None):
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     q = """
         SELECT t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.fees, t.taxes,
                a.symbol, a.asset_class
@@ -48,21 +33,12 @@ def df_trades(date_from=None, date_to=None):
         q += " AND t.date <= ?"
         params.append(date_to)
     q += " ORDER BY t.date ASC, t.id ASC"
-<<<<<<< HEAD
-    df = pd.read_sql_query(q, conn, params=params)
-    conn.close()
-=======
     df = _query_df(q, params)
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df
 
 def df_income(date_from=None, date_to=None):
-<<<<<<< HEAD
-    conn = get_conn()
-=======
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     q = """
         SELECT i.id, i.asset_id, i.date, i.type, i.amount,
                a.symbol, a.asset_class
@@ -78,23 +54,13 @@ def df_income(date_from=None, date_to=None):
         q += " AND i.date <= ?"
         params.append(date_to)
     q += " ORDER BY i.date ASC, i.id ASC"
-<<<<<<< HEAD
-    df = pd.read_sql_query(q, conn, params=params)
-    conn.close()
-=======
     df = _query_df(q, params)
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df
 
 def df_latest_prices():
-<<<<<<< HEAD
-    conn = get_conn()
-    df = pd.read_sql_query("""
-=======
     df = _query_df("""
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         SELECT p.asset_id, p.date AS price_date, p.price
         FROM prices p
         JOIN (
@@ -102,21 +68,16 @@ def df_latest_prices():
             FROM prices
             GROUP BY asset_id
         ) m ON m.asset_id = p.asset_id AND m.max_date = p.date
-<<<<<<< HEAD
-    """, conn)
-    conn.close()
-=======
     """)
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     return df
 
 def positions_avg_cost(trades_df: pd.DataFrame):
     """
-    Método médio:
-    - Mantém qty e cost_basis (custo total da posição)
+    MÃ©todo mÃ©dio:
+    - MantÃ©m qty e cost_basis (custo total da posiÃ§Ã£o)
     - BUY: cost += qty*price + fees
     - SELL: realiza custo proporcional: cost -= avg_cost * qty_sold
-    Retorna por asset: qty, avg_cost, cost_basis, realized_pnl (sem impostos), invested (compras líquidas)
+    Retorna por asset: qty, avg_cost, cost_basis, realized_pnl (sem impostos), invested (compras lÃ­quidas)
     """
     if trades_df.empty:
         return pd.DataFrame(columns=["asset_id", "symbol", "asset_class", "qty", "avg_cost", "cost_basis", "realized_pnl"])
@@ -145,7 +106,7 @@ def positions_avg_cost(trades_df: pd.DataFrame):
             s["cost_basis"] += qty * price + fees
         else:  # SELL
             if s["qty"] <= 0:
-                # venda sem posição (deixa negativo; você pode bloquear no app depois)
+                # venda sem posiÃ§Ã£o (deixa negativo; vocÃª pode bloquear no app depois)
                 avg_cost = 0.0
             else:
                 avg_cost = s["cost_basis"] / s["qty"] if s["qty"] != 0 else 0.0
@@ -178,7 +139,7 @@ def portfolio_view(date_from=None, date_to=None):
     tdf = df_trades(date_from, date_to)
     pos = positions_avg_cost(tdf)
 
-    # ===== Preços (último preço por ativo) =====
+    # ===== PreÃ§os (Ãºltimo preÃ§o por ativo) =====
     prices = df_latest_prices()
     if not prices.empty and not pos.empty:
         pos = pos.merge(
@@ -187,11 +148,11 @@ def portfolio_view(date_from=None, date_to=None):
             how="left"
         )
     else:
-        # garante colunas existirem mesmo sem preços
+        # garante colunas existirem mesmo sem preÃ§os
         pos["price"] = 0.0
         pos["price_date"] = None
 
-    # garante preço numérico sempre
+    # garante preÃ§o numÃ©rico sempre
     pos["price"] = pd.to_numeric(pos.get("price", 0.0), errors="coerce").fillna(0.0)
 
     
@@ -211,7 +172,7 @@ def portfolio_view(date_from=None, date_to=None):
         if "currency" not in pos.columns:
             pos["currency"] = None
 
-    # ===== Cálculos =====
+    # ===== CÃ¡lculos =====
     pos["market_value"] = pos["qty"] * pos["price"]
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
 
@@ -235,15 +196,10 @@ def portfolio_view(date_from=None, date_to=None):
     return pos, tdf, inc
 def df_prices_upto(up_to_date: str) -> pd.DataFrame:
     """
-    Retorna o último preço conhecido (<= up_to_date) por ativo.
+    Retorna o Ãºltimo preÃ§o conhecido (<= up_to_date) por ativo.
     up_to_date: 'YYYY-MM-DD'
     """
-<<<<<<< HEAD
-    conn = get_conn()
-    df = pd.read_sql_query("""
-=======
     df = _query_df("""
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         SELECT p.asset_id, p.date AS price_date, p.price
         FROM prices p
         JOIN (
@@ -252,22 +208,17 @@ def df_prices_upto(up_to_date: str) -> pd.DataFrame:
             WHERE date <= ?
             GROUP BY asset_id
         ) m ON m.asset_id = p.asset_id AND m.max_date = p.date
-<<<<<<< HEAD
-    """, conn, params=[up_to_date])
-    conn.close()
-=======
     """, [up_to_date])
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     return df
 
 
 def investments_value_timeseries(date_from: str, date_to: str) -> pd.DataFrame:
     """
-    Série diária do valor de mercado dos investimentos entre date_from e date_to.
+    SÃ©rie diÃ¡ria do valor de mercado dos investimentos entre date_from e date_to.
     Retorna colunas: date, invest_market_value
     """
-    # trades do período (na prática, você precisa considerar posições anteriores também,
-    # mas para MVP vamos considerar tudo até date_to e filtrar por dia)
+    # trades do perÃ­odo (na prÃ¡tica, vocÃª precisa considerar posiÃ§Ãµes anteriores tambÃ©m,
+    # mas para MVP vamos considerar tudo atÃ© date_to e filtrar por dia)
     tdf = df_trades(None, date_to)
     if tdf.empty:
         # retorna datas com 0
@@ -284,7 +235,7 @@ def investments_value_timeseries(date_from: str, date_to: str) -> pd.DataFrame:
     for d in dates:
         d_str = d.strftime("%Y-%m-%d")
 
-        # trades até o dia D
+        # trades atÃ© o dia D
         t_day = tdf[tdf["date"] <= d].copy()
         pos = positions_avg_cost(t_day)
         if pos.empty:
@@ -310,14 +261,14 @@ def fetch_last_price(asset: dict) -> float | None:
         return x if isinstance(x, dict) else dict(x)
 
     """
-    Retorna o último preço do ativo ou None se não conseguir.
+    Retorna o Ãºltimo preÃ§o do ativo ou None se nÃ£o conseguir.
     """
     asset = as_dict(asset)
     symbol = (asset.get("symbol") or "").strip().upper()
     aclass = (asset.get("asset_class") or "").strip().upper()
 
-    # ===== AÇÕES/FIIs (B3) =====
-    if aclass in ("AÇÕES BR", "ACOES BR", "STOCK_FII", "STOCK", "FII"):
+    # ===== AÃ‡Ã•ES/FIIs (B3) =====
+    if aclass in ("AÃ‡Ã•ES BR", "ACOES BR", "STOCK_FII", "STOCK", "FII"):
         # yfinance usa .SA para B3
         ticker = symbol if symbol.endswith(".SA") else f"{symbol}.SA"
 
@@ -333,7 +284,7 @@ def fetch_last_price(asset: dict) -> float | None:
 
     # ===== CRIPTO =====
     if aclass == "CRYPTO":
-        # Ex: BTC -> BTC-USD (você pode melhorar depois p/ BRL)
+        # Ex: BTC -> BTC-USD (vocÃª pode melhorar depois p/ BRL)
         ticker = symbol if "-" in symbol else f"{symbol}-USD"
 
         import yfinance as yf
@@ -346,9 +297,5 @@ def fetch_last_price(asset: dict) -> float | None:
         px = float(h["Close"].iloc[-1])
         return px if px > 0 else None
 
-    # ===== RENDA FIXA (sem fonte automática por enquanto) =====
-<<<<<<< HEAD
+    # ===== RENDA FIXA (sem fonte automÃ¡tica por enquanto) =====
     return None 
-=======
-    return None 
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)

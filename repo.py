@@ -35,11 +35,7 @@ def insert_transaction(date: str, description: str, amount: float, account_id: i
                        category_id: int | None, method: str | None, notes: str | None):
     conn = get_conn()
     conn.execute("""
-<<<<<<< HEAD
-        INSERT INTO transactions(date, description, amount, account_id, category_id, method, notes)
-=======
         INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes)
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (date, description.strip(), float(amount), int(account_id),
           int(category_id) if category_id else None,
@@ -108,11 +104,7 @@ def create_transaction(date: str, description: str, amount: float, category_id: 
                        method: str | None = None, notes: str | None = None):
     conn = get_conn()
     conn.execute("""
-<<<<<<< HEAD
-        INSERT INTO transactions(date, description, amount, category_id, account_id, method, notes)
-=======
         INSERT INTO transactions(date, description, amount_brl, category_id, account_id, method, notes)
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (date, description, float(amount), int(category_id), int(account_id), method, notes))
     conn.commit()
@@ -125,7 +117,7 @@ def delete_transactions_by_description_prefix(prefix: str):
 
 def delete_transactions_by_description_prefix(prefix: str) -> int:
     """
-    Apaga transações cuja descrição começa com `prefix`.
+    Apaga transaÃ§Ãµes cuja descriÃ§Ã£o comeÃ§a com `prefix`.
     Retorna a quantidade apagada.
     """
     conn = get_conn()
@@ -169,8 +161,8 @@ def account_usage_count(account_id: int) -> int:
 
 def delete_account(account_id: int) -> int:
     """
-    Exclui conta somente se NÃO tiver transações vinculadas.
-    Retorna 1 se excluiu, 0 se não excluiu.
+    Exclui conta somente se NÃƒO tiver transaÃ§Ãµes vinculadas.
+    Retorna 1 se excluiu, 0 se nÃ£o excluiu.
     """
     used = account_usage_count(account_id)
     if used > 0:
@@ -206,8 +198,8 @@ def category_usage_count(category_id: int) -> int:
 
 def delete_category(category_id: int) -> int:
     """
-    Exclui categoria somente se NÃO tiver transações vinculadas.
-    Retorna 1 se excluiu, 0 se não excluiu.
+    Exclui categoria somente se NÃƒO tiver transaÃ§Ãµes vinculadas.
+    Retorna 1 se excluiu, 0 se nÃ£o excluiu.
     """
     used = category_usage_count(category_id)
     if used > 0:
@@ -219,7 +211,7 @@ def delete_category(category_id: int) -> int:
     conn.close()
     return cur.rowcount
 
-#Esta linha foi criada para fazer deletes de lançamentos de teste durante a construção!!!!
+#Esta linha foi criada para fazer deletes de lanÃ§amentos de teste durante a construÃ§Ã£o!!!!
 
 def clear_transactions():
     conn = get_conn()
@@ -231,11 +223,7 @@ def clear_transactions():
 def account_balance_value(account_id: int) -> float:
     conn = get_conn()
     row = conn.execute(
-<<<<<<< HEAD
-        "SELECT COALESCE(SUM(amount), 0) AS bal FROM transactions WHERE account_id=?",
-=======
         "SELECT COALESCE(SUM(amount_brl), 0) AS bal FROM transactions WHERE account_id=?",
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         (int(account_id),)
     ).fetchone()
     conn.close()

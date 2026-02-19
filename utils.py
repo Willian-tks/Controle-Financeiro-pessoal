@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 
 def to_brl(x: float) -> str:
-    # formatação simples pt-BR (sem depender de locale do SO)
+    # formataÃ§Ã£o simples pt-BR (sem depender de locale do SO)
     s = f"{x:,.2f}"
     s = s.replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {s}"
@@ -18,9 +18,9 @@ def normalize_import_df(df: pd.DataFrame) -> pd.DataFrame:
     required = {"date", "description", "amount", "account"}
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(f"CSV faltando colunas obrigatórias: {sorted(list(missing))}")
+        raise ValueError(f"CSV faltando colunas obrigatÃ³rias: {sorted(list(missing))}")
 
-    # normalizações
+    # normalizaÃ§Ãµes
     df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
     df["description"] = df["description"].astype(str).str.strip()
     df["account"] = df["account"].astype(str).str.strip()

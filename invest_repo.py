@@ -1,14 +1,8 @@
 # invest_repo.py
-<<<<<<< HEAD
-import sqlite3
 from db import get_conn
-from db import DB_PATH
-=======
-from db import get_conn
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
 ASSET_CLASSES = {
-    "Ações BR": "ACAO_BR",
+    "AÃ§Ãµes BR": "ACAO_BR",
     "FIIs": "FII",
     "ETFs BR": "ETF_BR",
     "BDRs": "BDR",
@@ -80,15 +74,6 @@ def create_asset(
     conn.commit()
     conn.close()
 
-<<<<<<< HEAD
-def delete_asset(asset_id: int):
-    conn = get_conn()
-    conn.execute("DELETE FROM assets WHERE id=?", (int(asset_id),))
-    conn.commit()
-    conn.close()
-
-=======
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 def insert_trade(asset_id: int, date: str, side: str, quantity: float, price: float,
                  fees: float = 0.0, taxes: float = 0.0, note: str | None = None):
     conn = get_conn()
@@ -129,11 +114,9 @@ def delete_trade(trade_id: int):
     conn.commit()
     conn.close()
 
-<<<<<<< HEAD
-=======
 def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
     """
-    Exclui uma operação e remove o lançamento financeiro INV correspondente,
+    Exclui uma operaÃ§Ã£o e remove o lanÃ§amento financeiro INV correspondente,
     para manter saldo da corretora e carteira consistentes.
     """
     conn = get_conn()
@@ -148,7 +131,7 @@ def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
         """, (int(trade_id),)).fetchone()
 
         if not trade:
-            return False, "Operação não encontrada."
+            return False, "OperaÃ§Ã£o nÃ£o encontrada."
 
         broker_account_id = trade["broker_account_id"]
         if not broker_account_id:
@@ -198,19 +181,18 @@ def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
                     break
 
         if chosen_tx_id is None:
-            return False, "Não foi possível localizar o lançamento financeiro da operação."
+            return False, "NÃ£o foi possÃ­vel localizar o lanÃ§amento financeiro da operaÃ§Ã£o."
 
         conn.execute("DELETE FROM transactions WHERE id = ?", (chosen_tx_id,))
         conn.execute("DELETE FROM trades WHERE id = ?", (int(trade_id),))
         conn.commit()
-        return True, "Operação excluída e saldo da corretora ajustado."
+        return True, "OperaÃ§Ã£o excluÃ­da e saldo da corretora ajustado."
     except Exception as e:
         conn.rollback()
-        return False, f"Erro ao excluir operação: {e}"
+        return False, f"Erro ao excluir operaÃ§Ã£o: {e}"
     finally:
         conn.close()
 
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 def upsert_price(asset_id: int, date: str, price: float, source: str | None = None):
     conn = get_conn()
     conn.execute("""
@@ -289,7 +271,7 @@ def get_asset(asset_id: int):
     conn.close()
     return row    
 
-#Esta linha foi criada para fazer deletes de lançamentos de teste durante a construção!!!!
+#Esta linha foi criada para fazer deletes de lanÃ§amentos de teste durante a construÃ§Ã£o!!!!
 def clear_invest_movements():
     conn = get_conn()
     c1 = conn.execute("DELETE FROM trades").rowcount
@@ -302,7 +284,7 @@ def clear_invest_movements():
 def clear_assets():
     """
     Remove TODOS os ativos.
-    Requer que trades, income_events e prices já estejam vazios.
+    Requer que trades, income_events e prices jÃ¡ estejam vazios.
     """
     conn = get_conn()
     cur = conn.execute("DELETE FROM assets")
@@ -312,67 +294,27 @@ def clear_assets():
 
 def insert_price(asset_id: int, date: str, price: float, source: str = "yahoo"):
     """
-<<<<<<< HEAD
-    Salva (upsert) a cotação do ativo no dia.
-    """
-    conn = get_conn()
-    conn.execute(
-        """
-        INSERT INTO asset_prices (asset_id, date, price, source)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(asset_id, date, source)
-        DO UPDATE SET price = excluded.price
-        """,
-        (int(asset_id), str(date), float(price), str(source)),
-    )
-    conn.commit()
-    conn.close()
-=======
     Compatibilidade: redireciona para upsert_price (tabela prices).
     """
     upsert_price(int(asset_id), str(date), float(price), str(source))
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
 
 def get_last_price(asset_id: int):
     """
-<<<<<<< HEAD
-    Retorna a última cotação salva do ativo (row) ou None.
-    """
-    conn = get_conn()
-    row = conn.execute(
-        """
-        SELECT asset_id, date, price, source
-        FROM asset_prices
-        WHERE asset_id = ?
-        ORDER BY date DESC, id DESC
-        LIMIT 1
-        """,
-        (int(asset_id),),
-    ).fetchone()
-    conn.close()
-    return row
-=======
-    Compatibilidade: retorna a última cotação via latest_price.
+    Compatibilidade: retorna a Ãºltima cotaÃ§Ã£o via latest_price.
     """
     return latest_price(int(asset_id))
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
 
 def get_last_price_by_symbol(symbol: str):
     """
-    Útil pro UI: busca a última cotação pelo symbol.
+    Ãštil pro UI: busca a Ãºltima cotaÃ§Ã£o pelo symbol.
     """
     conn = get_conn()
     row = conn.execute(
         """
-<<<<<<< HEAD
-        SELECT p.asset_id, p.date, p.price, p.source, a.symbol
-        FROM asset_prices p
-=======
         SELECT p.asset_id, p.date AS date, p.price, p.source, a.symbol
         FROM prices p
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         JOIN assets a ON a.id = p.asset_id
         WHERE UPPER(a.symbol) = UPPER(?)
         ORDER BY p.date DESC, p.id DESC
@@ -382,57 +324,13 @@ def get_last_price_by_symbol(symbol: str):
     ).fetchone()
     conn.close()
     return row
-<<<<<<< HEAD
-def _conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def upsert_quote(asset_id: int, px_date: str, price: float, src: str | None = None) -> None:
-    conn = _conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO invest_quotes (asset_id, px_date, price, src)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(asset_id, px_date)
-        DO UPDATE SET price=excluded.price, src=excluded.src
-    """, (asset_id, px_date, float(price), src))
-    conn.commit()
-    conn.close()
-
-def get_last_quote(asset_id: int):
-    conn = _conn()
-    row = conn.execute("""
-        SELECT px_date, price, src
-        FROM invest_quotes
-        WHERE asset_id = ?
-        ORDER BY px_date DESC
-        LIMIT 1
-    """, (asset_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-=======
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 def delete_asset(asset_id: int) -> tuple[bool, str]:
     from db import get_conn
 
     with get_conn() as conn:
         cur = conn.cursor()
 
-<<<<<<< HEAD
-        # verifica se há operações
-        cur.execute("SELECT COUNT(*) FROM trades WHERE asset_id = ?", (asset_id,))
-        trades_count = cur.fetchone()[0]
-
-        # verifica se há cotações
-        cur.execute("SELECT COUNT(*) FROM quotes WHERE asset_id = ?", (asset_id,))
-        quotes_count = cur.fetchone()[0]
-
-        if trades_count > 0 or quotes_count > 0:
-            return False, "Ativo possui operações ou cotações registradas."
-=======
-        # bloqueia exclusão apenas se ainda houver movimentação do ativo
+        # bloqueia exclusÃ£o apenas se ainda houver movimentaÃ§Ã£o do ativo
         cur.execute("SELECT COUNT(*) AS n FROM trades WHERE asset_id = ?", (asset_id,))
         trades_row = cur.fetchone()
         trades_count = int((trades_row["n"] if isinstance(trades_row, dict) else trades_row[0]) or 0)
@@ -441,16 +339,15 @@ def delete_asset(asset_id: int) -> tuple[bool, str]:
         income_count = int((income_row["n"] if isinstance(income_row, dict) else income_row[0]) or 0)
 
         if trades_count > 0 or income_count > 0:
-            return False, f"Ativo possui movimentações registradas (trades: {trades_count}, proventos: {income_count})."
+            return False, f"Ativo possui movimentaÃ§Ãµes registradas (trades: {trades_count}, proventos: {income_count})."
 
-        # cotações não devem impedir exclusão; limpa antes de remover o ativo
+        # cotaÃ§Ãµes nÃ£o devem impedir exclusÃ£o; limpa antes de remover o ativo
         cur.execute("DELETE FROM prices WHERE asset_id = ?", (asset_id,))
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
         cur.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
         conn.commit()
 
-    return True, "Ativo excluído com sucesso."
+    return True, "Ativo excluÃ­do com sucesso."
 
 def update_asset(asset_id: int, symbol: str, name: str, asset_class: str,
                  currency: str, broker_account_id: int | None):
@@ -482,8 +379,4 @@ def get_asset_by_id(asset_id: int):
             (asset_id,),
         )
         row = cur.fetchone()
-<<<<<<< HEAD
         return dict(row) if row else None
-=======
-        return dict(row) if row else None
->>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
