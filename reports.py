@@ -9,7 +9,11 @@ def df_transactions(date_from: str | None = None, date_to: str | None = None):
             t.id,
             t.date,
             t.description,
+<<<<<<< HEAD
             t.amount,
+=======
+            t.amount_brl,
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
             ac.name AS account,
             c.name  AS category,
             c.kind  AS category_kind,
@@ -44,8 +48,13 @@ def kpis(df: pd.DataFrame) -> dict:
     # Transferência não é Receita nem Despesa
     base = df[df["category_kind"].fillna("") != "Transferencia"].copy()
 
+<<<<<<< HEAD
     receitas = float(base.loc[base["amount"] > 0, "amount"].sum())
     despesas = float(base.loc[base["amount"] < 0, "amount"].sum())  # negativo
+=======
+    receitas = float(base.loc[base["amount_brl"] > 0, "amount_brl"].sum())
+    despesas = float(base.loc[base["amount_brl"] < 0, "amount_brl"].sum())  # negativo
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     saldo = receitas + despesas
 
     return {"receitas": receitas, "despesas": despesas, "saldo": saldo}
@@ -59,8 +68,13 @@ def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
     base["month"] = base["date"].dt.to_period("M").astype(str)
 
     g = base.groupby("month", as_index=False).agg(
+<<<<<<< HEAD
         receitas=("amount", lambda s: float(s[s > 0].sum())),
         despesas=("amount", lambda s: float(s[s < 0].sum())),
+=======
+        receitas=("amount_brl", lambda s: float(s[s > 0].sum())),
+        despesas=("amount_brl", lambda s: float(s[s < 0].sum())),
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     )
     g["saldo"] = g["receitas"] + g["despesas"]
     return g
@@ -82,7 +96,11 @@ def account_balance(df: pd.DataFrame):
     if df.empty:
         return pd.DataFrame(columns=["account", "saldo"])
 
+<<<<<<< HEAD
     out = df.groupby("account")["amount"].sum().reset_index().rename(columns={"amount": "saldo"})
+=======
+    out = df.groupby("account")["amount_brl"].sum().reset_index().rename(columns={"amount_brl": "saldo"})
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     out = out.sort_values("saldo", ascending=False)
     return out
 
@@ -98,16 +116,34 @@ def cash_balance_timeseries(date_from=None, date_to=None) -> pd.DataFrame:
     d = df.copy()
     d["date"] = pd.to_datetime(d["date"]).dt.normalize()
 
+<<<<<<< HEAD
     daily = d.groupby("date")["amount"].sum().reset_index()
     daily = daily.sort_values("date")
     daily["cash_balance"] = daily["amount"].cumsum()
+=======
+    daily = d.groupby("date")["amount_brl"].sum().reset_index()
+    daily = daily.sort_values("date")
+    daily["cash_balance"] = daily["amount_brl"].cumsum()
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     return daily[["date", "cash_balance"]]
 def account_balance_by_id(account_id: int) -> float:
     conn = get_conn()
     row = conn.execute("""
+<<<<<<< HEAD
         SELECT COALESCE(SUM(amount), 0)
+=======
+        SELECT COALESCE(SUM(amount_brl), 0)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         FROM transactions
         WHERE account_id = ?
     """, (account_id,)).fetchone()
     conn.close()
+<<<<<<< HEAD
     return float(row[0] or 0.0)
+=======
+    if not row:
+        return 0.0
+    if isinstance(row, dict):
+        return float(next(iter(row.values())) or 0.0)
+    return float(row[0] or 0.0)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)

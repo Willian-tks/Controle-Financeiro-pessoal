@@ -15,7 +15,11 @@ import pandas as pd
 import sqlite3
 import plotly.express as px
 
+<<<<<<< HEAD
 from db import init_db, DB_PATH
+=======
+from db import init_db, DB_PATH, USE_POSTGRES
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 import repo
 import reports
 from utils import to_brl, normalize_import_df
@@ -110,7 +114,14 @@ st.set_page_config(page_title="Financeiro Pessoal", layout="wide")
 st.title("📊 Controle Financeiro Pessoal (MVP)")
 
 st.caption(f"📁 CWD: {os.getcwd()}")
+<<<<<<< HEAD
 st.caption(f"🗄️ DB_PATH: {DB_PATH}")
+=======
+if USE_POSTGRES:
+    st.caption("🗄️ DB: PostgreSQL (via DATABASE_URL)")
+else:
+    st.caption(f"🗄️ DB_PATH: {DB_PATH}")
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
 init_db()
 
@@ -433,7 +444,11 @@ with tab1:
             if df_all.empty:
                 source_balance = 0.0
             else:
+<<<<<<< HEAD
                 source_balance = float(df_all[df_all["account"] == source_account_name]["amount"].sum())
+=======
+                source_balance = float(df_all[df_all["account"] == source_account_name]["amount_brl"].sum())
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
             if source_balance < amount:
                 st.error(
@@ -496,7 +511,11 @@ with tab1:
     else:
         show = df_tx.sort_values("date", ascending=False).head(50).copy()
         show["date"] = show["date"].dt.strftime("%Y-%m-%d")
+<<<<<<< HEAD
         show["amount_brl"] = show["amount"].apply(to_brl)
+=======
+        show["amount_brl"] = show["amount_brl"].apply(to_brl)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
         st.dataframe(
             show[["id", "date", "description", "account", "category", "amount_brl"]],
@@ -759,6 +778,15 @@ with tab4:
 
         source_account_id = None if src_name == "(não transferir)" else source_map[src_name]
 
+<<<<<<< HEAD
+=======
+        symbol_preview = symbol.strip().upper().replace(" ", "")
+        br_classes = {"Ações BR", "FIIs", "ETFs BR", "BDRs"}
+        if symbol_preview and currency == "BRL" and asset_class in br_classes:
+            quote_symbol = symbol_preview if symbol_preview.endswith(".SA") else f"{symbol_preview}.SA"
+            st.caption(f"Cotação automática (Yahoo) usará: `{quote_symbol}`. Você pode cadastrar sem `.SA`.")
+
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         if st.button("Salvar ativo", type="primary", key="btn_save_asset"):
             if not symbol.strip() or not name.strip():
                 st.error("Informe símbolo e nome.")
@@ -860,6 +888,7 @@ with subtabs[1]:
     st.session_state.setdefault("last_trade_key", None)
 
     if st.button("Salvar operação", type="primary", key="btn_save_trade"):
+<<<<<<< HEAD
         # validações
         if float(qty) <= 0 or float(price) <= 0:
             gross = float(qty) * float(price)
@@ -987,10 +1016,48 @@ with subtabs[1]:
         if side == "BUY":
             cash = -total_cost
             desc_cash = f"INV BUY {sym}"
+=======
+
+        # ---------- VALIDAÇÕES ----------
+        if float(qty) <= 0 or float(price) <= 0:
+            st.error("Quantidade e preço devem ser maiores que zero.")
+            st.stop()
+
+        note_norm = note.strip() if note else ""
+        gross = float(qty) * float(price)
+        total_cost = gross + float(fees)
+
+        asset = dict(invest_repo.get_asset(asset_label[sym]))
+        broker_acc_id = asset.get("broker_account_id")
+        source_acc_id = asset.get("source_account_id")
+
+        if not broker_acc_id:
+            st.error("Ativo sem conta corretora vinculada.")
+            st.stop()
+
+        # ---------- SALDO ATUAL ----------
+        broker_cash = reports.account_balance_by_id(int(broker_acc_id))
+
+        if side == "BUY" and broker_cash < total_cost:
+            st.error(
+                f"Saldo insuficiente na corretora.\n\n"
+                f"Disponível: {to_brl(broker_cash)}\n"
+                f"Necessário: {to_brl(total_cost)}"
+            )
+            st.stop()
+
+        cat_id = repo.ensure_category("Investimentos", "Transferencia")
+
+        # ---------- MOVIMENTO FINANCEIRO ----------
+        if side == "BUY":
+            cash = -total_cost
+            desc = f"INV BUY {sym}"
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         else:
             cash = +(gross - float(fees))
             desc = f"INV SELL {sym}"
 
+<<<<<<< HEAD
         repo.create_transaction(
             date=trade_date.strftime("%Y-%m-%d"),
             description=desc_cash,
@@ -1002,6 +1069,19 @@ with subtabs[1]:
         )
 
         # ===== 3) registra o trade na tabela de investimentos =====
+=======
+        repo.insert_transaction(
+            date=trade_date.strftime("%Y-%m-%d"),
+            description=desc,
+            amount=float(cash),
+            account_id=int(broker_acc_id),
+            category_id=cat_id,
+            method="INV",
+            notes=note_norm if note_norm else None
+        )
+
+        # ---------- REGISTRA TRADE ----------
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         invest_repo.insert_trade(
             asset_id=asset_label[sym],
             date=trade_date.strftime("%Y-%m-%d"),
@@ -1020,12 +1100,49 @@ with subtabs[1]:
     st.markdown("### Operações recentes")
     trades = invest_repo.list_trades()
     if trades:
+<<<<<<< HEAD
         df_trades = pd.DataFrame([dict(r) for r in trades]).head(50)
         st.dataframe(
             df_trades[["id", "date", "symbol", "asset_class", "side", "quantity", "price", "fees", "taxes", "note"]],
             use_container_width=True,
             hide_index=True
         )
+=======
+        recent_trades = [dict(r) for r in trades][:50]
+
+        h1, h2, h3, h4, h5, h6, h7, h8, h9, h10 = st.columns([0.7, 1.1, 1.2, 1.2, 0.9, 1.0, 1.0, 0.8, 0.8, 0.7])
+        h1.markdown("**ID**")
+        h2.markdown("**Data**")
+        h3.markdown("**Ativo**")
+        h4.markdown("**Classe**")
+        h5.markdown("**Tipo**")
+        h6.markdown("**Qtd**")
+        h7.markdown("**Preço**")
+        h8.markdown("**Taxas**")
+        h9.markdown("**Impostos**")
+        h10.markdown("**Ação**")
+
+        for t in recent_trades:
+            c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns([0.7, 1.1, 1.2, 1.2, 0.9, 1.0, 1.0, 0.8, 0.8, 0.7])
+            c1.write(int(t["id"]))
+            c2.write(str(t["date"]))
+            c3.write(str(t["symbol"]))
+            c4.write(str(t["asset_class"]))
+            c5.write(str(t["side"]))
+            c6.write(f"{float(t['quantity']):.8f}")
+            c7.write(f"{float(t['price']):.8f}")
+            c8.write(f"{float(t['fees']):.2f}")
+            c9.write(f"{float(t['taxes']):.2f}")
+
+            with c10:
+                if st.button("🗑", key=f"btn_del_trade_{int(t['id'])}", help=f"Excluir operação {int(t['id'])}"):
+                    ok, msg = invest_repo.delete_trade_with_cash_reversal(int(t["id"]))
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     else:
         st.info("Sem operações ainda.")
 
@@ -1113,7 +1230,12 @@ with subtabs[1]:
             if st.button("Atualizar cotação agora", key="btn_update_quotes"):
                 try:
                     assets = invest_repo.list_assets()
+<<<<<<< HEAD
                     report = invest_quotes.update_all_prices(assets)
+=======
+                    with st.spinner("Consultando cotações (Yahoo/BRAPI)..."):
+                        report = invest_quotes.update_all_prices(assets)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
                     saved = 0
                     for r in report:
@@ -1127,6 +1249,11 @@ with subtabs[1]:
                             saved += 1
 
                     st.success(f"Cotações salvas: {saved}/{len(report)}")
+<<<<<<< HEAD
+=======
+                    if saved < len(report):
+                        st.warning("Alguns ativos não retornaram cotação nesta tentativa. Veja a coluna 'error' abaixo.")
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
                     st.dataframe(pd.DataFrame(report), use_container_width=True)
 
                 except Exception as e:
@@ -1134,6 +1261,7 @@ with subtabs[1]:
 
             st.divider()
 
+<<<<<<< HEAD
         # =============================
         # Mostrar última cotação salva
         # =============================
@@ -1149,6 +1277,8 @@ with subtabs[1]:
         else:
             st.warning("Ainda não existe cotação salva para este ativo.")
 
+=======
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         st.markdown("### Cadastrar cotação manual")
         if not assets:
             st.warning("Cadastre um ativo primeiro.")
@@ -1161,6 +1291,19 @@ with subtabs[1]:
             with c3:
                 price = st.number_input("Cotação / PU / valor unit", min_value=0.0, step=0.01, format="%.8f", key="px_price")
 
+<<<<<<< HEAD
+=======
+            last = invest_repo.get_last_price_by_symbol(sym)
+            if last:
+                last = dict(last)  # sqlite Row -> dict
+                st.info(
+                    f"Última cotação salva: {last['symbol']} = "
+                    f"{to_brl(last['price'])} em {last['date']} ({last.get('source','')})"
+                )
+            else:
+                st.warning("Ainda não existe cotação salva para este ativo.")
+
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
             src = st.text_input("Fonte (opcional)", placeholder="manual", key="px_src")
             if st.button("Salvar cotação", type="primary", key="btn_save_px"):
                 invest_repo.upsert_price(asset_label[sym], px_date.strftime("%Y-%m-%d"), float(price), src.strip() if src.strip() else None)
@@ -1184,7 +1327,11 @@ with subtabs[1]:
         if all_tx.empty or not broker_names:
             broker_balance = 0.0
         else:
+<<<<<<< HEAD
             broker_balance = float(all_tx[all_tx["account"].isin(broker_names)]["amount"].sum())
+=======
+            broker_balance = float(all_tx[all_tx["account"].isin(broker_names)]["amount_brl"].sum())
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
         # Se quiser usar só a corretora vinculada aos ativos (mais preciso),
         # dá pra refinar depois. Por enquanto isso já resolve o "Saldo Corretora".
@@ -1239,6 +1386,7 @@ with subtabs[1]:
             total_ret_pct = (total_ret / total_invested * 100) if total_invested > 0 else 0.0
 
         # ===== KPIs topo (sempre aparecem) =====
+<<<<<<< HEAD
         k1, k2, kSaldo, k3, k4, k5 = st.columns(6)
         k1.metric("Investido", to_brl(total_invested))
         k2.metric("Valor de Mercado", to_brl(total_mkt))
@@ -1246,6 +1394,17 @@ with subtabs[1]:
         k3.metric("Proventos", to_brl(total_income))
         k4.metric("Retorno Total", to_brl(total_ret), f"{total_ret_pct:.2f}%")
         k5.metric("P&L Não Realizado", to_brl(total_unreal))
+=======
+        r1c1, r1c2, r1c3 = st.columns(3)
+        r1c1.metric("Investido", to_brl(total_invested))
+        r1c2.metric("Valor de Mercado", to_brl(total_mkt))
+        r1c3.metric("Saldo Corretora", to_brl(broker_balance))
+
+        r2c1, r2c2, r2c3 = st.columns(3)
+        r2c1.metric("Proventos", to_brl(total_income))
+        r2c2.metric("Retorno Total", to_brl(total_ret), f"{total_ret_pct:.2f}%")
+        r2c3.metric("P&L Não Realizado", to_brl(total_unreal))
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
 
         st.divider()
 

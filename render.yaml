@@ -1,0 +1,22 @@
+databases:
+  - name: finance-postgres
+    plan: free
+    databaseName: finance_app
+    user: finance_user
+
+services:
+  - type: web
+    name: controle-financeiro-app
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        fromDatabase:
+          name: finance-postgres
+          property: connectionString
+      - key: BRAPI_TOKEN
+        sync: false

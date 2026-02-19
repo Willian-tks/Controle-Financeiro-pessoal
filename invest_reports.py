@@ -3,6 +3,7 @@ import pandas as pd
 import invest_repo
 from db import get_conn
 
+<<<<<<< HEAD
 def df_assets():
     conn = get_conn()
     df = pd.read_sql_query("""
@@ -15,6 +16,23 @@ def df_assets():
 
 def df_trades(date_from=None, date_to=None):
     conn = get_conn()
+=======
+def _query_df(query: str, params: list | tuple | None = None) -> pd.DataFrame:
+    conn = get_conn()
+    rows = conn.execute(query, params or ()).fetchall()
+    conn.close()
+    return pd.DataFrame([dict(r) for r in rows])
+
+def df_assets():
+    df = _query_df("""
+        SELECT id, symbol, name, asset_class, currency
+        FROM assets
+        ORDER BY asset_class, symbol
+    """)
+    return df
+
+def df_trades(date_from=None, date_to=None):
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     q = """
         SELECT t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.fees, t.taxes,
                a.symbol, a.asset_class
@@ -30,14 +48,21 @@ def df_trades(date_from=None, date_to=None):
         q += " AND t.date <= ?"
         params.append(date_to)
     q += " ORDER BY t.date ASC, t.id ASC"
+<<<<<<< HEAD
     df = pd.read_sql_query(q, conn, params=params)
     conn.close()
+=======
+    df = _query_df(q, params)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df
 
 def df_income(date_from=None, date_to=None):
+<<<<<<< HEAD
     conn = get_conn()
+=======
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     q = """
         SELECT i.id, i.asset_id, i.date, i.type, i.amount,
                a.symbol, a.asset_class
@@ -53,15 +78,23 @@ def df_income(date_from=None, date_to=None):
         q += " AND i.date <= ?"
         params.append(date_to)
     q += " ORDER BY i.date ASC, i.id ASC"
+<<<<<<< HEAD
     df = pd.read_sql_query(q, conn, params=params)
     conn.close()
+=======
+    df = _query_df(q, params)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df
 
 def df_latest_prices():
+<<<<<<< HEAD
     conn = get_conn()
     df = pd.read_sql_query("""
+=======
+    df = _query_df("""
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         SELECT p.asset_id, p.date AS price_date, p.price
         FROM prices p
         JOIN (
@@ -69,8 +102,12 @@ def df_latest_prices():
             FROM prices
             GROUP BY asset_id
         ) m ON m.asset_id = p.asset_id AND m.max_date = p.date
+<<<<<<< HEAD
     """, conn)
     conn.close()
+=======
+    """)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     return df
 
 def positions_avg_cost(trades_df: pd.DataFrame):
@@ -201,8 +238,12 @@ def df_prices_upto(up_to_date: str) -> pd.DataFrame:
     Retorna o último preço conhecido (<= up_to_date) por ativo.
     up_to_date: 'YYYY-MM-DD'
     """
+<<<<<<< HEAD
     conn = get_conn()
     df = pd.read_sql_query("""
+=======
+    df = _query_df("""
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         SELECT p.asset_id, p.date AS price_date, p.price
         FROM prices p
         JOIN (
@@ -211,8 +252,12 @@ def df_prices_upto(up_to_date: str) -> pd.DataFrame:
             WHERE date <= ?
             GROUP BY asset_id
         ) m ON m.asset_id = p.asset_id AND m.max_date = p.date
+<<<<<<< HEAD
     """, conn, params=[up_to_date])
     conn.close()
+=======
+    """, [up_to_date])
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
     return df
 
 
@@ -302,4 +347,8 @@ def fetch_last_price(asset: dict) -> float | None:
         return px if px > 0 else None
 
     # ===== RENDA FIXA (sem fonte automática por enquanto) =====
+<<<<<<< HEAD
     return None 
+=======
+    return None 
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)

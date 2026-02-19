@@ -1,4 +1,9 @@
 streamlit>=1.30
 pandas>=2.0
 plotly>=5.0
+<<<<<<< HEAD
 python-dateutil>=2.8
+=======
+python-dateutil>=2.8
+psycopg[binary]>=3.1
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)

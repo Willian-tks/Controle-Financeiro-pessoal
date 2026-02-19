@@ -35,7 +35,11 @@ def insert_transaction(date: str, description: str, amount: float, account_id: i
                        category_id: int | None, method: str | None, notes: str | None):
     conn = get_conn()
     conn.execute("""
+<<<<<<< HEAD
         INSERT INTO transactions(date, description, amount, account_id, category_id, method, notes)
+=======
+        INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (date, description.strip(), float(amount), int(account_id),
           int(category_id) if category_id else None,
@@ -104,7 +108,11 @@ def create_transaction(date: str, description: str, amount: float, category_id: 
                        method: str | None = None, notes: str | None = None):
     conn = get_conn()
     conn.execute("""
+<<<<<<< HEAD
         INSERT INTO transactions(date, description, amount, category_id, account_id, method, notes)
+=======
+        INSERT INTO transactions(date, description, amount_brl, category_id, account_id, method, notes)
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (date, description, float(amount), int(category_id), int(account_id), method, notes))
     conn.commit()
@@ -223,7 +231,11 @@ def clear_transactions():
 def account_balance_value(account_id: int) -> float:
     conn = get_conn()
     row = conn.execute(
+<<<<<<< HEAD
         "SELECT COALESCE(SUM(amount), 0) AS bal FROM transactions WHERE account_id=?",
+=======
+        "SELECT COALESCE(SUM(amount_brl), 0) AS bal FROM transactions WHERE account_id=?",
+>>>>>>> 0294725 (Integração de investimentos com financeiro e proventos funcionando)
         (int(account_id),)
     ).fetchone()
     conn.close()
