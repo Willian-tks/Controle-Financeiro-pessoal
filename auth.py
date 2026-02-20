@@ -74,12 +74,12 @@ def ensure_bootstrap_admin() -> None:
     ).fetchone()
     if not row:
         conn.execute(
-            "INSERT INTO users(email, password_hash, display_name, role, is_active) VALUES (?, ?, ?, 'admin', 1)",
+            "INSERT INTO users(email, password_hash, display_name, role, is_active) VALUES (?, ?, ?, 'admin', TRUE)",
             (admin_email, _hash_password(admin_password), admin_name),
         )
     else:
         conn.execute(
-            "UPDATE users SET password_hash = ?, display_name = ?, role = 'admin', is_active = 1 WHERE id = ?",
+            "UPDATE users SET password_hash = ?, display_name = ?, role = 'admin', is_active = TRUE WHERE id = ?",
             (_hash_password(admin_password), admin_name, int(row["id"])),
         )
     conn.commit()
@@ -203,7 +203,7 @@ def register_user_with_invite(
 
     pwd_hash = _hash_password(password)
     conn.execute(
-        "INSERT INTO users(email, password_hash, display_name, role, is_active) VALUES (?, ?, ?, 'user', 1)",
+        "INSERT INTO users(email, password_hash, display_name, role, is_active) VALUES (?, ?, ?, 'user', TRUE)",
         (email_n, pwd_hash, display),
     )
     created = conn.execute(
