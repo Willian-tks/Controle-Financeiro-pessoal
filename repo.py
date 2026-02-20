@@ -1,4 +1,4 @@
-# repo.py
+﻿# repo.py
 from db import get_conn
 
 def list_accounts():
@@ -117,7 +117,7 @@ def delete_transactions_by_description_prefix(prefix: str):
 
 def delete_transactions_by_description_prefix(prefix: str) -> int:
     """
-    Apaga transaÃ§Ãµes cuja descriÃ§Ã£o comeÃ§a com `prefix`.
+    Apaga transações cuja descrição começa com `prefix`.
     Retorna a quantidade apagada.
     """
     conn = get_conn()
@@ -161,8 +161,8 @@ def account_usage_count(account_id: int) -> int:
 
 def delete_account(account_id: int) -> int:
     """
-    Exclui conta somente se NÃƒO tiver transaÃ§Ãµes vinculadas.
-    Retorna 1 se excluiu, 0 se nÃ£o excluiu.
+    Exclui conta somente se NÃO tiver transações vinculadas.
+    Retorna 1 se excluiu, 0 se não excluiu.
     """
     used = account_usage_count(account_id)
     if used > 0:
@@ -198,8 +198,8 @@ def category_usage_count(category_id: int) -> int:
 
 def delete_category(category_id: int) -> int:
     """
-    Exclui categoria somente se NÃƒO tiver transaÃ§Ãµes vinculadas.
-    Retorna 1 se excluiu, 0 se nÃ£o excluiu.
+    Exclui categoria somente se NÃO tiver transações vinculadas.
+    Retorna 1 se excluiu, 0 se não excluiu.
     """
     used = category_usage_count(category_id)
     if used > 0:
@@ -211,7 +211,7 @@ def delete_category(category_id: int) -> int:
     conn.close()
     return cur.rowcount
 
-#Esta linha foi criada para fazer deletes de lanÃ§amentos de teste durante a construÃ§Ã£o!!!!
+#Esta linha foi criada para fazer deletes de lançamentos de teste durante a construção!!!!
 
 def clear_transactions():
     conn = get_conn()

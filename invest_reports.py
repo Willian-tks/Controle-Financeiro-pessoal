@@ -1,4 +1,4 @@
-# invest_reports.py
+﻿# invest_reports.py
 import pandas as pd
 import invest_repo
 from db import get_conn
@@ -73,11 +73,11 @@ def df_latest_prices():
 
 def positions_avg_cost(trades_df: pd.DataFrame):
     """
-    MÃ©todo mÃ©dio:
-    - MantÃ©m qty e cost_basis (custo total da posiÃ§Ã£o)
+    Método médio:
+    - Mantém qty e cost_basis (custo total da posição)
     - BUY: cost += qty*price + fees
     - SELL: realiza custo proporcional: cost -= avg_cost * qty_sold
-    Retorna por asset: qty, avg_cost, cost_basis, realized_pnl (sem impostos), invested (compras lÃ­quidas)
+    Retorna por asset: qty, avg_cost, cost_basis, realized_pnl (sem impostos), invested (compras líquidas)
     """
     if trades_df.empty:
         return pd.DataFrame(columns=["asset_id", "symbol", "asset_class", "qty", "avg_cost", "cost_basis", "realized_pnl"])
@@ -106,7 +106,7 @@ def positions_avg_cost(trades_df: pd.DataFrame):
             s["cost_basis"] += qty * price + fees
         else:  # SELL
             if s["qty"] <= 0:
-                # venda sem posiÃ§Ã£o (deixa negativo; vocÃª pode bloquear no app depois)
+                # venda sem posição (deixa negativo; você pode bloquear no app depois)
                 avg_cost = 0.0
             else:
                 avg_cost = s["cost_basis"] / s["qty"] if s["qty"] != 0 else 0.0
@@ -139,7 +139,7 @@ def portfolio_view(date_from=None, date_to=None):
     tdf = df_trades(date_from, date_to)
     pos = positions_avg_cost(tdf)
 
-    # ===== PreÃ§os (Ãºltimo preÃ§o por ativo) =====
+    # ===== Preços (último preço por ativo) =====
     prices = df_latest_prices()
     if not prices.empty and not pos.empty:
         pos = pos.merge(
@@ -148,11 +148,11 @@ def portfolio_view(date_from=None, date_to=None):
             how="left"
         )
     else:
-        # garante colunas existirem mesmo sem preÃ§os
+        # garante colunas existirem mesmo sem preços
         pos["price"] = 0.0
         pos["price_date"] = None
 
-    # garante preÃ§o numÃ©rico sempre
+    # garante preço numérico sempre
     pos["price"] = pd.to_numeric(pos.get("price", 0.0), errors="coerce").fillna(0.0)
 
     
@@ -172,7 +172,7 @@ def portfolio_view(date_from=None, date_to=None):
         if "currency" not in pos.columns:
             pos["currency"] = None
 
-    # ===== CÃ¡lculos =====
+    # ===== Cálculos =====
     pos["market_value"] = pos["qty"] * pos["price"]
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
 
@@ -196,7 +196,7 @@ def portfolio_view(date_from=None, date_to=None):
     return pos, tdf, inc
 def df_prices_upto(up_to_date: str) -> pd.DataFrame:
     """
-    Retorna o Ãºltimo preÃ§o conhecido (<= up_to_date) por ativo.
+    Retorna o último preço conhecido (<= up_to_date) por ativo.
     up_to_date: 'YYYY-MM-DD'
     """
     df = _query_df("""
@@ -214,11 +214,11 @@ def df_prices_upto(up_to_date: str) -> pd.DataFrame:
 
 def investments_value_timeseries(date_from: str, date_to: str) -> pd.DataFrame:
     """
-    SÃ©rie diÃ¡ria do valor de mercado dos investimentos entre date_from e date_to.
+    Série diária do valor de mercado dos investimentos entre date_from e date_to.
     Retorna colunas: date, invest_market_value
     """
-    # trades do perÃ­odo (na prÃ¡tica, vocÃª precisa considerar posiÃ§Ãµes anteriores tambÃ©m,
-    # mas para MVP vamos considerar tudo atÃ© date_to e filtrar por dia)
+    # trades do período (na prática, você precisa considerar posições anteriores também,
+    # mas para MVP vamos considerar tudo até date_to e filtrar por dia)
     tdf = df_trades(None, date_to)
     if tdf.empty:
         # retorna datas com 0
@@ -235,7 +235,7 @@ def investments_value_timeseries(date_from: str, date_to: str) -> pd.DataFrame:
     for d in dates:
         d_str = d.strftime("%Y-%m-%d")
 
-        # trades atÃ© o dia D
+        # trades até o dia D
         t_day = tdf[tdf["date"] <= d].copy()
         pos = positions_avg_cost(t_day)
         if pos.empty:
@@ -261,14 +261,14 @@ def fetch_last_price(asset: dict) -> float | None:
         return x if isinstance(x, dict) else dict(x)
 
     """
-    Retorna o Ãºltimo preÃ§o do ativo ou None se nÃ£o conseguir.
+    Retorna o último preço do ativo ou None se não conseguir.
     """
     asset = as_dict(asset)
     symbol = (asset.get("symbol") or "").strip().upper()
     aclass = (asset.get("asset_class") or "").strip().upper()
 
-    # ===== AÃ‡Ã•ES/FIIs (B3) =====
-    if aclass in ("AÃ‡Ã•ES BR", "ACOES BR", "STOCK_FII", "STOCK", "FII"):
+    # ===== ACOES/FIIs (B3) =====
+    if aclass in ("AÇÕES BR", "ACOES BR", "STOCK_FII", "STOCK", "FII"):
         # yfinance usa .SA para B3
         ticker = symbol if symbol.endswith(".SA") else f"{symbol}.SA"
 
@@ -284,7 +284,7 @@ def fetch_last_price(asset: dict) -> float | None:
 
     # ===== CRIPTO =====
     if aclass == "CRYPTO":
-        # Ex: BTC -> BTC-USD (vocÃª pode melhorar depois p/ BRL)
+        # Ex: BTC -> BTC-USD (você pode melhorar depois p/ BRL)
         ticker = symbol if "-" in symbol else f"{symbol}-USD"
 
         import yfinance as yf
@@ -297,5 +297,5 @@ def fetch_last_price(asset: dict) -> float | None:
         px = float(h["Close"].iloc[-1])
         return px if px > 0 else None
 
-    # ===== RENDA FIXA (sem fonte automÃ¡tica por enquanto) =====
+    # ===== RENDA FIXA (sem fonte automática por enquanto) =====
     return None 

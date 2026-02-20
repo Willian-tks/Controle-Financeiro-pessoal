@@ -1,4 +1,4 @@
-# reports.py
+﻿# reports.py
 import pandas as pd
 from db import get_conn
 
@@ -41,7 +41,7 @@ def kpis(df: pd.DataFrame) -> dict:
     if df is None or df.empty:
         return {"receitas": 0.0, "despesas": 0.0, "saldo": 0.0}
 
-    # TransferÃªncia nÃ£o Ã© Receita nem Despesa
+    # Transferência não é Receita nem Despesa
     base = df[df["category_kind"].fillna("") != "Transferencia"].copy()
 
     receitas = float(base.loc[base["amount_brl"] > 0, "amount_brl"].sum())
@@ -88,7 +88,7 @@ def account_balance(df: pd.DataFrame):
 
 def cash_balance_timeseries(date_from=None, date_to=None) -> pd.DataFrame:
     """
-    SÃ©rie diÃ¡ria do saldo acumulado (caixa) baseado nas transaÃ§Ãµes.
+    Série diária do saldo acumulado (caixa) baseado nas transações.
     Retorna colunas: date, cash_balance
     """
     df = df_transactions(date_from, date_to)

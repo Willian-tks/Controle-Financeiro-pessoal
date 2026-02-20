@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date
 import os
@@ -55,7 +55,7 @@ def _normalize_b3(symbol: str) -> str:
 
 def _to_brapi_symbol(symbol: str) -> str:
     """
-    BRAPI normalmente usa o ticker B3 sem sufixo: 'PETR4' (nÃƒÂ£o 'PETR4.SA').
+    BRAPI normalmente usa o ticker B3 sem sufixo: 'PETR4' (não 'PETR4.SA').
     """
     s = (symbol or "").strip().upper().replace(" ", "")
     if s.endswith(".SA"):
@@ -81,14 +81,14 @@ def fetch_last_price_yf(symbol: str) -> Tuple[Optional[float], Optional[str], Op
     Retorna (price, px_date, src) ou (None, None, None)
     """
     try:
-        sym = _normalize_b3(symbol)  # para B3; se jÃƒÂ¡ vier BTC-USD etc, isso ainda funciona se vocÃƒÂª nÃƒÂ£o chamar aqui
+        sym = _normalize_b3(symbol)  # para B3; se já vier BTC-USD etc, isso ainda funciona se você não chamar aqui
         t = yf.Ticker(sym)
 
         hist = t.history(period="5d")
         if hist is None or getattr(hist, "empty", True):
             return None, None, None
 
-        # pega o ÃƒÂºltimo fechamento vÃƒÂ¡lido
+        # pega o último fechamento válido
         last_close = hist["Close"].dropna()
         if last_close.empty:
             return None, None, None
@@ -105,7 +105,7 @@ def _get_brapi_token() -> Optional[str]:
     if token:
         return token.strip()
 
-    # 2) tenta streamlit secrets (sem quebrar se streamlit nÃƒÂ£o existir aqui)
+    # 2) tenta streamlit secrets (sem quebrar se streamlit não existir aqui)
     try:
         import streamlit as st  # import local
         token = st.secrets.get("BRAPI_TOKEN")
@@ -123,11 +123,11 @@ def fetch_last_price_brapi(symbol: str) -> Tuple[Optional[float], Optional[str],
     """
     token = _get_brapi_token()
     if not token:
-        return None, None, None, "BRAPI_TOKEN nÃƒÂ£o configurado (env ou secrets.toml)."
+        return None, None, None, "BRAPI_TOKEN não configurado (env ou secrets.toml)."
 
     sym = _to_brapi_symbol(symbol)
     if not sym:
-        return None, None, None, "SÃƒÂ­mbolo vazio."
+        return None, None, None, "Símbolo vazio."
 
     url = f"https://brapi.dev/api/quote/{sym}"
     params = {"token": token}
@@ -152,7 +152,7 @@ def fetch_last_price_brapi(symbol: str) -> Tuple[Optional[float], Optional[str],
         if price is None:
             return None, None, None, "BRAPI: sem regularMarketPrice."
 
-        # BRAPI nem sempre manda data bonitinha. Se nÃƒÂ£o vier, usamos hoje.
+        # BRAPI nem sempre manda data bonitinha. Se não vier, usamos hoje.
         px_date = row.get("regularMarketTime")
         if px_date:
             # se vier epoch seconds, converte; se vier string, deixa
@@ -172,8 +172,8 @@ def fetch_last_price_brapi(symbol: str) -> Tuple[Optional[float], Optional[str],
 
 def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
     """
-    EstratÃ©gia:
-    - Para ativos BR (aÃ§Ãµes/FIIs), aceita ticker com ou sem ".SA"
+    Estratégia:
+    - Para ativos BR (ações/FIIs), aceita ticker com ou sem ".SA"
     - Tenta Yahoo primeiro e, se falhar em ativo BR, tenta BRAPI
     Retorna (price, px_date, src, err)
     """
@@ -181,8 +181,8 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
     cur = (currency or "BRL").strip().upper()
     sym = (symbol or "").strip().upper().replace(" ", "")
 
-    # HeurÃ­stica para identificar ativo BR mesmo que classe venha fora do padrÃ£o.
-    is_b3_by_class = ("acoes" in cls) or ("aÃ§Ãµes" in cls) or ("fii" in cls) or ("b3" in cls) or ("_br" in cls)
+    # Heurística para identificar ativo BR mesmo que classe venha fora do padrão.
+    is_b3_by_class = ("acoes" in cls) or ("ações" in cls) or ("fii" in cls) or ("b3" in cls) or ("_br" in cls)
     is_b3_like_symbol = sym.endswith(".SA") or (
         sym.isalnum()
         and any(ch.isdigit() for ch in sym)
@@ -191,13 +191,13 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
     )
     is_b3 = is_b3_by_class or (cur == "BRL" and is_b3_like_symbol)
 
-    # 1) Para BR, prioriza BRAPI (mais estÃ¡vel para B3 e sem depender de ".SA")
+    # 1) Para BR, prioriza BRAPI (mais estável para B3 e sem depender de ".SA")
     if is_b3:
         px, px_date, src, err = fetch_last_price_brapi(sym)
         if px is not None:
             return px, px_date, src, None
 
-        # fallback para Yahoo caso BRAPI nÃ£o retorne
+        # fallback para Yahoo caso BRAPI não retorne
         px, px_date, src = fetch_last_price_yf(_normalize_b3(sym))
         if px is not None:
             return px, px_date, src, None
@@ -206,26 +206,26 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
         if px is not None:
             return px, px_date, src, None
 
-        return None, None, None, err or "Sem cotaÃ§Ã£o para ativo BR (BRAPI/Yahoo)."
+        return None, None, None, err or "Sem cotação para ativo BR (BRAPI/Yahoo)."
     else:
-        # 2) NÃ£o-BR: Yahoo
+        # 2) Não-BR: Yahoo
         px, px_date, src = fetch_last_price_yf(sym)
         if px is not None:
             return px, px_date, src, None
 
-    return None, None, None, "Yahoo nÃ£o retornou dados agora."
+    return None, None, None, "Yahoo não retornou dados agora."
 
 
 def update_all_prices(assets: list[dict] | None) -> list[dict]:
     """
     assets: lista de dicts com pelo menos: id, symbol, asset_class, currency
-    Retorna um relatÃƒÂ³rio [{asset_id, symbol, ok, price, px_date, src, error}]
+    Retorna um relatório [{asset_id, symbol, ok, price, px_date, src, error}]
     """
     report: list[dict] = []
     timeout_s = 25.0
 
     for a in (assets or []):
-        # garante dict (sqlite3.Row nÃƒÂ£o tem .get)
+        # garante dict (sqlite3.Row não tem .get)
         if isinstance(a, sqlite3.Row):
             a = dict(a)
 
@@ -263,7 +263,7 @@ def update_all_prices(assets: list[dict] | None) -> list[dict]:
             })
             continue
 
-        # CompatÃƒÂ­vel com fetch_last_price retornando 3 ou 4 valores
+        # Compatível com fetch_last_price retornando 3 ou 4 valores
         try:
             price, px_date, src, err = payload
         except ValueError:
@@ -279,7 +279,7 @@ def update_all_prices(assets: list[dict] | None) -> list[dict]:
                 "px_date": None,
                 "src": None,
                 "elapsed_s": elapsed_s,
-                "error": err or "Sem cotaÃƒÂ§ÃƒÂ£o (fonte nÃƒÂ£o retornou dados)"
+                "error": err or "Sem cotação (fonte não retornou dados)"
             })
         else:
             report.append({
@@ -296,7 +296,7 @@ def update_all_prices(assets: list[dict] | None) -> list[dict]:
     return report
 def fetch_last_price_yf(symbol: str):
     """
-    Retorna (price, px_date, src) ou (None, None, None) se nÃƒÂ£o conseguir.
+    Retorna (price, px_date, src) ou (None, None, None) se não conseguir.
     """
     try:
         if not symbol or not str(symbol).strip():
@@ -306,13 +306,13 @@ def fetch_last_price_yf(symbol: str):
 
         t = yf.Ticker(symbol)
 
-        # use auto_adjust=False pra evitar mudanÃƒÂ§as de colunas
+        # use auto_adjust=False pra evitar mudanças de colunas
         hist = t.history(period="5d", interval="1d", auto_adjust=False, timeout=6)
 
         if hist is None or hist.empty:
             return None, None, None
 
-        # pega ÃƒÂºltimo fechamento vÃƒÂ¡lido
+        # pega último fechamento válido
         close = hist["Close"].dropna()
         if close.empty:
             return None, None, None
@@ -323,11 +323,11 @@ def fetch_last_price_yf(symbol: str):
         return last_price, last_date, "yfinance"
 
     except (TypeError, KeyError, IndexError, ValueError):
-        # aqui entra exatamente o erro que vocÃƒÂª estÃƒÂ¡ vendo dentro do yfinance
+        # aqui entra exatamente o erro que você está vendo dentro do yfinance
         return None, None, None
 
     except Exception:
-        # se quiser logar depois, dÃƒÂ¡ pra printar, mas nÃƒÂ£o derruba o app
+        # se quiser logar depois, dá pra printar, mas não derruba o app
         return None, None, None
 
 # invest_quotes.py
@@ -342,8 +342,8 @@ def normalize_symbol(asset) -> str | None:
     if not sym:
         return None
 
-    # ajuste para aÃƒÂ§ÃƒÂµes BR / FIIs (se vocÃƒÂª usa esse padrÃƒÂ£o)
-    if cls in ("AÃƒÂ§ÃƒÂµes BR", "FIIs", "FII", "STOCK_FII"):
+    # ajuste para ações BR / FIIs
+    if cls in ("Ações BR", "Acoes BR", "FIIs", "FII", "STOCK_FII"):
         if not sym.endswith(".SA"):
             sym = sym + ".SA"
 

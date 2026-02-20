@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import sqlite3
 from pathlib import Path
@@ -90,7 +90,7 @@ def get_conn() -> DBConn:
             from psycopg.rows import dict_row
         except ImportError as e:
             raise RuntimeError(
-                "PostgreSQL habilitado via DATABASE_URL, mas psycopg nÃ£o estÃ¡ instalado."
+                "PostgreSQL habilitado via DATABASE_URL, mas psycopg não está instalado."
             ) from e
 
         raw = psycopg.connect(DATABASE_URL, row_factory=dict_row)

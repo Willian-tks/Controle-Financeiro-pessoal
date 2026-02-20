@@ -3,11 +3,11 @@
 import os
 import certifi
 
-# forÃ§a certificados SSL (resolve curl(77))
+# força certificados SSL (resolve curl(77))
 ca = certifi.where()
 os.environ["SSL_CERT_FILE"] = ca
 os.environ["REQUESTS_CA_BUNDLE"] = ca
-os.environ["CURL_CA_BUNDLE"] = ca  # <<< ESTE Ã© o que resolve o curl(77) na maioria dos casos
+os.environ["CURL_CA_BUNDLE"] = ca  # <<< ESTE é o que resolve o curl(77) na maioria dos casos
 os.environ["BRAPI_TOKEN"] = "u7tTrWyF5sCyR5gtLkQqJd"
 
 import streamlit as st
@@ -69,7 +69,7 @@ def inject_corporate_css():
       .badge-warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
       .badge-bad { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
 
-      /* BotÃµes */
+      /* Botões */
       div.stButton > button {
         border-radius: 12px !important;
         padding: 0.55rem 1rem !important;
@@ -92,7 +92,7 @@ def inject_corporate_css():
         border: 1px solid #e5e7eb;
       }
 
-      /* Alertas (deixa mais â€œcorporativoâ€) */
+      /* Alertas (deixa mais corporativo) */
       div[data-testid="stAlert"] {
         border-radius: 14px;
         border: 1px solid #e5e7eb;
@@ -107,13 +107,13 @@ inject_corporate_css()
 # Config
 # ----------------------------
 st.set_page_config(page_title="Financeiro Pessoal", layout="wide")
-st.title("ðŸ“Š Controle Financeiro Pessoal (MVP)")
+st.title("Controle Financeiro Pessoal (MVP)")
 
-st.caption(f"ðŸ“ CWD: {os.getcwd()}")
+st.caption(f"CWD: {os.getcwd()}")
 if USE_POSTGRES:
-    st.caption("ðŸ—„ï¸ DB: PostgreSQL (via DATABASE_URL)")
+    st.caption("DB: PostgreSQL (via DATABASE_URL)")
 else:
-    st.caption(f"ðŸ—„ï¸ DB_PATH: {DB_PATH}")
+    st.caption(f"DB_PATH: {DB_PATH}")
 
 init_db()
 
@@ -144,7 +144,7 @@ cad_tab1, cad_tab2 = st.sidebar.tabs(["Contas", "Categorias"])
 
 # --------- CONTAS ----------
 with cad_tab1:
-    st.markdown("### âž• Nova conta")
+    st.markdown("### Nova conta")
     acc_name = st.text_input("Nome da conta", key="acc_name_new")
     acc_type = st.selectbox("Tipo", ["Banco", "Cartao", "Dinheiro", "Corretora"], key="acc_type_new")
 
@@ -157,7 +157,7 @@ with cad_tab1:
             st.warning("Informe um nome.")
 
     st.divider()
-    st.markdown("### ðŸ› ï¸ Gerenciar contas")
+    st.markdown("### Gerenciar contas")
 
     accounts_list = repo.list_accounts() or []
     if not accounts_list:
@@ -181,7 +181,7 @@ with cad_tab1:
         with c1:
             if st.button("Atualizar conta", key="btn_upd_acc"):
                 if not new_name.strip():
-                    st.warning("Nome nÃ£o pode ser vazio.")
+                    st.warning("Nome não pode ser vazio.")
                 else:
                     repo.update_account(acc_id, new_name.strip(), new_type)
                     st.success("Conta atualizada.")
@@ -191,18 +191,18 @@ with cad_tab1:
             used = repo.account_usage_count(acc_id)
             if st.button("Excluir conta", key="btn_del_acc"):
                 if used > 0:
-                    st.warning(f"NÃ£o pode excluir: {used} lanÃ§amento(s) usam esta conta.")
+                    st.warning(f"Não pode excluir: {used} lançamento(s) usam esta conta.")
                 else:
                     deleted = repo.delete_account(acc_id)
                     if deleted:
-                        st.success("Conta excluÃ­da.")
+                        st.success("Conta excluída.")
                         st.rerun()
                     else:
-                        st.warning("NÃ£o foi possÃ­vel excluir (talvez jÃ¡ tenha sido removida).")
+                        st.warning("Não foi possível excluir (talvez já tenha sido removida).")
 
 # --------- CATEGORIAS ----------
 with cad_tab2:
-    st.markdown("### âž• Nova categoria")
+    st.markdown("### Nova categoria")
     cat_name = st.text_input("Nome da categoria", key="cat_name_new")
     cat_kind = st.selectbox("Tipo", ["Despesa", "Receita", "Transferencia"], key="cat_kind_new")
 
@@ -215,7 +215,7 @@ with cad_tab2:
             st.warning("Informe um nome.")
 
     st.divider()
-    st.markdown("### ðŸ› ï¸ Gerenciar categorias")
+    st.markdown("### Gerenciar categorias")
 
     categories_list = repo.list_categories() or []
     if not categories_list:
@@ -239,7 +239,7 @@ with cad_tab2:
         with c1:
             if st.button("Atualizar categoria", key="btn_upd_cat"):
                 if not new_cat_name.strip():
-                    st.warning("Nome nÃ£o pode ser vazio.")
+                    st.warning("Nome não pode ser vazio.")
                 else:
                     repo.update_category(cat_id, new_cat_name.strip(), new_kind)
                     st.success("Categoria atualizada.")
@@ -249,26 +249,26 @@ with cad_tab2:
             used = repo.category_usage_count(cat_id)
             if st.button("Excluir categoria", key="btn_del_cat"):
                 if used > 0:
-                    st.warning(f"NÃ£o pode excluir: {used} lanÃ§amento(s) usam esta categoria.")
+                    st.warning(f"Não pode excluir: {used} lançamento(s) usam esta categoria.")
                 else:
                     deleted = repo.delete_category(cat_id)
                     if deleted:
-                        st.success("Categoria excluÃ­da.")
+                        st.success("Categoria excluída.")
                         st.rerun()
                     else:
-                        st.warning("NÃ£o foi possÃ­vel excluir (talvez jÃ¡ tenha sido removida).")
+                        st.warning("Não foi possível excluir (talvez já tenha sido removida).")
 
 
 st.sidebar.divider()
-st.sidebar.subheader("ðŸ§¹ Limpeza de dados (TESTES)")
+st.sidebar.subheader("Limpeza de dados (TESTES)")
 
 st.sidebar.caption(
-    "âš ï¸ Use apenas em ambiente de testes.\n"
-    "Digite LIMPAR para habilitar os botÃµes."
+    "Use apenas em ambiente de testes.\n"
+    "Digite LIMPAR para habilitar os botões."
 )
 
 confirm = st.sidebar.text_input(
-    'ConfirmaÃ§Ã£o',
+    'Confirmação',
     placeholder='Digite LIMPAR',
     key="confirm_clear"
 )
@@ -277,23 +277,23 @@ c1, c2 = st.sidebar.columns(2)
 c3, c4 = st.sidebar.columns(2)
 
 with c1:
-    if st.button("ðŸ§¾ LanÃ§amentos", disabled=(confirm != "LIMPAR")):
+    if st.button("Lançamentos", disabled=(confirm != "LIMPAR")):
         n = repo.clear_transactions()
-        st.sidebar.success(f"{n} lanÃ§amentos removidos")
+        st.sidebar.success(f"{n} lançamentos removidos")
         st.rerun()
 
 with c2:
-    if st.button("ðŸ’¼ Mov. Invest.", disabled=(confirm != "LIMPAR")):
+    if st.button("Mov. Invest.", disabled=(confirm != "LIMPAR")):
         res = invest_repo.clear_invest_movements()
         st.sidebar.success(
             f"Trades: {res['trades']} | "
             f"Proventos: {res['income_events']} | "
-            f"CotaÃ§Ãµes: {res['prices']}"
+            f"Cotações: {res['prices']}"
         )
         st.rerun()
 
 with c3:
-    if st.button("ðŸ“Œ Ativos", disabled=(confirm != "LIMPAR")):
+    if st.button("Ativos", disabled=(confirm != "LIMPAR")):
         try:
             n = invest_repo.clear_assets()
             st.sidebar.success(f"{n} ativos removidos")
@@ -301,11 +301,11 @@ with c3:
         except Exception as e:
             st.sidebar.error(
                 "Erro ao remover ativos.\n"
-                "Limpe primeiro trades, proventos e cotaÃ§Ãµes."
+                "Limpe primeiro trades, proventos e cotações."
             )
 
 with c4:
-    if st.button("ðŸ”¥ RESET TOTAL", disabled=(confirm != "LIMPAR")):
+    if st.button("RESET TOTAL", disabled=(confirm != "LIMPAR")):
         repo.clear_transactions()
         invest_repo.clear_invest_movements()
         invest_repo.clear_assets()
@@ -318,7 +318,7 @@ accounts, categories, acc_map, acc_type_map, cat_map, cat_kind_map = load_accoun
 # =========================================================
 # Tabs principais
 # =========================================================
-tab0, tab1, tab2, tab3, tab4 = st.tabs(["ðŸ¦ Contas","âž• LanÃ§amentos", "ðŸ“ˆ Dashboard", "ðŸ“¥ Importar CSV", "ðŸ’¼ Investimentos"])
+tab0, tab1, tab2, tab3, tab4 = st.tabs(["Contas", "Lançamentos", "Dashboard", "Importar CSV", "Investimentos"])
 
 # ========== TAB 0: Contas (Saldos) ==========
 with tab0:
@@ -329,7 +329,7 @@ with tab0:
     ab = reports.account_balance(df_all)
 
     if ab.empty:
-        st.info("Sem lanÃ§amentos ainda.")
+        st.info("Sem lançamentos ainda.")
     else:
         ab_show = ab.copy()
         ab_show["saldo_brl"] = ab_show["saldo"].apply(to_brl)
@@ -345,16 +345,16 @@ with tab0:
 
 
 # =========================================================
-# TAB 1: LanÃ§amentos
+# TAB 1: Lançamentos
 # =========================================================
 with tab1:
-    st.subheader("Novo lanÃ§amento")
+    st.subheader("Novo lançamento")
 
     col1, col2, col3, col4 = st.columns([1.2, 2.5, 1.2, 1.2])
     with col1:
         date = st.date_input("Data", key="tx_date")
     with col2:
-        desc = st.text_input("DescriÃ§Ã£o", key="tx_desc")
+        desc = st.text_input("Descrição", key="tx_desc")
     with col3:
         amount_abs = st.number_input(
             "Valor", min_value=0.0, value=0.0, step=10.0, format="%.2f", key="tx_amount"
@@ -374,14 +374,14 @@ with tab1:
             key="tx_category"
         )
     with col6:
-        method = st.text_input("MÃ©todo (opcional)", placeholder="Pix, DÃ©bito, CrÃ©dito...", key="tx_method")
+        method = st.text_input("Método (opcional)", placeholder="Pix, Débito, Crédito...", key="tx_method")
     with col7:
         notes = st.text_input("Obs (opcional)", key="tx_notes")
 
     # ---------- (A) Detecta o tipo da categoria selecionada ----------
     kind = cat_kind_map.get(category_name) if category_name != "(sem)" else None
 
-    # ---------- (B) Se for TransferÃªncia, mostra a Conta Origem ----------
+    # ---------- (B) Se for Transferência, mostra a Conta Origem ----------
     source_account_name = None
     if kind == "Transferencia":
         # garante que exista acc_type_map no app.py (mapa nome -> tipo)
@@ -389,18 +389,18 @@ with tab1:
         non_broker_accounts = [n for n in acc_map.keys() if acc_type_map.get(n) != "Corretora"]
 
         source_account_name = st.selectbox(
-            "Conta origem (TransferÃªncia)",
+            "Conta origem (Transferência)",
             ["(selecione)"] + non_broker_accounts,
             key="tx_source_account"
         )
 
-    if st.button("Salvar lanÃ§amento", type="primary", key="btn_save_tx"):
+    if st.button("Salvar lançamento", type="primary", key="btn_save_tx"):
         if not acc_map:
             st.error("Cadastre uma conta antes.")
             st.stop()
 
         if not desc.strip():
-            st.error("Informe a descriÃ§Ã£o.")
+            st.error("Informe a descrição.")
             st.stop()
 
         account_id = acc_map.get(account_name)  # DESTINO
@@ -408,30 +408,30 @@ with tab1:
         amount = float(amount_abs)
 
         # -------------------------
-        # TRANSFERÃŠNCIA (2 lanÃ§amentos)
+        # TRANSFERENCIA (2 lançamentos)
         # -------------------------
         if kind == "Transferencia":
             if not source_account_name or source_account_name == "(selecione)":
-                st.error("Selecione a conta ORIGEM da transferÃªncia.")
+                st.error("Selecione a conta ORIGEM da transferência.")
                 st.stop()
 
             if source_account_name == account_name:
-                st.error("Conta origem e destino nÃ£o podem ser a mesma.")
+                st.error("Conta origem e destino não podem ser a mesma.")
                 st.stop()
 
             # destino precisa ser corretora
             if acc_type_map.get(account_name) != "Corretora":
-                st.error("Para TransferÃªncia, a conta DESTINO precisa ser do tipo Corretora.")
+                st.error("Para Transferência, a conta DESTINO precisa ser do tipo Corretora.")
                 st.stop()
 
-            # origem nÃ£o pode ser corretora
+            # origem não pode ser corretora
             if acc_type_map.get(source_account_name) == "Corretora":
-                st.error("A conta ORIGEM nÃ£o pode ser Corretora.")
+                st.error("A conta ORIGEM não pode ser Corretora.")
                 st.stop()
 
             source_account_id = acc_map[source_account_name]
 
-            # saldo da origem (somatÃ³rio dos lanÃ§amentos dessa conta)
+            # saldo da origem (somatório dos lançamentos dessa conta)
             df_all = reports.df_transactions()
             if df_all.empty:
                 source_balance = 0.0
@@ -445,7 +445,7 @@ with tab1:
                 )
                 st.stop()
 
-            # 1) dÃ©bito na origem
+            # 1) débito na origem
             repo.insert_transaction(
                 date=date.strftime("%Y-%m-%d"),
                 description=f"TRANSF -> {account_name} | {desc.strip()}",
@@ -456,7 +456,7 @@ with tab1:
                 notes=notes.strip() if notes.strip() else None
             )
 
-            # 2) crÃ©dito no destino (corretora)
+            # 2) crédito no destino (corretora)
             repo.insert_transaction(
                 date=date.strftime("%Y-%m-%d"),
                 description=f"TRANSF <- {source_account_name} | {desc.strip()}",
@@ -467,7 +467,7 @@ with tab1:
                 notes=notes.strip() if notes.strip() else None
             )
 
-            st.success("TransferÃªncia registrada (origem debitada e corretora creditada).")
+            st.success("Transferência registrada (origem debitada e corretora creditada).")
             st.rerun()
 
         # -------------------------
@@ -487,15 +487,15 @@ with tab1:
             notes=notes.strip() if notes.strip() else None
         )
 
-        st.success("LanÃ§amento salvo.")
+        st.success("Lançamento salvo.")
         st.rerun()
 
     st.divider()
-    st.subheader("LanÃ§amentos recentes")
+    st.subheader("Lançamentos recentes")
 
     df_tx = reports.df_transactions()
     if df_tx.empty:
-        st.info("Sem lanÃ§amentos ainda.")
+        st.info("Sem lançamentos ainda.")
     else:
         show = df_tx.sort_values("date", ascending=False).head(50).copy()
         show["date"] = show["date"].dt.strftime("%Y-%m-%d")
@@ -509,12 +509,12 @@ with tab1:
 
         col_del, col_btn = st.columns([1.2, 1.0])
         with col_del:
-            del_id = st.number_input("Excluir lanÃ§amento por ID", min_value=0, step=1, value=0, key="tx_del_id")
+            del_id = st.number_input("Excluir lançamento por ID", min_value=0, step=1, value=0, key="tx_del_id")
         with col_btn:
             if st.button("Excluir", key="btn_del_tx"):
                 if del_id > 0:
                     repo.delete_transaction(int(del_id))
-                    st.success("ExcluÃ­do (se existia).")
+                    st.success("Excluído (se existia).")
                     st.rerun()
                 else:
                     st.warning("Informe um ID > 0.")
@@ -530,7 +530,7 @@ with tab2:
     with f1:
         date_from = st.date_input("De", value=None, key="dash_date_from")
     with f2:
-        date_to = st.date_input("AtÃ©", value=None, key="dash_date_to")
+        date_to = st.date_input("Até", value=None, key="dash_date_to")
     with f3:
         acc_filter = st.selectbox("Conta", ["(todas)"] + list(acc_map.keys()), key="dash_acc_filter")
 
@@ -549,20 +549,20 @@ with tab2:
 
     st.divider()
 
-    st.markdown("## ðŸ“Š Resumo financeiro do perÃ­odo")
+    st.markdown("## Resumo financeiro do período")
 
-    # 1) Saldo por mÃªs (grÃ¡fico)
-    st.markdown("### Saldo por mÃªs")
+    # 1) Saldo por mês (gráfico)
+    st.markdown("### Saldo por mês")
     ms = reports.monthly_summary(df)
     if ms.empty:
-        st.info("Sem dados para o perÃ­odo.")
+        st.info("Sem dados para o período.")
     else:
         ms_plot = ms.copy()
         ms_plot["month"] = pd.to_datetime(ms_plot["month"].astype(str) + "-01", errors="coerce")
         fig = px.line(ms_plot, x="month", y="saldo", markers=True)
         st.plotly_chart(fig, use_container_width=True)
 
-        # 2) Resumo mensal (tabela) -> abaixo do grÃ¡fico
+        # 2) Resumo mensal (tabela) -> abaixo do gráfico
         st.markdown("### Resumo mensal")
         ms_fmt = ms.copy()
         ms_fmt["receitas"] = ms_fmt["receitas"].apply(to_brl)
@@ -576,7 +576,7 @@ with tab2:
     st.markdown("### Despesas por categoria")
     ce = reports.category_expenses(df)
     if ce.empty:
-        st.info("Sem despesas no perÃ­odo.")
+        st.info("Sem despesas no período.")
     else:
         fig2 = px.bar(ce.head(15), x="valor", y="category", orientation="h")
         st.plotly_chart(fig2, use_container_width=True)
@@ -593,10 +593,10 @@ with tab2:
 
     st.divider()
 
-    # 5) PatrimÃ´nio (expander)
-    with st.expander("ðŸ“Œ PatrimÃ´nio (por dia) â€” abrir", expanded=False):
+    # 5) Patrimônio (expander)
+    with st.expander("Patrimônio (por dia) - abrir", expanded=False):
         st.caption(
-            "â„¹ï¸ Depende de cotaÃ§Ãµes salvas. Dias sem cotaÃ§Ã£o podem aparecer zerados e gerar saltos â€” normal com poucos dados."
+            "Depende de cotações salvas. Dias sem cotação podem aparecer zerados e gerar saltos - normal com poucos dados."
         )
 
         if not date_from or not date_to:
@@ -612,7 +612,7 @@ with tab2:
         inv_ts = invest_reports.investments_value_timeseries(d_from, d_to)
 
         if inv_ts.empty and cash_ts.empty:
-            st.info("Sem dados suficientes para patrimÃ´nio ainda.")
+            st.info("Sem dados suficientes para patrimônio ainda.")
         else:
             if inv_ts.empty:
                 base = cash_ts.copy()
@@ -649,7 +649,7 @@ with tab2:
         export_df["date"] = export_df["date"].dt.strftime("%Y-%m-%d")
         csv = export_df.to_csv(index=False).encode("utf-8")
         st.download_button(
-            "Baixar CSV (transaÃ§Ãµes filtradas)",
+            "Baixar CSV (transações filtradas)",
             data=csv,
             file_name="transacoes_filtradas.csv",
             mime="text/csv"
@@ -660,13 +660,13 @@ with tab2:
 # TAB 3: Importar CSV
 # =========================================================
 with tab3:
-    st.subheader("ImportaÃ§Ã£o (modelo genÃ©rico)")
+    st.subheader("Importação (modelo genérico)")
 
     st.markdown("""
-**Seu CSV deve ter essas colunas (mÃ­nimo):**
+**Seu CSV deve ter essas colunas (mínimo):**
 - `date` (ex: 2026-01-19)
 - `description`
-- `amount` (positivo entrada, negativo saÃ­da)
+- `amount` (positivo entrada, negativo saída)
 - `account` (nome da conta)
 
 **Opcional:** `category`, `method`, `notes`
@@ -677,7 +677,7 @@ with tab3:
         try:
             raw = pd.read_csv(up)
             norm = normalize_import_df(raw)
-            st.write("PrÃ©via normalizada:")
+            st.write("Prévia normalizada:")
             st.dataframe(norm.head(20), use_container_width=True, hide_index=True)
 
             if st.button("Importar para o banco", type="primary", key="btn_import_csv"):
@@ -703,7 +703,7 @@ with tab3:
                         notes=row.get("notes")
                     )
 
-                st.success("ImportaÃ§Ã£o concluÃ­da. VÃ¡ para a aba Dashboard.")
+                st.success("Importação concluída. Vá para a aba Dashboard.")
                 st.rerun()
 
         except Exception as e:
@@ -714,9 +714,9 @@ with tab3:
 # TAB 4: Investimentos (tudo dentro!)
 # =========================================================
 with tab4:
-    st.subheader("Investimentos (AÃ§Ãµes/FIIs + Cripto + Renda Fixa)")
+    st.subheader("Investimentos (Ações/FIIs + Cripto + Renda Fixa)")
 
-    subtabs = st.tabs(["Ativos", "OperaÃ§Ãµes", "Proventos", "CotaÃ§Ãµes", "Carteira"])
+    subtabs = st.tabs(["Ativos", "Operações", "Proventos", "Cotações", "Carteira"])
 
     # dados para investimentos
     accounts_i = repo.list_accounts() or []
@@ -734,7 +734,7 @@ with tab4:
         st.markdown("### Cadastrar ativo")
         c1, c2, c3, c4 = st.columns([1.2, 2.0, 1.2, 1.2])
         with c1:
-            symbol = st.text_input("Ticker/SÃ­mbolo", placeholder="PETR4, KNCR11, BTC, CDB_X_2028", key="asset_symbol")
+            symbol = st.text_input("Ticker/Símbolo", placeholder="PETR4, KNCR11, BTC, CDB_X_2028", key="asset_symbol")
         with c2:
             name = st.text_input("Nome", placeholder="Petrobras PN, Kinea CRI, Bitcoin, CDB Banco X...", key="asset_name")
         with c3:
@@ -750,27 +750,27 @@ with tab4:
         with c7:
             maturity_date = st.text_input("Vencimento (RF opcional)", placeholder="YYYY-MM-DD", key="asset_maturity")
        
-        # contas que podem ser origem (nÃ£o-corretora)
+        # contas que podem ser origem (não-corretora)
         source_accounts = [r for r in accounts if r["type"] != "Corretora"]
         source_map = {r["name"]: r["id"] for r in source_accounts}
 
         src_name = st.selectbox(
-            "Conta origem (opcional) â€” para transferir automaticamente",
-            ["(nÃ£o transferir)"] + list(source_map.keys()),
+            "Conta origem (opcional) - para transferir automaticamente",
+            ["(não transferir)"] + list(source_map.keys()),
             key="trade_src_acc",
         )
 
-        source_account_id = None if src_name == "(nÃ£o transferir)" else source_map[src_name]
+        source_account_id = None if src_name == "(não transferir)" else source_map[src_name]
 
         symbol_preview = symbol.strip().upper().replace(" ", "")
-        br_classes = {"AÃ§Ãµes BR", "FIIs", "ETFs BR", "BDRs"}
+        br_classes = {"Ações BR", "FIIs", "ETFs BR", "BDRs"}
         if symbol_preview and currency == "BRL" and asset_class in br_classes:
             quote_symbol = symbol_preview if symbol_preview.endswith(".SA") else f"{symbol_preview}.SA"
-            st.caption(f"CotaÃ§Ã£o automÃ¡tica (Yahoo) usarÃ¡: `{quote_symbol}`. VocÃª pode cadastrar sem `.SA`.")
+            st.caption(f"Cotação automática (Yahoo) usará: `{quote_symbol}`. Você pode cadastrar sem `.SA`.")
 
         if st.button("Salvar ativo", type="primary", key="btn_save_asset"):
             if not symbol.strip() or not name.strip():
-                st.error("Informe sÃ­mbolo e nome.")
+                st.error("Informe símbolo e nome.")
             else:
                 invest_repo.create_asset(
                     symbol=symbol.strip(),
@@ -804,10 +804,10 @@ with tab4:
             col3.write(a["asset_class"])
 
             with col4:
-                if st.button("âœï¸", key=f"edit_{a['id']}"):
+                if st.button("Editar", key=f"edit_{a['id']}"):
                     st.session_state["edit_asset_id"] = a["id"]
 
-                if st.button("ðŸ—‘", key=f"del_{a['id']}"):
+                if st.button("Excluir", key=f"del_{a['id']}"):
                     ok, msg = invest_repo.delete_asset(a["id"])
                     if ok:
                         st.success(msg)
@@ -818,14 +818,14 @@ if "edit_asset_id" in st.session_state:
     asset = invest_repo.get_asset_by_id(st.session_state["edit_asset_id"])
     asset = dict(asset)
 
-    st.markdown("### âœï¸ Editar ativo")
+    st.markdown("### Editar ativo")
 
     symbol = st.text_input("Symbol", value=asset["symbol"])
     name = st.text_input("Nome", value=asset["name"])
     asset_class = st.text_input("Classe", value=asset["asset_class"])
     currency = st.text_input("Moeda", value=asset["currency"])
 
-    if st.button("Salvar alteraÃ§Ãµes"):
+    if st.button("Salvar alterações"):
         invest_repo.update_asset(
             asset_id=asset["id"],
             symbol=symbol,
@@ -839,9 +839,9 @@ if "edit_asset_id" in st.session_state:
         del st.session_state["edit_asset_id"]
         st.rerun()    
 
-# ===== OperaÃ§Ãµes =====
+# ===== Operações =====
 with subtabs[1]:
-    st.markdown("### Nova operaÃ§Ã£o (BUY/SELL)")
+    st.markdown("### Nova operação (BUY/SELL)")
 
     if not assets:
         st.warning("Cadastre um ativo primeiro.")
@@ -859,7 +859,7 @@ with subtabs[1]:
 
     c5, c6, c7 = st.columns([1.0, 1.0, 2.0])
     with c5:
-        price = st.number_input("PreÃ§o unitÃ¡rio", min_value=0.0, step=0.01, format="%.8f", key="trade_price")
+        price = st.number_input("Preço unitário", min_value=0.0, step=0.01, format="%.8f", key="trade_price")
     with c6:
         fees = st.number_input("Taxas", min_value=0.0, step=0.01, format="%.2f", key="trade_fees")
     with c7:
@@ -868,11 +868,11 @@ with subtabs[1]:
     # anti-duplo clique
     st.session_state.setdefault("last_trade_key", None)
 
-    if st.button("Salvar operaÃ§Ã£o", type="primary", key="btn_save_trade"):
+    if st.button("Salvar operação", type="primary", key="btn_save_trade"):
 
-        # ---------- VALIDAÃ‡Ã•ES ----------
+        # ---------- VALIDACOES ----------
         if float(qty) <= 0 or float(price) <= 0:
-            st.error("Quantidade e preÃ§o devem ser maiores que zero.")
+            st.error("Quantidade e preço devem ser maiores que zero.")
             st.stop()
 
         note_norm = note.strip() if note else ""
@@ -893,8 +893,8 @@ with subtabs[1]:
         if side == "BUY" and broker_cash < total_cost:
             st.error(
                 f"Saldo insuficiente na corretora.\n\n"
-                f"DisponÃ­vel: {to_brl(broker_cash)}\n"
-                f"NecessÃ¡rio: {to_brl(total_cost)}"
+                f"Disponível: {to_brl(broker_cash)}\n"
+                f"Necessário: {to_brl(total_cost)}"
             )
             st.stop()
 
@@ -930,11 +930,11 @@ with subtabs[1]:
             note=note_norm if note_norm else None
         )
 
-        st.success("OperaÃ§Ã£o salva.")
+        st.success("Operação salva.")
         st.rerun()
 
     st.divider()
-    st.markdown("### OperaÃ§Ãµes recentes")
+    st.markdown("### Operações recentes")
     trades = invest_repo.list_trades()
     if trades:
         recent_trades = [dict(r) for r in trades][:50]
@@ -946,10 +946,10 @@ with subtabs[1]:
         h4.markdown("**Classe**")
         h5.markdown("**Tipo**")
         h6.markdown("**Qtd**")
-        h7.markdown("**PreÃ§o**")
+        h7.markdown("**Preço**")
         h8.markdown("**Taxas**")
         h9.markdown("**Impostos**")
-        h10.markdown("**AÃ§Ã£o**")
+        h10.markdown("**Ação**")
 
         for t in recent_trades:
             c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns([0.7, 1.1, 1.2, 1.2, 0.9, 1.0, 1.0, 0.8, 0.8, 0.7])
@@ -964,7 +964,7 @@ with subtabs[1]:
             c9.write(f"{float(t['taxes']):.2f}")
 
             with c10:
-                if st.button("ðŸ—‘", key=f"btn_del_trade_{int(t['id'])}", help=f"Excluir operaÃ§Ã£o {int(t['id'])}"):
+                if st.button("Excluir", key=f"btn_del_trade_{int(t['id'])}", help=f"Excluir operação {int(t['id'])}"):
                     ok, msg = invest_repo.delete_trade_with_cash_reversal(int(t["id"]))
                     if ok:
                         st.success(msg)
@@ -972,7 +972,7 @@ with subtabs[1]:
                     else:
                         st.error(msg)
     else:
-        st.info("Sem operaÃ§Ãµes ainda.")
+        st.info("Sem operações ainda.")
 
     # ===== Proventos =====
     with subtabs[2]:
@@ -1004,7 +1004,7 @@ with subtabs[1]:
                 income_key = (sym_p, date_p.strftime("%Y-%m-%d"), typ, round(float(amount), 2), note_norm)
 
                 if st.session_state["last_income_key"] == income_key:
-                    st.warning("Provento jÃ¡ registrado (bloqueio anti-duplicaÃ§Ã£o).")
+                    st.warning("Provento já registrado (bloqueio anti-duplicação).")
                     st.stop()
 
                 st.session_state["last_income_key"] = income_key
@@ -1050,15 +1050,15 @@ with subtabs[1]:
         else:
             st.info("Sem proventos ainda.")
 
-   # ===== CotaÃ§Ãµes =====
-    # ===== CotaÃ§Ãµes =====
+   # ===== Cotações =====
+    # ===== Cotações =====
         with subtabs[3]:
-            st.markdown("### ðŸ“¡ CotaÃ§Ãµes automÃ¡ticas")
+            st.markdown("### Cotações automáticas")
 
-            if st.button("Atualizar cotaÃ§Ã£o agora", key="btn_update_quotes"):
+            if st.button("Atualizar cotação agora", key="btn_update_quotes"):
                 try:
                     assets = invest_repo.list_assets()
-                    with st.spinner("Consultando cotaÃ§Ãµes (Yahoo/BRAPI)..."):
+                    with st.spinner("Consultando cotações (Yahoo/BRAPI)..."):
                         report = invest_quotes.update_all_prices(assets)
 
                     saved = 0
@@ -1072,17 +1072,17 @@ with subtabs[1]:
                             )
                             saved += 1
 
-                    st.success(f"CotaÃ§Ãµes salvas: {saved}/{len(report)}")
+                    st.success(f"Cotações salvas: {saved}/{len(report)}")
                     if saved < len(report):
-                        st.warning("Alguns ativos nÃ£o retornaram cotaÃ§Ã£o nesta tentativa. Veja a coluna 'error' abaixo.")
+                        st.warning("Alguns ativos não retornaram cotação nesta tentativa. Veja a coluna 'error' abaixo.")
                     st.dataframe(pd.DataFrame(report), use_container_width=True)
 
                 except Exception as e:
-                    st.error(f"Erro ao atualizar cotaÃ§Ã£o: {e}")
+                    st.error(f"Erro ao atualizar cotação: {e}")
 
             st.divider()
 
-        st.markdown("### Cadastrar cotaÃ§Ã£o manual")
+        st.markdown("### Cadastrar cotação manual")
         if not assets:
             st.warning("Cadastre um ativo primeiro.")
         else:
@@ -1092,34 +1092,34 @@ with subtabs[1]:
             with c2:
                 px_date = st.date_input("Data", key="px_date")
             with c3:
-                price = st.number_input("CotaÃ§Ã£o / PU / valor unit", min_value=0.0, step=0.01, format="%.8f", key="px_price")
+                price = st.number_input("Cotação / PU / valor unit", min_value=0.0, step=0.01, format="%.8f", key="px_price")
 
             last = invest_repo.get_last_price_by_symbol(sym)
             if last:
                 last = dict(last)  # sqlite Row -> dict
                 st.info(
-                    f"Ãšltima cotaÃ§Ã£o salva: {last['symbol']} = "
+                    f"Última cotação salva: {last['symbol']} = "
                     f"{to_brl(last['price'])} em {last['date']} ({last.get('source','')})"
                 )
             else:
-                st.warning("Ainda nÃ£o existe cotaÃ§Ã£o salva para este ativo.")
+                st.warning("Ainda não existe cotação salva para este ativo.")
 
             src = st.text_input("Fonte (opcional)", placeholder="manual", key="px_src")
-            if st.button("Salvar cotaÃ§Ã£o", type="primary", key="btn_save_px"):
+            if st.button("Salvar cotação", type="primary", key="btn_save_px"):
                 invest_repo.upsert_price(asset_label[sym], px_date.strftime("%Y-%m-%d"), float(price), src.strip() if src.strip() else None)
-                st.success("CotaÃ§Ã£o salva.")
+                st.success("Cotação salva.")
                 st.rerun()
 
     # ===== Carteira =====
     with subtabs[4]:
-        st.markdown("### ðŸ“Œ Carteira (visÃ£o consolidada)")
+        st.markdown("### Carteira (visão consolidada)")
 
         classes = ["(todas)"] + list(invest_repo.ASSET_CLASSES)
         cls_filter = st.selectbox("Filtrar por classe", classes, index=0, key="pf_class_filter")
 
         pos, tdf, inc = invest_reports.portfolio_view()
 
-        # Sempre calcula saldo corretora (mesmo sem posiÃ§Ãµes)
+        # Sempre calcula saldo corretora (mesmo sem posições)
         # Regra simples: soma saldo de todas as contas do tipo "Corretora"
         all_tx = reports.df_transactions()  # pega tudo (sem filtro de data)
         broker_names = [a["name"] for a in accounts if a["type"] == "Corretora"]
@@ -1129,14 +1129,14 @@ with subtabs[1]:
         else:
             broker_balance = float(all_tx[all_tx["account"].isin(broker_names)]["amount_brl"].sum())
 
-        # Se quiser usar sÃ³ a corretora vinculada aos ativos (mais preciso),
-        # dÃ¡ pra refinar depois. Por enquanto isso jÃ¡ resolve o "Saldo Corretora".
+        # Se quiser usar só a corretora vinculada aos ativos (mais preciso),
+        # dá pra refinar depois. Por enquanto isso já resolve o "Saldo Corretora".
 
         # ===== MODO VAZIO: cria colunas esperadas e totals zerados =====
         is_empty_portfolio = pos.empty
 
         if is_empty_portfolio:
-            # cria um DF vazio com colunas mÃ­nimas, pra nÃ£o quebrar o resto
+            # cria um DF vazio com colunas mínimas, pra não quebrar o resto
             pos = pd.DataFrame(columns=[
                 "asset_id","symbol","name","asset_class","currency",
                 "qty","avg_cost","cost_basis","price","price_date",
@@ -1190,14 +1190,14 @@ with subtabs[1]:
         r2c1, r2c2, r2c3 = st.columns(3)
         r2c1.metric("Proventos", to_brl(total_income))
         r2c2.metric("Retorno Total", to_brl(total_ret), f"{total_ret_pct:.2f}%")
-        r2c3.metric("P&L NÃ£o Realizado", to_brl(total_unreal))
+        r2c3.metric("P&L Não Realizado", to_brl(total_unreal))
 
         st.divider()
 
         if is_empty_portfolio:
-            st.info("Ainda nÃ£o hÃ¡ posiÃ§Ãµes. Cadastre um ativo e registre uma operaÃ§Ã£o (BUY) para comeÃ§ar.")
-            st.caption("Mesmo assim, o Saldo Corretora aparece com base nos lanÃ§amentos das contas do tipo Corretora.")
-            # aqui vocÃª pode parar o resto da renderizaÃ§Ã£o da tabela/grÃ¡ficos:
+            st.info("Ainda não há posições. Cadastre um ativo e registre uma operação (BUY) para começar.")
+            st.caption("Mesmo assim, o Saldo Corretora aparece com base nos lançamentos das contas do tipo Corretora.")
+            # aqui você pode parar o resto da renderização da tabela/gráficos:
             st.stop()
 
         chart_df = pos.copy()
@@ -1206,7 +1206,7 @@ with subtabs[1]:
 
         #left, right = st.columns([1.2, 1.0])
        # with left:
-        st.markdown("#### ðŸ§¾ PosiÃ§Ãµes")
+        st.markdown("#### Posições")
         view = pos.copy()
         view["price_date"] = view["price_date"].fillna("").astype(str)
 
@@ -1232,12 +1232,12 @@ with subtabs[1]:
                 "name": "Nome",
                 "asset_class": "Classe",
                 "qty": "Qtd",
-                "avg_cost": "PreÃ§o MÃ©dio",
-                "price_date": "Data PreÃ§o",
-                "price": "PreÃ§o",
+                "avg_cost": "Preço Médio",
+                "price_date": "Data Preço",
+                "price": "Preço",
                 "cost_basis_fmt": "Investido",
                 "market_value_fmt": "Mercado",
-                "unreal_fmt": "P&L NÃ£o Real.",
+                "unreal_fmt": "P&L Não Real.",
                 "realized_fmt": "P&L Real.",
                 "income_fmt": "Proventos",
                 "total_return_fmt": "Retorno Total",
@@ -1248,21 +1248,21 @@ with subtabs[1]:
         st.dataframe(table, use_container_width=True, hide_index=True)
 
         #with right:
-        st.markdown("#### ðŸ¥§ DistribuiÃ§Ã£o (Valor de Mercado)")
+        st.markdown("#### Distribuição (Valor de Mercado)")
         if chart_df.empty:
-                st.info("Sem valores de mercado (adicione preÃ§os).")
+                st.info("Sem valores de mercado (adicione preços).")
         else:
                 fig = px.pie(chart_df, names="symbol", values="market_value_abs")
                 st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
-        st.markdown("#### ðŸ”Ž Alertas rÃ¡pidos")
+        st.markdown("#### Alertas rápidos")
         missing = pos[pos["price"].fillna(0.0) <= 0]
         if not missing.empty:
-                st.warning("Alguns ativos estÃ£o sem preÃ§o. VÃ¡ em **CotaÃ§Ãµes** e registre o preÃ§o manual.")
+                st.warning("Alguns ativos estão sem preço. Vá em **Cotações** e registre o preço manual.")
                 st.write(", ".join(missing["symbol"].tolist()))
         else:
-                st.success("Todos os ativos possuem preÃ§o registrado.")
+                st.success("Todos os ativos possuem preço registrado.")
 
         st.divider()
         st.markdown("#### Totais por classe")

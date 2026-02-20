@@ -1,8 +1,8 @@
-# invest_repo.py
+﻿# invest_repo.py
 from db import get_conn
 
 ASSET_CLASSES = {
-    "AÃ§Ãµes BR": "ACAO_BR",
+    "Ações BR": "ACAO_BR",
     "FIIs": "FII",
     "ETFs BR": "ETF_BR",
     "BDRs": "BDR",
@@ -116,7 +116,7 @@ def delete_trade(trade_id: int):
 
 def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
     """
-    Exclui uma operaÃ§Ã£o e remove o lanÃ§amento financeiro INV correspondente,
+    Exclui uma operação e remove o lançamento financeiro INV correspondente,
     para manter saldo da corretora e carteira consistentes.
     """
     conn = get_conn()
@@ -131,7 +131,7 @@ def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
         """, (int(trade_id),)).fetchone()
 
         if not trade:
-            return False, "OperaÃ§Ã£o nÃ£o encontrada."
+            return False, "Operação não encontrada."
 
         broker_account_id = trade["broker_account_id"]
         if not broker_account_id:
@@ -181,15 +181,15 @@ def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
                     break
 
         if chosen_tx_id is None:
-            return False, "NÃ£o foi possÃ­vel localizar o lanÃ§amento financeiro da operaÃ§Ã£o."
+            return False, "Não foi possível localizar o lançamento financeiro da operação."
 
         conn.execute("DELETE FROM transactions WHERE id = ?", (chosen_tx_id,))
         conn.execute("DELETE FROM trades WHERE id = ?", (int(trade_id),))
         conn.commit()
-        return True, "OperaÃ§Ã£o excluÃ­da e saldo da corretora ajustado."
+        return True, "Operação excluída e saldo da corretora ajustado."
     except Exception as e:
         conn.rollback()
-        return False, f"Erro ao excluir operaÃ§Ã£o: {e}"
+        return False, f"Erro ao excluir operação: {e}"
     finally:
         conn.close()
 
@@ -271,7 +271,7 @@ def get_asset(asset_id: int):
     conn.close()
     return row    
 
-#Esta linha foi criada para fazer deletes de lanÃ§amentos de teste durante a construÃ§Ã£o!!!!
+#Esta linha foi criada para fazer deletes de lançamentos de teste durante a construção!!!!
 def clear_invest_movements():
     conn = get_conn()
     c1 = conn.execute("DELETE FROM trades").rowcount
@@ -284,7 +284,7 @@ def clear_invest_movements():
 def clear_assets():
     """
     Remove TODOS os ativos.
-    Requer que trades, income_events e prices jÃ¡ estejam vazios.
+    Requer que trades, income_events e prices já estejam vazios.
     """
     conn = get_conn()
     cur = conn.execute("DELETE FROM assets")
@@ -301,14 +301,14 @@ def insert_price(asset_id: int, date: str, price: float, source: str = "yahoo"):
 
 def get_last_price(asset_id: int):
     """
-    Compatibilidade: retorna a Ãºltima cotaÃ§Ã£o via latest_price.
+    Compatibilidade: retorna a última cotação via latest_price.
     """
     return latest_price(int(asset_id))
 
 
 def get_last_price_by_symbol(symbol: str):
     """
-    Ãštil pro UI: busca a Ãºltima cotaÃ§Ã£o pelo symbol.
+    Útil pro UI: busca a última cotação pelo symbol.
     """
     conn = get_conn()
     row = conn.execute(
@@ -330,7 +330,7 @@ def delete_asset(asset_id: int) -> tuple[bool, str]:
     with get_conn() as conn:
         cur = conn.cursor()
 
-        # bloqueia exclusÃ£o apenas se ainda houver movimentaÃ§Ã£o do ativo
+        # bloqueia exclusão apenas se ainda houver movimentação do ativo
         cur.execute("SELECT COUNT(*) AS n FROM trades WHERE asset_id = ?", (asset_id,))
         trades_row = cur.fetchone()
         trades_count = int((trades_row["n"] if isinstance(trades_row, dict) else trades_row[0]) or 0)
@@ -339,15 +339,15 @@ def delete_asset(asset_id: int) -> tuple[bool, str]:
         income_count = int((income_row["n"] if isinstance(income_row, dict) else income_row[0]) or 0)
 
         if trades_count > 0 or income_count > 0:
-            return False, f"Ativo possui movimentaÃ§Ãµes registradas (trades: {trades_count}, proventos: {income_count})."
+            return False, f"Ativo possui movimentações registradas (trades: {trades_count}, proventos: {income_count})."
 
-        # cotaÃ§Ãµes nÃ£o devem impedir exclusÃ£o; limpa antes de remover o ativo
+        # cotações não devem impedir exclusão; limpa antes de remover o ativo
         cur.execute("DELETE FROM prices WHERE asset_id = ?", (asset_id,))
 
         cur.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
         conn.commit()
 
-    return True, "Ativo excluÃ­do com sucesso."
+    return True, "Ativo excluído com sucesso."
 
 def update_asset(asset_id: int, symbol: str, name: str, asset_class: str,
                  currency: str, broker_account_id: int | None):
