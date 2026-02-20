@@ -1,7 +1,12 @@
-﻿# invest_reports.py
 import pandas as pd
-import invest_repo
+
 from db import get_conn
+from tenant import get_current_user_id
+
+
+def _uid(user_id: int | None = None) -> int:
+    return int(user_id) if user_id is not None else int(get_current_user_id())
+
 
 def _query_df(query: str, params: list | tuple | None = None) -> pd.DataFrame:
     conn = get_conn()
@@ -9,23 +14,30 @@ def _query_df(query: str, params: list | tuple | None = None) -> pd.DataFrame:
     conn.close()
     return pd.DataFrame([dict(r) for r in rows])
 
-def df_assets():
-    df = _query_df("""
+
+def df_assets(user_id: int | None = None):
+    uid = _uid(user_id)
+    return _query_df(
+        """
         SELECT id, symbol, name, asset_class, currency
         FROM assets
+        WHERE user_id = ?
         ORDER BY asset_class, symbol
-    """)
-    return df
+        """,
+        [uid],
+    )
 
-def df_trades(date_from=None, date_to=None):
+
+def df_trades(date_from=None, date_to=None, user_id: int | None = None):
+    uid = _uid(user_id)
     q = """
         SELECT t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.fees, t.taxes,
                a.symbol, a.asset_class
         FROM trades t
-        JOIN assets a ON a.id = t.asset_id
-        WHERE 1=1
+        JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
+        WHERE t.user_id = ?
     """
-    params = []
+    params = [uid]
     if date_from:
         q += " AND t.date >= ?"
         params.append(date_from)
@@ -38,15 +50,17 @@ def df_trades(date_from=None, date_to=None):
         df["date"] = pd.to_datetime(df["date"])
     return df
 
-def df_income(date_from=None, date_to=None):
+
+def df_income(date_from=None, date_to=None, user_id: int | None = None):
+    uid = _uid(user_id)
     q = """
         SELECT i.id, i.asset_id, i.date, i.type, i.amount,
                a.symbol, a.asset_class
         FROM income_events i
-        JOIN assets a ON a.id = i.asset_id
-        WHERE 1=1
+        JOIN assets a ON a.id = i.asset_id AND a.user_id = i.user_id
+        WHERE i.user_id = ?
     """
-    params = []
+    params = [uid]
     if date_from:
         q += " AND i.date >= ?"
         params.append(date_from)
@@ -59,32 +73,31 @@ def df_income(date_from=None, date_to=None):
         df["date"] = pd.to_datetime(df["date"])
     return df
 
-def df_latest_prices():
-    df = _query_df("""
+
+def df_latest_prices(user_id: int | None = None):
+    uid = _uid(user_id)
+    return _query_df(
+        """
         SELECT p.asset_id, p.date AS price_date, p.price
         FROM prices p
         JOIN (
             SELECT asset_id, MAX(date) AS max_date
             FROM prices
+            WHERE user_id = ?
             GROUP BY asset_id
         ) m ON m.asset_id = p.asset_id AND m.max_date = p.date
-    """)
-    return df
+        WHERE p.user_id = ?
+        """,
+        [uid, uid],
+    )
+
 
 def positions_avg_cost(trades_df: pd.DataFrame):
-    """
-    Método médio:
-    - Mantém qty e cost_basis (custo total da posição)
-    - BUY: cost += qty*price + fees
-    - SELL: realiza custo proporcional: cost -= avg_cost * qty_sold
-    Retorna por asset: qty, avg_cost, cost_basis, realized_pnl (sem impostos), invested (compras líquidas)
-    """
     if trades_df.empty:
         return pd.DataFrame(columns=["asset_id", "symbol", "asset_class", "qty", "avg_cost", "cost_basis", "realized_pnl"])
 
     trades_df = trades_df.sort_values(["date", "id"]).copy()
-
-    state = {}  # asset_id -> dict
+    state = {}
     rows = []
 
     for _, r in trades_df.iterrows():
@@ -104,9 +117,8 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         if side == "BUY":
             s["qty"] += qty
             s["cost_basis"] += qty * price + fees
-        else:  # SELL
+        else:
             if s["qty"] <= 0:
-                # venda sem posição (deixa negativo; você pode bloquear no app depois)
                 avg_cost = 0.0
             else:
                 avg_cost = s["cost_basis"] / s["qty"] if s["qty"] != 0 else 0.0
@@ -114,7 +126,6 @@ def positions_avg_cost(trades_df: pd.DataFrame):
             proceeds = qty * price - fees - taxes
             cost_removed = avg_cost * qty
             s["realized_pnl"] += proceeds - cost_removed
-
             s["qty"] -= qty
             s["cost_basis"] -= cost_removed
 
@@ -123,126 +134,103 @@ def positions_avg_cost(trades_df: pd.DataFrame):
     for aid, s in state.items():
         qty = s["qty"]
         avg_cost = (s["cost_basis"] / qty) if qty else 0.0
-        rows.append({
-            "asset_id": aid,
-            "symbol": s["symbol"],
-            "asset_class": s["asset_class"],
-            "qty": qty,
-            "avg_cost": avg_cost,
-            "cost_basis": s["cost_basis"],
-            "realized_pnl": s["realized_pnl"],
-        })
+        rows.append(
+            {
+                "asset_id": aid,
+                "symbol": s["symbol"],
+                "asset_class": s["asset_class"],
+                "qty": qty,
+                "avg_cost": avg_cost,
+                "cost_basis": s["cost_basis"],
+                "realized_pnl": s["realized_pnl"],
+            }
+        )
 
     return pd.DataFrame(rows)
 
-def portfolio_view(date_from=None, date_to=None):
-    tdf = df_trades(date_from, date_to)
+
+def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
+    uid = _uid(user_id)
+    tdf = df_trades(date_from, date_to, user_id=uid)
     pos = positions_avg_cost(tdf)
 
-    # ===== Preços (último preço por ativo) =====
-    prices = df_latest_prices()
+    prices = df_latest_prices(user_id=uid)
     if not prices.empty and not pos.empty:
-        pos = pos.merge(
-            prices[["asset_id", "price", "price_date"]],
-            on="asset_id",
-            how="left"
-        )
+        pos = pos.merge(prices[["asset_id", "price", "price_date"]], on="asset_id", how="left")
     else:
-        # garante colunas existirem mesmo sem preços
         pos["price"] = 0.0
         pos["price_date"] = None
 
-    # garante preço numérico sempre
     pos["price"] = pd.to_numeric(pos.get("price", 0.0), errors="coerce").fillna(0.0)
 
-    
-
-    # ===== Dados do ativo (nome/moeda) =====
-    assets = df_assets()
+    assets = df_assets(user_id=uid)
     if not assets.empty and not pos.empty:
         pos = pos.merge(
             assets.rename(columns={"id": "asset_id"})[["asset_id", "name", "currency"]],
             on="asset_id",
-            how="left"
+            how="left",
         )
     else:
-        # se pos vazio, garante colunas para evitar erro no app
         if "name" not in pos.columns:
             pos["name"] = None
         if "currency" not in pos.columns:
             pos["currency"] = None
 
-    # ===== Cálculos =====
     pos["market_value"] = pos["qty"] * pos["price"]
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
 
-    # ===== Proventos =====
-    inc = df_income(date_from, date_to)
+    inc = df_income(date_from, date_to, user_id=uid)
     if not inc.empty and not pos.empty:
-        inc_sum = (
-            inc.groupby("asset_id")["amount"]
-            .sum()
-            .reset_index()
-            .rename(columns={"amount": "income"})
-        )
+        inc_sum = inc.groupby("asset_id")["amount"].sum().reset_index().rename(columns={"amount": "income"})
         pos = pos.merge(inc_sum, on="asset_id", how="left")
 
-    # garante coluna income sempre
     if "income" not in pos.columns:
         pos["income"] = 0.0
     else:
         pos["income"] = pos["income"].fillna(0.0)
 
     return pos, tdf, inc
-def df_prices_upto(up_to_date: str) -> pd.DataFrame:
-    """
-    Retorna o último preço conhecido (<= up_to_date) por ativo.
-    up_to_date: 'YYYY-MM-DD'
-    """
-    df = _query_df("""
+
+
+def df_prices_upto(up_to_date: str, user_id: int | None = None) -> pd.DataFrame:
+    uid = _uid(user_id)
+    return _query_df(
+        """
         SELECT p.asset_id, p.date AS price_date, p.price
         FROM prices p
         JOIN (
             SELECT asset_id, MAX(date) AS max_date
             FROM prices
-            WHERE date <= ?
+            WHERE user_id = ? AND date <= ?
             GROUP BY asset_id
         ) m ON m.asset_id = p.asset_id AND m.max_date = p.date
-    """, [up_to_date])
-    return df
+        WHERE p.user_id = ?
+        """,
+        [uid, up_to_date, uid],
+    )
 
 
-def investments_value_timeseries(date_from: str, date_to: str) -> pd.DataFrame:
-    """
-    Série diária do valor de mercado dos investimentos entre date_from e date_to.
-    Retorna colunas: date, invest_market_value
-    """
-    # trades do período (na prática, você precisa considerar posições anteriores também,
-    # mas para MVP vamos considerar tudo até date_to e filtrar por dia)
-    tdf = df_trades(None, date_to)
+def investments_value_timeseries(date_from: str, date_to: str, user_id: int | None = None) -> pd.DataFrame:
+    uid = _uid(user_id)
+    tdf = df_trades(None, date_to, user_id=uid)
     if tdf.empty:
-        # retorna datas com 0
         dates = pd.date_range(date_from, date_to, freq="D")
         return pd.DataFrame({"date": dates, "invest_market_value": 0.0})
 
-    # garante datetime
     tdf = tdf.copy()
     tdf["date"] = pd.to_datetime(tdf["date"])
-
     dates = pd.date_range(date_from, date_to, freq="D")
     out = []
 
     for d in dates:
         d_str = d.strftime("%Y-%m-%d")
-
-        # trades até o dia D
         t_day = tdf[tdf["date"] <= d].copy()
         pos = positions_avg_cost(t_day)
         if pos.empty:
             out.append({"date": d, "invest_market_value": 0.0})
             continue
 
-        prices = df_prices_upto(d_str)
+        prices = df_prices_upto(d_str, user_id=uid)
         if not prices.empty:
             pos = pos.merge(prices[["asset_id", "price"]], on="asset_id", how="left")
         else:
@@ -250,52 +238,6 @@ def investments_value_timeseries(date_from: str, date_to: str) -> pd.DataFrame:
 
         pos["price"] = pd.to_numeric(pos["price"], errors="coerce").fillna(0.0)
         pos["market_value"] = pos["qty"] * pos["price"]
-
         out.append({"date": d, "invest_market_value": float(pos["market_value"].sum())})
 
     return pd.DataFrame(out)
-
-# invest_reports.py
-def fetch_last_price(asset: dict) -> float | None:
-    def as_dict(x):
-        return x if isinstance(x, dict) else dict(x)
-
-    """
-    Retorna o último preço do ativo ou None se não conseguir.
-    """
-    asset = as_dict(asset)
-    symbol = (asset.get("symbol") or "").strip().upper()
-    aclass = (asset.get("asset_class") or "").strip().upper()
-
-    # ===== ACOES/FIIs (B3) =====
-    if aclass in ("AÇÕES BR", "ACOES BR", "STOCK_FII", "STOCK", "FII"):
-        # yfinance usa .SA para B3
-        ticker = symbol if symbol.endswith(".SA") else f"{symbol}.SA"
-
-        import yfinance as yf
-        t = yf.Ticker(ticker)
-        h = t.history(period="1d")
-
-        if h is None or h.empty:
-            return None
-
-        px = float(h["Close"].iloc[-1])
-        return px if px > 0 else None
-
-    # ===== CRIPTO =====
-    if aclass == "CRYPTO":
-        # Ex: BTC -> BTC-USD (você pode melhorar depois p/ BRL)
-        ticker = symbol if "-" in symbol else f"{symbol}-USD"
-
-        import yfinance as yf
-        t = yf.Ticker(ticker)
-        h = t.history(period="1d")
-
-        if h is None or h.empty:
-            return None
-
-        px = float(h["Close"].iloc[-1])
-        return px if px > 0 else None
-
-    # ===== RENDA FIXA (sem fonte automática por enquanto) =====
-    return None 

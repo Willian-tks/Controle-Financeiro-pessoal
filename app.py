@@ -20,10 +20,15 @@ import repo
 import reports
 from utils import to_brl, normalize_import_df
 from utils import card, end_card, badge
+import auth
+from tenant import set_current_user_id, clear_current_user_id
 
 import invest_repo
 import invest_reports
 import invest_quotes
+
+st.set_page_config(page_title="Financeiro Pessoal", layout="wide")
+
 
 def inject_corporate_css():
     st.markdown("""
@@ -106,7 +111,6 @@ inject_corporate_css()
 # ----------------------------
 # Config
 # ----------------------------
-st.set_page_config(page_title="Financeiro Pessoal", layout="wide")
 st.title("Controle Financeiro Pessoal (MVP)")
 
 st.caption(f"CWD: {os.getcwd()}")
@@ -116,6 +120,100 @@ else:
     st.caption(f"DB_PATH: {DB_PATH}")
 
 init_db()
+auth.ensure_bootstrap_admin()
+
+
+def render_auth_gate():
+    st.subheader("Entrar")
+    invite_token_qp = str(st.query_params.get("invite", "")).strip()
+    login_tab, invite_tab = st.tabs(["Login", "Cadastro por convite"])
+
+    with login_tab:
+        email = st.text_input("E-mail", key="login_email")
+        password = st.text_input("Senha", type="password", key="login_password")
+        if st.button("Entrar", type="primary", key="btn_login"):
+            user = auth.authenticate_user(email, password)
+            if not user:
+                st.error("Credenciais inválidas.")
+            else:
+                auth.login_session(user["id"])
+                auth.claim_legacy_data_for_user(user["id"])
+                st.rerun()
+
+    with invite_tab:
+        st.caption("Para criar usuário, use um link de convite gerado pelo admin.")
+        token = st.text_input("Token do convite", value=invite_token_qp, key="invite_token")
+        if token:
+            ok, msg, _inv = auth.validate_invite(token)
+            if ok:
+                st.success(msg)
+            else:
+                st.warning(msg)
+
+        name = st.text_input("Nome", key="signup_name")
+        email = st.text_input("E-mail", key="signup_email")
+        password = st.text_input("Senha", type="password", key="signup_password")
+        confirm = st.text_input("Confirmar senha", type="password", key="signup_password2")
+
+        if st.button("Criar conta com convite", type="primary", key="btn_signup"):
+            if password != confirm:
+                st.error("As senhas não conferem.")
+            else:
+                ok, msg, user = auth.register_user_with_invite(token, email, password, name)
+                if not ok:
+                    st.error(msg)
+                else:
+                    st.query_params.clear()
+                    auth.login_session(user["id"])
+                    auth.claim_legacy_data_for_user(user["id"])
+                    st.success(msg)
+                    st.rerun()
+
+
+current_user = auth.session_user()
+if not current_user:
+    render_auth_gate()
+    st.stop()
+
+set_current_user_id(int(current_user["id"]))
+st.sidebar.caption(f"Usuário: {current_user.get('display_name') or current_user['email']}")
+st.sidebar.caption(f"Perfil: {current_user.get('role', 'user')}")
+
+if current_user.get("role") == "admin":
+    st.sidebar.divider()
+    st.sidebar.subheader("Convites")
+    invited_email = st.sidebar.text_input("E-mail convidado (opcional)", key="invite_email")
+    invite_days = st.sidebar.number_input("Expira em (dias)", min_value=1, max_value=60, value=7, step=1, key="invite_days")
+    if st.sidebar.button("Gerar convite", key="btn_create_invite"):
+        ok, msg, inv = auth.create_invite(
+            admin_user_id=int(current_user["id"]),
+            invited_email=invited_email.strip() if invited_email.strip() else None,
+            expires_days=int(invite_days),
+        )
+        if ok:
+            base_url = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+            invite_link = f"{base_url}?invite={inv['token']}" if base_url else f"?invite={inv['token']}"
+            st.sidebar.success("Convite gerado.")
+            st.sidebar.code(invite_link, language="text")
+        else:
+            st.sidebar.error(msg)
+
+    with st.sidebar.expander("Convites recentes", expanded=False):
+        invites = auth.list_recent_invites(int(current_user["id"]), limit=10)
+        if not invites:
+            st.write("Sem convites.")
+        else:
+            for inv in invites:
+                used = "usado" if inv.get("used_at") else "pendente"
+                st.write(
+                    f"{inv['id']} | {inv.get('invited_email') or '(qualquer e-mail)'} | "
+                    f"expira: {inv['expires_at']} | {used}"
+                )
+
+if st.sidebar.button("Sair", key="btn_logout"):
+    auth.logout_session()
+    clear_current_user_id()
+    st.rerun()
 
 
 # ----------------------------
@@ -688,7 +786,7 @@ with tab3:
                     repo.create_category(cat, "Despesa")
 
                 # recarrega mapas
-                accounts2, categories2, acc_map2, cat_map2, _ = load_accounts_categories()
+                accounts2, categories2, acc_map2, _acc_type_map2, cat_map2, _cat_kind_map2 = load_accounts_categories()
 
                 for _, row in norm.iterrows():
                     account_id = acc_map2.get(row["account"])

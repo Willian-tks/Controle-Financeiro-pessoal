@@ -104,6 +104,31 @@ def get_conn() -> DBConn:
 
 def _sqlite_schema(cur):
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT,
+        role TEXT NOT NULL DEFAULT 'user',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS invites (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token TEXT NOT NULL UNIQUE,
+        invited_email TEXT,
+        created_by INTEGER NOT NULL,
+        used_by INTEGER,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -219,6 +244,31 @@ def _sqlite_schema(cur):
 
 def _postgres_schema(cur):
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id BIGSERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT,
+        role TEXT NOT NULL DEFAULT 'user',
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS invites (
+        id BIGSERIAL PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        invited_email TEXT,
+        created_by BIGINT NOT NULL,
+        used_by BIGINT,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS accounts (
         id BIGSERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
@@ -332,10 +382,78 @@ def _postgres_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
 
 
+def _migrate_multitenant_postgres(cur):
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+
+    cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE categories ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE asset_prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
+
+    cur.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_name_key")
+    cur.execute("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key")
+    cur.execute("ALTER TABLE assets DROP CONSTRAINT IF EXISTS assets_symbol_key")
+
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_user_name ON accounts(user_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_user_name ON categories(user_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_assets_user_symbol ON assets(user_id, symbol)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_prices_user_asset_date ON prices(user_id, asset_id, date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_prices_user_asset_date ON asset_prices(user_id, asset_id, px_date)")
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON transactions(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_assets_user ON assets(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_income_user ON income_events(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_user ON prices(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+
+
+def _add_column_sqlite(cur, table: str, column_def: str):
+    col_name = column_def.split()[0]
+    cols = cur.execute(f"PRAGMA table_info({table})").fetchall()
+    existing = {c[1] for c in cols}
+    if col_name not in existing:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
+
+
+def _migrate_multitenant_sqlite(cur):
+    _add_column_sqlite(cur, "users", "role TEXT NOT NULL DEFAULT 'user'")
+    _add_column_sqlite(cur, "users", "is_active INTEGER NOT NULL DEFAULT 1")
+
+    _add_column_sqlite(cur, "accounts", "user_id INTEGER")
+    _add_column_sqlite(cur, "categories", "user_id INTEGER")
+    _add_column_sqlite(cur, "transactions", "user_id INTEGER")
+    _add_column_sqlite(cur, "assets", "user_id INTEGER")
+    _add_column_sqlite(cur, "trades", "user_id INTEGER")
+    _add_column_sqlite(cur, "income_events", "user_id INTEGER")
+    _add_column_sqlite(cur, "prices", "user_id INTEGER")
+    _add_column_sqlite(cur, "asset_prices", "user_id INTEGER")
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON transactions(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_assets_user ON assets(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_income_user ON income_events(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_user ON prices(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+
+
 def init_db() -> None:
     with get_conn() as conn:
         cur = conn.cursor()
         if USE_POSTGRES:
             _postgres_schema(cur)
+            _migrate_multitenant_postgres(cur)
         else:
             _sqlite_schema(cur)
+            _migrate_multitenant_sqlite(cur)

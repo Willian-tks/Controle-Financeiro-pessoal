@@ -1,5 +1,5 @@
-﻿# invest_repo.py
 from db import get_conn
+from tenant import get_current_user_id
 
 ASSET_CLASSES = {
     "Ações BR": "ACAO_BR",
@@ -16,6 +16,7 @@ ASSET_CLASSES = {
     "Coe": "COE",
     "Outros": "OUTROS",
 }
+
 INCOME_TYPES = {
     "Dividendos": "DIVIDEND",
     "JCP": "JCP",
@@ -25,20 +26,31 @@ INCOME_TYPES = {
     "Aluguel (FII)": "FII_RENT",
 }
 
-def list_assets():
+
+def _uid(user_id: int | None = None) -> int:
+    return int(user_id) if user_id is not None else int(get_current_user_id())
+
+
+def list_assets(user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
-    rows = conn.execute("""
+    rows = conn.execute(
+        """
         SELECT
             a.*,
             ac.name AS broker_account,
             sc.name AS source_account
         FROM assets a
-        LEFT JOIN accounts ac ON ac.id = a.broker_account_id
-        LEFT JOIN accounts sc ON sc.id = a.source_account_id
+        LEFT JOIN accounts ac ON ac.id = a.broker_account_id AND ac.user_id = a.user_id
+        LEFT JOIN accounts sc ON sc.id = a.source_account_id AND sc.user_id = a.user_id
+        WHERE a.user_id = ?
         ORDER BY a.asset_class, a.symbol
-    """).fetchall()
+        """,
+        (uid,),
+    ).fetchall()
     conn.close()
     return rows
+
 
 def create_asset(
     symbol: str,
@@ -50,51 +62,76 @@ def create_asset(
     issuer=None,
     rate_type=None,
     rate_value=None,
-    maturity_date=None
+    maturity_date=None,
+    user_id: int | None = None,
 ):
+    uid = _uid(user_id)
     conn = get_conn()
-    conn.execute("""
-        INSERT OR IGNORE INTO assets
-        (symbol, name, asset_class, currency,
-         broker_account_id, source_account_id,
-         issuer, rate_type, rate_value, maturity_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        symbol.strip().upper(),
-        name.strip(),
-        asset_class,
-        currency,
-        broker_account_id,
-        source_account_id,
-        issuer,
-        rate_type,
-        rate_value,
-        maturity_date
-    ))
+    exists = conn.execute(
+        "SELECT id FROM assets WHERE user_id = ? AND UPPER(symbol) = UPPER(?)",
+        (uid, symbol.strip().upper()),
+    ).fetchone()
+    if not exists:
+        conn.execute(
+            """
+            INSERT INTO assets
+            (symbol, name, asset_class, currency, broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                symbol.strip().upper(),
+                name.strip(),
+                asset_class,
+                currency,
+                broker_account_id,
+                source_account_id,
+                issuer,
+                rate_type,
+                rate_value,
+                maturity_date,
+                uid,
+            ),
+        )
     conn.commit()
     conn.close()
 
-def insert_trade(asset_id: int, date: str, side: str, quantity: float, price: float,
-                 fees: float = 0.0, taxes: float = 0.0, note: str | None = None):
+
+def insert_trade(
+    asset_id: int,
+    date: str,
+    side: str,
+    quantity: float,
+    price: float,
+    fees: float = 0.0,
+    taxes: float = 0.0,
+    note: str | None = None,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
     conn = get_conn()
-    conn.execute("""
-        INSERT INTO trades(asset_id, date, side, quantity, price, fees, taxes, note)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (int(asset_id), date, side, float(quantity), float(price), float(fees), float(taxes), note))
+    conn.execute(
+        """
+        INSERT INTO trades(asset_id, date, side, quantity, price, fees, taxes, note, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (int(asset_id), date, side, float(quantity), float(price), float(fees), float(taxes), note, uid),
+    )
     conn.commit()
     conn.close()
 
-def list_trades(asset_id=None, date_from=None, date_to=None):
+
+def list_trades(asset_id=None, date_from=None, date_to=None, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
     q = """
         SELECT t.*, a.symbol, a.asset_class
         FROM trades t
-        JOIN assets a ON a.id = t.asset_id
-        WHERE 1=1
+        JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
+        WHERE t.user_id = ?
     """
-    params = []
+    params = [uid]
     if asset_id:
-        q += " AND t.asset_id=?"
+        q += " AND t.asset_id = ?"
         params.append(int(asset_id))
     if date_from:
         q += " AND t.date >= ?"
@@ -108,27 +145,30 @@ def list_trades(asset_id=None, date_from=None, date_to=None):
     conn.close()
     return rows
 
-def delete_trade(trade_id: int):
+
+def delete_trade(trade_id: int, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
-    conn.execute("DELETE FROM trades WHERE id=?", (int(trade_id),))
+    conn.execute("DELETE FROM trades WHERE id = ? AND user_id = ?", (int(trade_id), uid))
     conn.commit()
     conn.close()
 
-def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
-    """
-    Exclui uma operação e remove o lançamento financeiro INV correspondente,
-    para manter saldo da corretora e carteira consistentes.
-    """
+
+def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -> tuple[bool, str]:
+    uid = _uid(user_id)
     conn = get_conn()
     try:
-        trade = conn.execute("""
+        trade = conn.execute(
+            """
             SELECT
                 t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.fees, t.taxes, t.note,
                 a.symbol, a.broker_account_id
             FROM trades t
-            JOIN assets a ON a.id = t.asset_id
-            WHERE t.id = ?
-        """, (int(trade_id),)).fetchone()
+            JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
+            WHERE t.id = ? AND t.user_id = ?
+            """,
+            (int(trade_id), uid),
+        ).fetchone()
 
         if not trade:
             return False, "Operação não encontrada."
@@ -155,15 +195,19 @@ def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
             target_amount_alt = +(gross - fees)
             desc = f"INV SELL {symbol}"
 
-        tx_rows = conn.execute("""
+        tx_rows = conn.execute(
+            """
             SELECT id, amount_brl, notes
             FROM transactions
-            WHERE date = ?
+            WHERE user_id = ?
+              AND date = ?
               AND account_id = ?
               AND method = 'INV'
               AND description = ?
             ORDER BY id DESC
-        """, (trade["date"], int(broker_account_id), desc)).fetchall()
+            """,
+            (uid, trade["date"], int(broker_account_id), desc),
+        ).fetchall()
 
         chosen_tx_id = None
         for tx in tx_rows:
@@ -183,8 +227,8 @@ def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
         if chosen_tx_id is None:
             return False, "Não foi possível localizar o lançamento financeiro da operação."
 
-        conn.execute("DELETE FROM transactions WHERE id = ?", (chosen_tx_id,))
-        conn.execute("DELETE FROM trades WHERE id = ?", (int(trade_id),))
+        conn.execute("DELETE FROM transactions WHERE id = ? AND user_id = ?", (chosen_tx_id, uid))
+        conn.execute("DELETE FROM trades WHERE id = ? AND user_id = ?", (int(trade_id), uid))
         conn.commit()
         return True, "Operação excluída e saldo da corretora ajustado."
     except Exception as e:
@@ -193,55 +237,75 @@ def delete_trade_with_cash_reversal(trade_id: int) -> tuple[bool, str]:
     finally:
         conn.close()
 
-def upsert_price(asset_id: int, date: str, price: float, source: str | None = None):
+
+def upsert_price(asset_id: int, date: str, price: float, source: str | None = None, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
-    conn.execute("""
-        INSERT INTO prices(asset_id, date, price, source)
-        VALUES (?, ?, ?, ?)
+    conn.execute(
+        """
+        INSERT INTO prices(asset_id, date, price, source, user_id)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(asset_id, date) DO UPDATE SET
             price=excluded.price,
             source=excluded.source
-    """, (int(asset_id), date, float(price), source))
+        """,
+        (int(asset_id), date, float(price), source, uid),
+    )
     conn.commit()
     conn.close()
 
-def latest_price(asset_id: int, up_to_date: str | None = None):
+
+def latest_price(asset_id: int, up_to_date: str | None = None, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
     if up_to_date:
-        row = conn.execute("""
+        row = conn.execute(
+            """
             SELECT date, price FROM prices
-            WHERE asset_id=? AND date <= ?
+            WHERE user_id = ? AND asset_id = ? AND date <= ?
             ORDER BY date DESC LIMIT 1
-        """, (int(asset_id), up_to_date)).fetchone()
+            """,
+            (uid, int(asset_id), up_to_date),
+        ).fetchone()
     else:
-        row = conn.execute("""
+        row = conn.execute(
+            """
             SELECT date, price FROM prices
-            WHERE asset_id=?
+            WHERE user_id = ? AND asset_id = ?
             ORDER BY date DESC LIMIT 1
-        """, (int(asset_id),)).fetchone()
+            """,
+            (uid, int(asset_id)),
+        ).fetchone()
     conn.close()
     return row
 
-def insert_income(asset_id: int, date: str, type_: str, amount: float, note: str | None = None):
+
+def insert_income(asset_id: int, date: str, type_: str, amount: float, note: str | None = None, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
-    conn.execute("""
-        INSERT INTO income_events(asset_id, date, type, amount, note)
-        VALUES (?, ?, ?, ?, ?)
-    """, (int(asset_id), date, type_, float(amount), note))
+    conn.execute(
+        """
+        INSERT INTO income_events(asset_id, date, type, amount, note, user_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (int(asset_id), date, type_, float(amount), note, uid),
+    )
     conn.commit()
     conn.close()
 
-def list_income(asset_id=None, date_from=None, date_to=None):
+
+def list_income(asset_id=None, date_from=None, date_to=None, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
     q = """
         SELECT i.*, a.symbol, a.asset_class
         FROM income_events i
-        JOIN assets a ON a.id = i.asset_id
-        WHERE 1=1
+        JOIN assets a ON a.id = i.asset_id AND a.user_id = i.user_id
+        WHERE i.user_id = ?
     """
-    params = []
+    params = [uid]
     if asset_id:
-        q += " AND i.asset_id=?"
+        q += " AND i.asset_id = ?"
         params.append(int(asset_id))
     if date_from:
         q += " AND i.date >= ?"
@@ -255,128 +319,139 @@ def list_income(asset_id=None, date_from=None, date_to=None):
     conn.close()
     return rows
 
-def delete_income(income_id: int):
+
+def delete_income(income_id: int, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
-    conn.execute("DELETE FROM income_events WHERE id=?", (int(income_id),))
+    conn.execute("DELETE FROM income_events WHERE id = ? AND user_id = ?", (int(income_id), uid))
     conn.commit()
     conn.close()
 
-def get_asset(asset_id: int):
-    conn = get_conn()
-    row = conn.execute("""
-        SELECT id, symbol, name, asset_class, broker_account_id
-        FROM assets
-        WHERE id = ?
-    """, (int(asset_id),)).fetchone()
-    conn.close()
-    return row    
 
-#Esta linha foi criada para fazer deletes de lançamentos de teste durante a construção!!!!
-def clear_invest_movements():
+def get_asset(asset_id: int, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
-    c1 = conn.execute("DELETE FROM trades").rowcount
-    c2 = conn.execute("DELETE FROM income_events").rowcount
-    c3 = conn.execute("DELETE FROM prices").rowcount
+    row = conn.execute(
+        """
+        SELECT id, symbol, name, asset_class, broker_account_id, source_account_id
+        FROM assets
+        WHERE id = ? AND user_id = ?
+        """,
+        (int(asset_id), uid),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def clear_invest_movements(user_id: int | None = None):
+    uid = _uid(user_id)
+    conn = get_conn()
+    c1 = conn.execute("DELETE FROM trades WHERE user_id = ?", (uid,)).rowcount
+    c2 = conn.execute("DELETE FROM income_events WHERE user_id = ?", (uid,)).rowcount
+    c3 = conn.execute("DELETE FROM prices WHERE user_id = ?", (uid,)).rowcount
     conn.commit()
     conn.close()
     return {"trades": c1, "income_events": c2, "prices": c3}
 
-def clear_assets():
-    """
-    Remove TODOS os ativos.
-    Requer que trades, income_events e prices já estejam vazios.
-    """
+
+def clear_assets(user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
-    cur = conn.execute("DELETE FROM assets")
+    cur = conn.execute("DELETE FROM assets WHERE user_id = ?", (uid,))
     conn.commit()
     conn.close()
     return cur.rowcount
 
-def insert_price(asset_id: int, date: str, price: float, source: str = "yahoo"):
-    """
-    Compatibilidade: redireciona para upsert_price (tabela prices).
-    """
-    upsert_price(int(asset_id), str(date), float(price), str(source))
+
+def insert_price(asset_id: int, date: str, price: float, source: str = "yahoo", user_id: int | None = None):
+    upsert_price(int(asset_id), str(date), float(price), str(source), user_id=user_id)
 
 
-def get_last_price(asset_id: int):
-    """
-    Compatibilidade: retorna a última cotação via latest_price.
-    """
-    return latest_price(int(asset_id))
+def get_last_price(asset_id: int, user_id: int | None = None):
+    return latest_price(int(asset_id), user_id=user_id)
 
 
-def get_last_price_by_symbol(symbol: str):
-    """
-    Útil pro UI: busca a última cotação pelo symbol.
-    """
+def get_last_price_by_symbol(symbol: str, user_id: int | None = None):
+    uid = _uid(user_id)
     conn = get_conn()
     row = conn.execute(
         """
         SELECT p.asset_id, p.date AS date, p.price, p.source, a.symbol
         FROM prices p
-        JOIN assets a ON a.id = p.asset_id
-        WHERE UPPER(a.symbol) = UPPER(?)
+        JOIN assets a ON a.id = p.asset_id AND a.user_id = p.user_id
+        WHERE p.user_id = ? AND UPPER(a.symbol) = UPPER(?)
         ORDER BY p.date DESC, p.id DESC
         LIMIT 1
         """,
-        (symbol.strip(),),
+        (uid, symbol.strip()),
     ).fetchone()
     conn.close()
     return row
-def delete_asset(asset_id: int) -> tuple[bool, str]:
-    from db import get_conn
 
+
+def delete_asset(asset_id: int, user_id: int | None = None) -> tuple[bool, str]:
+    uid = _uid(user_id)
     with get_conn() as conn:
         cur = conn.cursor()
 
-        # bloqueia exclusão apenas se ainda houver movimentação do ativo
-        cur.execute("SELECT COUNT(*) AS n FROM trades WHERE asset_id = ?", (asset_id,))
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM trades WHERE asset_id = ? AND user_id = ?",
+            (asset_id, uid),
+        )
         trades_row = cur.fetchone()
         trades_count = int((trades_row["n"] if isinstance(trades_row, dict) else trades_row[0]) or 0)
-        cur.execute("SELECT COUNT(*) AS n FROM income_events WHERE asset_id = ?", (asset_id,))
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM income_events WHERE asset_id = ? AND user_id = ?",
+            (asset_id, uid),
+        )
         income_row = cur.fetchone()
         income_count = int((income_row["n"] if isinstance(income_row, dict) else income_row[0]) or 0)
 
         if trades_count > 0 or income_count > 0:
             return False, f"Ativo possui movimentações registradas (trades: {trades_count}, proventos: {income_count})."
 
-        # cotações não devem impedir exclusão; limpa antes de remover o ativo
-        cur.execute("DELETE FROM prices WHERE asset_id = ?", (asset_id,))
-
-        cur.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+        cur.execute("DELETE FROM prices WHERE asset_id = ? AND user_id = ?", (asset_id, uid))
+        cur.execute("DELETE FROM assets WHERE id = ? AND user_id = ?", (asset_id, uid))
         conn.commit()
 
     return True, "Ativo excluído com sucesso."
 
-def update_asset(asset_id: int, symbol: str, name: str, asset_class: str,
-                 currency: str, broker_account_id: int | None):
 
-    from db import get_conn
-
+def update_asset(
+    asset_id: int,
+    symbol: str,
+    name: str,
+    asset_class: str,
+    currency: str,
+    broker_account_id: int | None,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
     with get_conn() as conn:
         cur = conn.cursor()
-
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE assets
             SET symbol = ?, name = ?, asset_class = ?, currency = ?, broker_account_id = ?
-            WHERE id = ?
-        """, (symbol, name, asset_class, currency, broker_account_id, asset_id))
-
+            WHERE id = ? AND user_id = ?
+            """,
+            (symbol, name, asset_class, currency, broker_account_id, asset_id, uid),
+        )
         conn.commit()
 
-def get_asset_by_id(asset_id: int):
-    from db import get_conn
 
+def get_asset_by_id(asset_id: int, user_id: int | None = None):
+    uid = _uid(user_id)
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             """
             SELECT *
             FROM assets
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (asset_id,),
+            (asset_id, uid),
         )
         row = cur.fetchone()
         return dict(row) if row else None
