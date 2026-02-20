@@ -1,11 +1,12 @@
 ﻿from __future__ import annotations
 
 from datetime import date
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import sqlite3
 import threading
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import yfinance as yf
 import pandas as pd
@@ -216,83 +217,130 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
     return None, None, None, "Yahoo não retornou dados agora."
 
 
-def update_all_prices(assets: list[dict] | None) -> list[dict]:
+def _resolve_quote_limits(
+    total_assets: int,
+    max_workers_override: int | None = None,
+    timeout_s_override: float | None = None,
+) -> tuple[int, float]:
+    default_workers = min(4, max(2, total_assets))
+    max_workers = int(os.getenv("QUOTE_MAX_WORKERS", str(default_workers)))
+    if max_workers_override is not None:
+        max_workers = int(max_workers_override)
+    max_workers = max(1, min(16, max_workers))
+
+    timeout_s = float(os.getenv("QUOTE_TIMEOUT_S", "25"))
+    if timeout_s_override is not None:
+        timeout_s = float(timeout_s_override)
+    timeout_s = max(3.0, min(120.0, timeout_s))
+    return max_workers, timeout_s
+
+
+def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+    sym = (a.get("symbol") or "").strip()
+    cls = (a.get("asset_class") or "").strip()
+    cur = (a.get("currency") or "BRL").strip()
+
+    started = time.monotonic()
+    finished, payload, timeout_err = _call_with_timeout(fetch_last_price, timeout_s, sym, cls, cur)
+    elapsed_s = round(time.monotonic() - started, 2)
+
+    if not finished:
+        return {
+            "asset_id": a.get("id"),
+            "symbol": sym,
+            "ok": False,
+            "price": None,
+            "px_date": None,
+            "src": None,
+            "elapsed_s": elapsed_s,
+            "error": f"{timeout_err} ao consultar {sym}",
+        }
+
+    if payload is None:
+        return {
+            "asset_id": a.get("id"),
+            "symbol": sym,
+            "ok": False,
+            "price": None,
+            "px_date": None,
+            "src": None,
+            "elapsed_s": elapsed_s,
+            "error": timeout_err or f"Falha interna ao consultar {sym}",
+        }
+
+    try:
+        price, px_date, src, err = payload
+    except ValueError:
+        price, px_date, src = payload
+        err = None
+
+    if price is None:
+        return {
+            "asset_id": a.get("id"),
+            "symbol": sym,
+            "ok": False,
+            "price": None,
+            "px_date": None,
+            "src": None,
+            "elapsed_s": elapsed_s,
+            "error": err or "Sem cotação (fonte não retornou dados)",
+        }
+
+    return {
+        "asset_id": a.get("id"),
+        "symbol": sym,
+        "ok": True,
+        "price": float(price),
+        "px_date": px_date,
+        "src": src,
+        "elapsed_s": elapsed_s,
+        "error": None,
+    }
+
+
+def update_all_prices(
+    assets: list[dict] | None,
+    progress_cb: Callable[[int, int, dict[str, Any]], None] | None = None,
+    timeout_s: float | None = None,
+    max_workers: int | None = None,
+) -> list[dict]:
     """
     assets: lista de dicts com pelo menos: id, symbol, asset_class, currency
     Retorna um relatório [{asset_id, symbol, ok, price, px_date, src, error}]
     """
-    report: list[dict] = []
-    timeout_s = 25.0
-
+    rows: list[dict[str, Any]] = []
     for a in (assets or []):
-        # garante dict (sqlite3.Row não tem .get)
-        if isinstance(a, sqlite3.Row):
-            a = dict(a)
+        rows.append(dict(a) if isinstance(a, sqlite3.Row) else dict(a))
 
-        sym = (a.get("symbol") or "").strip()
-        cls = (a.get("asset_class") or "").strip()
-        cur = (a.get("currency") or "BRL").strip()
+    total = len(rows)
+    if total == 0:
+        return []
 
-        started = time.monotonic()
-        finished, payload, timeout_err = _call_with_timeout(fetch_last_price, timeout_s, sym, cls, cur)
-        elapsed_s = round(time.monotonic() - started, 2)
+    max_workers, timeout_s = _resolve_quote_limits(
+        total,
+        max_workers_override=max_workers,
+        timeout_s_override=timeout_s,
+    )
+    report: list[dict[str, Any]] = []
 
-        if not finished:
-            report.append({
-                "asset_id": a.get("id"),
-                "symbol": sym,
-                "ok": False,
-                "price": None,
-                "px_date": None,
-                "src": None,
-                "elapsed_s": elapsed_s,
-                "error": f"{timeout_err} ao consultar {sym}"
-            })
-            continue
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        fut_map = {ex.submit(_fetch_one_asset, a, timeout_s): i for i, a in enumerate(rows)}
 
-        if payload is None:
-            report.append({
-                "asset_id": a.get("id"),
-                "symbol": sym,
-                "ok": False,
-                "price": None,
-                "px_date": None,
-                "src": None,
-                "elapsed_s": elapsed_s,
-                "error": timeout_err or f"Falha interna ao consultar {sym}"
-            })
-            continue
+        done = 0
+        for fut in as_completed(fut_map):
+            row = fut.result()
+            row["_idx"] = fut_map[fut]
+            report.append(row)
+            done += 1
+            if progress_cb:
+                try:
+                    progress_cb(done, total, row)
+                except Exception:
+                    pass
 
-        # Compatível com fetch_last_price retornando 3 ou 4 valores
-        try:
-            price, px_date, src, err = payload
-        except ValueError:
-            price, px_date, src = payload
-            err = None
-
-        if price is None:
-            report.append({
-                "asset_id": a.get("id"),
-                "symbol": sym,
-                "ok": False,
-                "price": None,
-                "px_date": None,
-                "src": None,
-                "elapsed_s": elapsed_s,
-                "error": err or "Sem cotação (fonte não retornou dados)"
-            })
-        else:
-            report.append({
-                "asset_id": a.get("id"),
-                "symbol": sym,
-                "ok": True,
-                "price": float(price),
-                "px_date": px_date,
-                "src": src,
-                "elapsed_s": elapsed_s,
-                "error": None
-            })
-
+    report.sort(key=lambda r: r.get("_idx", 0))
+    for r in report:
+        r.pop("_idx", None)
     return report
 def fetch_last_price_yf(symbol: str):
     """

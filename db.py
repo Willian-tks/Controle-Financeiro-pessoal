@@ -172,6 +172,7 @@ def _sqlite_schema(cur):
         symbol TEXT NOT NULL UNIQUE,
         name TEXT NOT NULL,
         asset_class TEXT NOT NULL,
+        sector TEXT,
         currency TEXT NOT NULL DEFAULT 'BRL',
         broker_account_id INTEGER,
         source_account_id INTEGER,
@@ -312,6 +313,7 @@ def _postgres_schema(cur):
         symbol TEXT NOT NULL UNIQUE,
         name TEXT NOT NULL,
         asset_class TEXT NOT NULL,
+        sector TEXT,
         currency TEXT NOT NULL DEFAULT 'BRL',
         broker_account_id BIGINT,
         source_account_id BIGINT,
@@ -390,6 +392,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE categories ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS sector TEXT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
@@ -432,6 +435,7 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "categories", "user_id INTEGER")
     _add_column_sqlite(cur, "transactions", "user_id INTEGER")
     _add_column_sqlite(cur, "assets", "user_id INTEGER")
+    _add_column_sqlite(cur, "assets", "sector TEXT")
     _add_column_sqlite(cur, "trades", "user_id INTEGER")
     _add_column_sqlite(cur, "income_events", "user_id INTEGER")
     _add_column_sqlite(cur, "prices", "user_id INTEGER")
@@ -446,6 +450,114 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_user ON prices(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    _rebuild_sqlite_unique_tables(cur)
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_user_name ON accounts(user_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_user_name ON categories(user_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_assets_user_symbol ON assets(user_id, symbol)")
+
+
+def _table_sql(cur, table: str) -> str:
+    row = cur.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    if not row:
+        return ""
+    return row[0] if isinstance(row, tuple) else row["sql"]
+
+
+def _rebuild_sqlite_unique_tables(cur):
+    accounts_sql = _table_sql(cur, "accounts").upper()
+    categories_sql = _table_sql(cur, "categories").upper()
+    assets_sql = _table_sql(cur, "assets").upper()
+
+    need_accounts = "NAME TEXT NOT NULL UNIQUE" in accounts_sql
+    need_categories = "NAME TEXT NOT NULL UNIQUE" in categories_sql
+    need_assets = "SYMBOL TEXT NOT NULL UNIQUE" in assets_sql
+
+    if not (need_accounts or need_categories or need_assets):
+        return
+
+    cur.execute("PRAGMA foreign_keys=OFF")
+
+    if need_accounts:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS accounts_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'Banco',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            user_id INTEGER
+        );
+        """)
+        cur.execute("""
+        INSERT INTO accounts_new(id, name, type, created_at, user_id)
+        SELECT id, name, type, created_at, user_id
+        FROM accounts
+        """)
+        cur.execute("DROP TABLE accounts")
+        cur.execute("ALTER TABLE accounts_new RENAME TO accounts")
+
+    if need_categories:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS categories_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'Despesa',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            user_id INTEGER
+        );
+        """)
+        cur.execute("""
+        INSERT INTO categories_new(id, name, kind, created_at, user_id)
+        SELECT id, name, kind, created_at, user_id
+        FROM categories
+        """)
+        cur.execute("DROP TABLE categories")
+        cur.execute("ALTER TABLE categories_new RENAME TO categories")
+
+    if need_assets:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS assets_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            name TEXT NOT NULL,
+            asset_class TEXT NOT NULL,
+            sector TEXT,
+            currency TEXT NOT NULL DEFAULT 'BRL',
+            broker_account_id INTEGER,
+            source_account_id INTEGER,
+            issuer TEXT,
+            rate_type TEXT,
+            rate_value REAL,
+            maturity_date TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            user_id INTEGER,
+            FOREIGN KEY(broker_account_id) REFERENCES accounts(id)
+        );
+        """)
+        cur.execute("""
+        INSERT INTO assets_new(
+            id, symbol, name, asset_class, sector, currency,
+            broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date, created_at, user_id
+        )
+        SELECT
+            id, symbol, name, asset_class, sector, currency,
+            broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date, created_at, user_id
+        FROM assets
+        """)
+        cur.execute("DROP TABLE assets")
+        cur.execute("ALTER TABLE assets_new RENAME TO assets")
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(date)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_account ON transactions(account_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(date)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_assets_user ON assets(user_id)")
+    cur.execute("PRAGMA foreign_keys=ON")
 
 
 def init_db() -> None:

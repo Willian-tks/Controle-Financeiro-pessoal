@@ -19,7 +19,7 @@ def df_assets(user_id: int | None = None):
     uid = _uid(user_id)
     return _query_df(
         """
-        SELECT id, symbol, name, asset_class, currency
+        SELECT id, symbol, name, asset_class, sector, currency
         FROM assets
         WHERE user_id = ?
         ORDER BY asset_class, symbol
@@ -166,13 +166,15 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     assets = df_assets(user_id=uid)
     if not assets.empty and not pos.empty:
         pos = pos.merge(
-            assets.rename(columns={"id": "asset_id"})[["asset_id", "name", "currency"]],
+            assets.rename(columns={"id": "asset_id"})[["asset_id", "name", "sector", "currency"]],
             on="asset_id",
             how="left",
         )
     else:
         if "name" not in pos.columns:
             pos["name"] = None
+        if "sector" not in pos.columns:
+            pos["sector"] = None
         if "currency" not in pos.columns:
             pos["currency"] = None
 

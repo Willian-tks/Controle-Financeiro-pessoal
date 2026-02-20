@@ -1,6 +1,7 @@
-# app.py
+﻿# app.py
 
 import os
+import time
 import certifi
 
 # força certificados SSL (resolve curl(77))
@@ -28,6 +29,193 @@ import invest_reports
 import invest_quotes
 
 st.set_page_config(page_title="Financeiro Pessoal", layout="wide")
+
+
+def _extract_invite_token(raw: str) -> str:
+    v = (raw or "").strip()
+    if not v:
+        return ""
+
+    # URL completa
+    if "invite=" in v:
+        v = v.split("invite=", 1)[1]
+
+    # valor colado como query parcial
+    if v.startswith("?"):
+        v = v[1:]
+    if v.startswith("invite="):
+        v = v.split("=", 1)[1]
+
+    # remove resto de query/hash
+    for sep in ("&", "#"):
+        if sep in v:
+            v = v.split(sep, 1)[0]
+
+    return v.strip()
+
+
+def normalize_assets_import_df(df: pd.DataFrame) -> pd.DataFrame:
+    alias = {
+        "ticker/símbolo": "symbol",
+        "ticker/simbolo": "symbol",
+        "ticker": "symbol",
+        "símbolo": "symbol",
+        "simbolo": "symbol",
+        "nome": "name",
+        "classe": "asset_class",
+        "setor": "sector",
+        "sector": "sector",
+        "moeda": "currency",
+        "conta corretora (opcional)": "broker_account",
+        "conta corretora": "broker_account",
+        "conta origem (opcional)": "source_account",
+        "conta origem": "source_account",
+    }
+    df = df.copy()
+    df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+    mapped_cols = []
+    for c in df.columns:
+        key = c.lower().strip()
+        mapped_cols.append(alias.get(key, key))
+    df.columns = mapped_cols
+
+    required = {"symbol", "name", "asset_class"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV de ativos faltando colunas obrigatórias: {sorted(list(missing))}")
+
+    if "currency" not in df.columns:
+        df["currency"] = "BRL"
+    if "sector" not in df.columns:
+        df["sector"] = "Não definido"
+    if "broker_account" not in df.columns:
+        df["broker_account"] = None
+    if "source_account" not in df.columns:
+        df["source_account"] = None
+
+    df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
+    df["name"] = df["name"].astype(str).str.strip()
+    df["asset_class"] = df["asset_class"].astype(str).str.strip()
+    df["sector"] = df["sector"].astype(str).str.strip()
+    df["currency"] = df["currency"].astype(str).str.strip().str.upper().replace({"": "BRL"})
+    df["broker_account"] = df["broker_account"].astype(str).str.strip()
+    df["source_account"] = df["source_account"].astype(str).str.strip()
+
+    class_map = {
+        "ACOES BR": "Ações BR",
+        "AÇÕES BR": "Ações BR",
+        "ACOES": "Ações BR",
+        "AÇÕES": "Ações BR",
+        "FIIS": "FIIs",
+        "FIIS ": "FIIs",
+        "FILS": "FIIs",
+        "FIIS BR": "FIIs",
+        "BDRS": "BDRs",
+        "ETFS BR": "ETFs BR",
+    }
+    df["asset_class"] = df["asset_class"].apply(
+        lambda x: class_map.get(str(x).upper().strip(), str(x).strip())
+    )
+    sector_map = {
+        "FINANCEIRO": "Financeiro",
+        "ENERGIA E UTILIDADES": "Energia & Utilidades",
+        "ENERGIA & UTILIDADES": "Energia & Utilidades",
+        "COMMODITIES": "Commodities",
+        "CONSUMO": "Consumo",
+        "INDUSTRIA": "Indústria",
+        "INDÚSTRIA": "Indústria",
+        "SERVICOS": "Serviços",
+        "SERVIÇOS": "Serviços",
+        "TECNOLOGIA E TELECOM": "Tecnologia & Telecom",
+        "TECNOLOGIA & TELECOM": "Tecnologia & Telecom",
+        "IMOBILIARIO": "Imobiliário",
+        "IMOBILIÁRIO": "Imobiliário",
+        "NAO DEFINIDO": "Não definido",
+        "NÃO DEFINIDO": "Não definido",
+        "": "Não definido",
+    }
+    df["sector"] = df["sector"].apply(
+        lambda x: sector_map.get(str(x).upper().strip(), str(x).strip() or "Não definido")
+    )
+    valid_sectors = set(invest_repo.ASSET_SECTORS)
+    df["sector"] = df["sector"].apply(lambda s: s if s in valid_sectors else "Não definido")
+
+    df = df[(df["symbol"] != "") & (df["name"] != "")]
+    return df
+
+
+def _parse_brl_decimal(raw: str) -> float:
+    s = (raw or "").strip().replace("R$", "").replace(" ", "")
+    if not s:
+        raise ValueError("vazio")
+
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(".", "").replace(",", ".")
+
+    return float(s)
+
+
+def _parse_qty_input(raw: str, allow_fraction: bool) -> float:
+    s = (raw or "").strip().replace(" ", "")
+    if not s:
+        raise ValueError("vazio")
+
+    if allow_fraction:
+        if s.count(",") + s.count(".") > 1:
+            raise ValueError("Quantidade inválida.")
+        s = s.replace(",", ".")
+        val = float(s)
+    else:
+        if not s.isdigit():
+            raise ValueError("Quantidade deve ser número inteiro (sem vírgula/ponto).")
+        val = float(int(s))
+
+    return val
+
+
+def _mask_trade_price_input() -> None:
+    raw = str(st.session_state.get("trade_price_txt", "") or "").strip()
+    if not raw:
+        st.session_state["trade_price_txt"] = ""
+        return
+
+    try:
+        val = _parse_brl_decimal(raw)
+    except Exception:
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if not digits:
+            st.session_state["trade_price_txt"] = ""
+            return
+        val = int(digits) / 100.0
+
+    st.session_state["trade_price_txt"] = to_brl(float(val)).replace("R$ ", "")
+
+
+def _mask_currency_input_key(key: str) -> None:
+    raw = str(st.session_state.get(key, "") or "").strip()
+    if not raw:
+        st.session_state[key] = ""
+        return
+    try:
+        val = _parse_brl_decimal(raw)
+    except Exception:
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if not digits:
+            st.session_state[key] = ""
+            return
+        val = int(digits) / 100.0
+    st.session_state[key] = to_brl(float(val)).replace("R$ ", "")
+
+
+def _mask_integer_input_key(key: str) -> None:
+    raw = str(st.session_state.get(key, "") or "")
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    st.session_state[key] = digits
 
 
 def inject_corporate_css():
@@ -143,8 +331,12 @@ def render_auth_gate():
     with invite_tab:
         st.caption("Para criar usuário, use um link de convite gerado pelo admin.")
         token = st.text_input("Token do convite", value=invite_token_qp, key="invite_token")
-        if token:
-            ok, msg, _inv = auth.validate_invite(token)
+        token_norm = _extract_invite_token(token)
+        if token and token != token_norm:
+            st.caption("Token extraído automaticamente do link.")
+
+        if token_norm:
+            ok, msg, _inv = auth.validate_invite(token_norm)
             if ok:
                 st.success(msg)
             else:
@@ -159,7 +351,7 @@ def render_auth_gate():
             if password != confirm:
                 st.error("As senhas não conferem.")
             else:
-                ok, msg, user = auth.register_user_with_invite(token, email, password, name)
+                ok, msg, user = auth.register_user_with_invite(token_norm, email, password, name)
                 if not ok:
                     st.error(msg)
                 else:
@@ -450,12 +642,16 @@ with tab1:
 
     col1, col2, col3, col4 = st.columns([1.2, 2.5, 1.2, 1.2])
     with col1:
-        date = st.date_input("Data", key="tx_date")
+        date = st.date_input("Data", key="tx_date", format="DD/MM/YYYY")
     with col2:
         desc = st.text_input("Descrição", key="tx_desc")
     with col3:
-        amount_abs = st.number_input(
-            "Valor", min_value=0.0, value=0.0, step=10.0, format="%.2f", key="tx_amount"
+        amount_abs_txt = st.text_input(
+            "Valor",
+            value=st.session_state.get("tx_amount_txt", ""),
+            placeholder="0,00",
+            key="tx_amount_txt",
+            on_change=lambda: _mask_currency_input_key("tx_amount_txt"),
         )
     with col4:
         account_name = st.selectbox(
@@ -503,7 +699,11 @@ with tab1:
 
         account_id = acc_map.get(account_name)  # DESTINO
         category_id = None if category_name == "(sem)" else cat_map.get(category_name)
-        amount = float(amount_abs)
+        try:
+            amount = _parse_brl_decimal(amount_abs_txt)
+        except Exception:
+            st.error("Valor inválido. Exemplo válido: 1.234,56")
+            st.stop()
 
         # -------------------------
         # TRANSFERENCIA (2 lançamentos)
@@ -607,11 +807,17 @@ with tab1:
 
         col_del, col_btn = st.columns([1.2, 1.0])
         with col_del:
-            del_id = st.number_input("Excluir lançamento por ID", min_value=0, step=1, value=0, key="tx_del_id")
+            del_id_txt = st.text_input(
+                "Excluir lançamento por ID",
+                value=st.session_state.get("tx_del_id_txt", ""),
+                placeholder="Ex: 123",
+                key="tx_del_id_txt",
+                on_change=lambda: _mask_integer_input_key("tx_del_id_txt"),
+            )
         with col_btn:
             if st.button("Excluir", key="btn_del_tx"):
-                if del_id > 0:
-                    repo.delete_transaction(int(del_id))
+                if str(del_id_txt).strip().isdigit() and int(del_id_txt) > 0:
+                    repo.delete_transaction(int(del_id_txt))
                     st.success("Excluído (se existia).")
                     st.rerun()
                 else:
@@ -626,9 +832,9 @@ with tab2:
 
     f1, f2, f3 = st.columns([1.2, 1.2, 2.0])
     with f1:
-        date_from = st.date_input("De", value=None, key="dash_date_from")
+        date_from = st.date_input("De", value=None, key="dash_date_from", format="DD/MM/YYYY")
     with f2:
-        date_to = st.date_input("Até", value=None, key="dash_date_to")
+        date_to = st.date_input("Até", value=None, key="dash_date_to", format="DD/MM/YYYY")
     with f3:
         acc_filter = st.selectbox("Conta", ["(todas)"] + list(acc_map.keys()), key="dash_acc_filter")
 
@@ -825,7 +1031,9 @@ with tab4:
     broker_map = {r["name"]: r["id"] for r in broker_accounts}
 
     assets = invest_repo.list_assets() or []
-    asset_label = {r["symbol"]: r["id"] for r in assets} 
+    asset_dicts = [dict(r) for r in assets]
+    asset_label = {r["symbol"]: r["id"] for r in asset_dicts}
+    asset_meta = {r["symbol"]: r for r in asset_dicts}
 
     # ===== Ativos =====
     with subtabs[0]:
@@ -839,6 +1047,7 @@ with tab4:
             asset_class = st.selectbox("Classe", invest_repo.ASSET_CLASSES, key="asset_class")
         with c4:
             currency = st.selectbox("Moeda", ["BRL", "USD"], key="asset_currency")
+        sector = st.selectbox("Setor", invest_repo.ASSET_SECTORS, key="asset_sector")
 
         c5, c6, c7 = st.columns([1.5, 1.2, 1.3])
         with c5:
@@ -870,18 +1079,107 @@ with tab4:
             if not symbol.strip() or not name.strip():
                 st.error("Informe símbolo e nome.")
             else:
-                invest_repo.create_asset(
+                created = invest_repo.create_asset(
                     symbol=symbol.strip(),
                     name=name.strip(),
                     asset_class=asset_class,
+                    sector=sector,
                     source_account_id=source_account_id,
                     currency=currency,
                     broker_account_id=None if broker == "(sem)" else broker_map[broker],
                     issuer=issuer.strip() if issuer.strip() else None,
                     maturity_date=maturity_date.strip() if maturity_date.strip() else None
                 )
-                st.success("Ativo salvo.")
+                if created:
+                    st.success("Ativo salvo.")
+                else:
+                    st.warning("Ativo já existia para este usuário.")
                 st.rerun()
+
+        st.divider()
+        st.markdown("### Importar ativos por CSV")
+        st.caption("Aceita CSV com separador `,` ou `;`.")
+        up_assets = st.file_uploader("Enviar CSV de ativos", type=["csv"], key="asset_csv_upload")
+        if up_assets is not None:
+            try:
+                raw_assets = pd.read_csv(up_assets, sep=None, engine="python")
+                norm_assets = normalize_assets_import_df(raw_assets)
+                st.write("Prévia normalizada:")
+                st.dataframe(norm_assets.head(30), use_container_width=True, hide_index=True)
+
+                if st.button("Importar ativos", type="primary", key="btn_import_assets_csv"):
+                    # Recarrega contas atuais para mapear corretora/origem por nome.
+                    acc_rows = repo.list_accounts() or []
+                    acc_name_to_id = {r["name"]: int(r["id"]) for r in acc_rows}
+                    acc_name_to_type = {r["name"]: r["type"] for r in acc_rows}
+
+                    inserted = 0
+                    skipped = 0
+                    errors = []
+
+                    for _, row in norm_assets.iterrows():
+                        sym = str(row["symbol"]).strip().upper()
+                        nm = str(row["name"]).strip()
+                        cls = str(row["asset_class"]).strip()
+                        sector = str(row.get("sector", "Não definido")).strip() or "Não definido"
+                        cur = str(row.get("currency", "BRL")).strip().upper() or "BRL"
+                        broker_name = str(row.get("broker_account", "")).strip()
+                        source_name = str(row.get("source_account", "")).strip()
+
+                        if not sym or not nm or not cls:
+                            skipped += 1
+                            continue
+
+                        broker_id = None
+                        if broker_name:
+                            if broker_name not in acc_name_to_id:
+                                repo.create_account(broker_name, "Corretora")
+                                acc_rows = repo.list_accounts() or []
+                                acc_name_to_id = {r["name"]: int(r["id"]) for r in acc_rows}
+                                acc_name_to_type = {r["name"]: r["type"] for r in acc_rows}
+                            if acc_name_to_type.get(broker_name) != "Corretora":
+                                errors.append(f"{sym}: conta '{broker_name}' existe mas não é do tipo Corretora.")
+                                skipped += 1
+                                continue
+                            broker_id = acc_name_to_id.get(broker_name)
+
+                        source_id = None
+                        if source_name:
+                            if source_name not in acc_name_to_id:
+                                repo.create_account(source_name, "Banco")
+                                acc_rows = repo.list_accounts() or []
+                                acc_name_to_id = {r["name"]: int(r["id"]) for r in acc_rows}
+                            source_id = acc_name_to_id.get(source_name)
+
+                        try:
+                            created = invest_repo.create_asset(
+                                symbol=sym,
+                                name=nm,
+                                asset_class=cls,
+                                sector=sector,
+                                currency=cur,
+                                broker_account_id=broker_id,
+                                source_account_id=source_id,
+                            )
+                            if created:
+                                inserted += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            errors.append(f"{sym}: {e}")
+                            skipped += 1
+
+                    if inserted > 0:
+                        st.success(f"Importação concluída. Ativos processados: {inserted}.")
+                    if skipped > 0:
+                        st.warning(f"Linhas ignoradas/com erro: {skipped}.")
+                    if errors:
+                        st.write("Detalhes:")
+                        st.dataframe(pd.DataFrame({"erro": errors[:50]}), use_container_width=True, hide_index=True)
+                    st.rerun()
+
+            except Exception as e:
+                st.error(f"Erro ao ler/importar CSV de ativos: {e}")
 
         st.divider()
         st.markdown("### Ativos cadastrados")
@@ -895,13 +1193,14 @@ with tab4:
             if isinstance(a, sqlite3.Row):
                 a = dict(a)
 
-            col1, col2, col3, col4 = st.columns([3,3,2,1])
+            col1, col2, col3, col4, col5 = st.columns([2.5, 3, 2, 2, 1])
 
             col1.write(a["symbol"])
             col2.write(a["name"])
             col3.write(a["asset_class"])
+            col4.write(a.get("sector") or "Não definido")
 
-            with col4:
+            with col5:
                 if st.button("Editar", key=f"edit_{a['id']}"):
                     st.session_state["edit_asset_id"] = a["id"]
 
@@ -920,8 +1219,18 @@ if "edit_asset_id" in st.session_state:
 
     symbol = st.text_input("Symbol", value=asset["symbol"])
     name = st.text_input("Nome", value=asset["name"])
-    asset_class = st.text_input("Classe", value=asset["asset_class"])
-    currency = st.text_input("Moeda", value=asset["currency"])
+    asset_class = st.selectbox(
+        "Classe",
+        invest_repo.ASSET_CLASSES,
+        index=list(invest_repo.ASSET_CLASSES).index(asset["asset_class"]) if asset["asset_class"] in invest_repo.ASSET_CLASSES else 0,
+    )
+    sector_val = asset.get("sector") or "Não definido"
+    sector = st.selectbox(
+        "Setor",
+        invest_repo.ASSET_SECTORS,
+        index=invest_repo.ASSET_SECTORS.index(sector_val) if sector_val in invest_repo.ASSET_SECTORS else 0,
+    )
+    currency = st.selectbox("Moeda", ["BRL", "USD"], index=0 if str(asset["currency"]).upper() == "BRL" else 1)
 
     if st.button("Salvar alterações"):
         invest_repo.update_asset(
@@ -929,6 +1238,7 @@ if "edit_asset_id" in st.session_state:
             symbol=symbol,
             name=name,
             asset_class=asset_class,
+            sector=sector,
             currency=currency,
             broker_account_id=asset.get("broker_account_id")
         )
@@ -945,21 +1255,54 @@ with subtabs[1]:
         st.warning("Cadastre um ativo primeiro.")
         st.stop()
 
+    if st.session_state.get("reset_trade_form", False):
+        st.session_state["trade_qty_txt"] = ""
+        st.session_state["trade_price_txt"] = ""
+        st.session_state["trade_fees_txt"] = ""
+        st.session_state["trade_note"] = ""
+        st.session_state["reset_trade_form"] = False
+
     c1, c2, c3, c4 = st.columns([1.4, 1.0, 1.0, 1.0])
     with c1:
         sym = st.selectbox("Ativo", list(asset_label.keys()), key="trade_sym")
     with c2:
-        trade_date = st.date_input("Data", key="trade_date")
+        trade_date = st.date_input("Data", key="trade_date", format="DD/MM/YYYY")
     with c3:
         side = st.selectbox("Tipo", ["BUY", "SELL"], key="trade_side")
+    selected_asset = asset_meta.get(sym, {})
+    selected_asset_class = str(selected_asset.get("asset_class", ""))
+    allow_fraction_qty = ("STOCK" in selected_asset_class.upper()) or (selected_asset_class.strip().upper() == "CRYPTO")
     with c4:
-        qty = st.number_input("Quantidade", min_value=0.0, step=1.0, format="%.8f", key="trade_qty")
+        qty_txt = st.text_input(
+            "Quantidade",
+            value=st.session_state.get("trade_qty_txt", ""),
+            placeholder="Ex: 10,5" if allow_fraction_qty else "Ex: 220",
+            key="trade_qty_txt",
+        )
 
     c5, c6, c7 = st.columns([1.0, 1.0, 2.0])
     with c5:
-        price = st.number_input("Preço unitário", min_value=0.0, step=0.01, format="%.8f", key="trade_price")
+        price_txt = st.text_input(
+            "Preço unitário",
+            value=st.session_state.get("trade_price_txt", ""),
+            placeholder="0,00",
+            key="trade_price_txt",
+            on_change=_mask_trade_price_input,
+        )
+        try:
+            _price_preview = _parse_brl_decimal(price_txt) if price_txt.strip() else None
+            if _price_preview is not None:
+                st.caption(f"Preço formatado: {to_brl(_price_preview)}")
+        except Exception:
+            st.caption("Preço inválido. Use apenas números, vírgula e ponto.")
     with c6:
-        fees = st.number_input("Taxas", min_value=0.0, step=0.01, format="%.2f", key="trade_fees")
+        fees_txt = st.text_input(
+            "Taxas",
+            value=st.session_state.get("trade_fees_txt", ""),
+            placeholder="0,00",
+            key="trade_fees_txt",
+            on_change=lambda: _mask_currency_input_key("trade_fees_txt"),
+        )
     with c7:
         note = st.text_input("Obs", placeholder="corretagem, exchange, etc.", key="trade_note")
 
@@ -969,6 +1312,27 @@ with subtabs[1]:
     if st.button("Salvar operação", type="primary", key="btn_save_trade"):
 
         # ---------- VALIDACOES ----------
+        try:
+            qty = _parse_qty_input(qty_txt, allow_fraction=allow_fraction_qty)
+        except Exception:
+            if allow_fraction_qty:
+                st.error("Quantidade inválida. Para este ativo, use número (ex.: 10,5).")
+            else:
+                st.error("Quantidade deve ser inteira, sem vírgula ou ponto.")
+            st.stop()
+
+        try:
+            price = _parse_brl_decimal(price_txt)
+        except Exception:
+            st.error("Preço unitário inválido. Exemplo válido: 18,83")
+            st.stop()
+
+        try:
+            fees = _parse_brl_decimal(fees_txt) if fees_txt.strip() else 0.0
+        except Exception:
+            st.error("Taxas inválidas. Exemplo válido: 1,99")
+            st.stop()
+
         if float(qty) <= 0 or float(price) <= 0:
             st.error("Quantidade e preço devem ser maiores que zero.")
             st.stop()
@@ -1028,6 +1392,7 @@ with subtabs[1]:
             note=note_norm if note_norm else None
         )
 
+        st.session_state["reset_trade_form"] = True
         st.success("Operação salva.")
         st.rerun()
 
@@ -1079,21 +1444,37 @@ with subtabs[1]:
         if not assets:
             st.warning("Cadastre um ativo primeiro.")
         else:
+            if st.session_state.get("reset_income_form", False):
+                st.session_state["inc_amount_txt"] = ""
+                st.session_state["reset_income_form"] = False
+
             c1, c2, c3, c4 = st.columns([1.5, 1.0, 1.0, 1.5])
             with c1:
                 sym_p = st.selectbox("Ativo", list(asset_label.keys()), key="inc_sym")
             with c2:
-                date_p = st.date_input("Data", key="inc_date")
+                date_p = st.date_input("Data", key="inc_date", format="DD/MM/YYYY")
             with c3:
                 typ = st.selectbox("Tipo", invest_repo.INCOME_TYPES, key="inc_type")
             with c4:
-                amount = st.number_input("Valor recebido", min_value=0.0, step=1.0, format="%.2f", key="inc_amount")
+                amount_txt = st.text_input(
+                    "Valor recebido",
+                    value=st.session_state.get("inc_amount_txt", ""),
+                    placeholder="0,00",
+                    key="inc_amount_txt",
+                    on_change=lambda: _mask_currency_input_key("inc_amount_txt"),
+                )
 
             note = st.text_input("Obs (opcional)", key="inc_note")
 
             st.session_state.setdefault("last_income_key", None)
 
             if st.button("Salvar provento", type="primary", key="btn_save_income"):
+                try:
+                    amount = _parse_brl_decimal(amount_txt)
+                except Exception:
+                    st.error("Valor recebido inválido. Exemplo válido: 100,00")
+                    st.stop()
+
                 if float(amount) <= 0:
                     st.error("O valor do provento deve ser maior que zero.")
                     st.stop()
@@ -1133,6 +1514,7 @@ with subtabs[1]:
                 else:
                     st.warning("Ativo sem conta corretora vinculada. Cadastre em Ativos.")
 
+                st.session_state["reset_income_form"] = True
                 st.rerun()
 
         st.divider()
@@ -1152,12 +1534,55 @@ with subtabs[1]:
     # ===== Cotações =====
         with subtabs[3]:
             st.markdown("### Cotações automáticas")
+            st.session_state.setdefault("quote_last_report", [])
+            cset1, cset2 = st.columns([1.1, 1.1])
+            with cset1:
+                quote_timeout_s = st.number_input(
+                    "Timeout por ativo (s)",
+                    min_value=5,
+                    max_value=120,
+                    value=int(st.session_state.get("quote_timeout_s", 25)),
+                    step=1,
+                    key="quote_timeout_s",
+                )
+            with cset2:
+                quote_workers = st.number_input(
+                    "Paralelismo",
+                    min_value=1,
+                    max_value=16,
+                    value=int(st.session_state.get("quote_workers", 4)),
+                    step=1,
+                    key="quote_workers",
+                )
 
             if st.button("Atualizar cotação agora", key="btn_update_quotes"):
                 try:
                     assets = invest_repo.list_assets()
-                    with st.spinner("Consultando cotações (Yahoo/BRAPI)..."):
-                        report = invest_quotes.update_all_prices(assets)
+                    total_assets = len(assets or [])
+                    if total_assets == 0:
+                        st.warning("Nenhum ativo cadastrado para atualizar cotação.")
+                        st.stop()
+
+                    st.caption("Busca em paralelo ativa. Ajuste timeout e paralelismo acima.")
+                    progress_bar = st.progress(0.0)
+                    progress_txt = st.empty()
+                    t0 = time.monotonic()
+
+                    def _on_progress(done: int, total: int, row: dict):
+                        pct = done / max(total, 1)
+                        progress_bar.progress(pct)
+                        symbol = row.get("symbol") or "-"
+                        progress_txt.caption(f"Consultando... {done}/{total} | último: {symbol}")
+
+                    report = invest_quotes.update_all_prices(
+                        assets,
+                        progress_cb=_on_progress,
+                        timeout_s=float(quote_timeout_s),
+                        max_workers=int(quote_workers),
+                    )
+                    elapsed_total = time.monotonic() - t0
+                    progress_bar.progress(1.0)
+                    progress_txt.caption(f"Concluído em {elapsed_total:.1f}s ({len(report)} ativos processados).")
 
                     saved = 0
                     for r in report:
@@ -1173,10 +1598,88 @@ with subtabs[1]:
                     st.success(f"Cotações salvas: {saved}/{len(report)}")
                     if saved < len(report):
                         st.warning("Alguns ativos não retornaram cotação nesta tentativa. Veja a coluna 'error' abaixo.")
+                    st.session_state["quote_last_report"] = report
                     st.dataframe(pd.DataFrame(report), use_container_width=True)
 
                 except Exception as e:
                     st.error(f"Erro ao atualizar cotação: {e}")
+
+            last_report = st.session_state.get("quote_last_report") or []
+            pending_rows = [r for r in last_report if not r.get("ok")]
+            if pending_rows:
+                st.divider()
+                st.markdown("### Pendentes de cotação (preenchimento manual)")
+                manual_date = st.date_input(
+                    "Data para salvar as cotações manuais",
+                    key="pending_px_date",
+                    format="DD/MM/YYYY",
+                )
+
+                for r in pending_rows:
+                    asset_id = int(r.get("asset_id"))
+                    symbol = str(r.get("symbol") or "")
+                    err = str(r.get("error") or "Sem detalhe")
+                    key_px = f"pending_px_{asset_id}"
+                    key_btn = f"btn_save_pending_{asset_id}"
+
+                    c1, c2, c3, c4 = st.columns([1.2, 2.0, 1.0, 0.9])
+                    with c1:
+                        st.write(f"**{symbol}**")
+                    with c2:
+                        st.caption(err)
+                    with c3:
+                        st.text_input(
+                            "Preço",
+                            value=st.session_state.get(key_px, ""),
+                            placeholder="0,00",
+                            key=key_px,
+                            on_change=(lambda k=key_px: _mask_currency_input_key(k)),
+                        )
+                    with c4:
+                        if st.button("Salvar", key=key_btn):
+                            try:
+                                px_val = _parse_brl_decimal(st.session_state.get(key_px, ""))
+                            except Exception:
+                                st.error(f"{symbol}: preço inválido.")
+                                st.stop()
+                            if px_val <= 0:
+                                st.error(f"{symbol}: preço deve ser maior que zero.")
+                                st.stop()
+                            invest_repo.upsert_price(
+                                asset_id=asset_id,
+                                date=manual_date.strftime("%Y-%m-%d"),
+                                price=float(px_val),
+                                source="manual",
+                            )
+                            st.success(f"{symbol}: cotação manual salva.")
+                            st.rerun()
+
+                if st.button("Salvar todos os preços preenchidos", key="btn_save_all_pending"):
+                    saved_manual = 0
+                    for r in pending_rows:
+                        asset_id = int(r.get("asset_id"))
+                        key_px = f"pending_px_{asset_id}"
+                        raw_px = str(st.session_state.get(key_px, "") or "").strip()
+                        if not raw_px:
+                            continue
+                        try:
+                            px_val = _parse_brl_decimal(raw_px)
+                        except Exception:
+                            continue
+                        if px_val <= 0:
+                            continue
+                        invest_repo.upsert_price(
+                            asset_id=asset_id,
+                            date=manual_date.strftime("%Y-%m-%d"),
+                            price=float(px_val),
+                            source="manual",
+                        )
+                        saved_manual += 1
+                    if saved_manual > 0:
+                        st.success(f"Cotações manuais salvas: {saved_manual}.")
+                        st.rerun()
+                    else:
+                        st.warning("Nenhum preço válido preenchido para salvar.")
 
             st.divider()
 
@@ -1184,13 +1687,23 @@ with subtabs[1]:
         if not assets:
             st.warning("Cadastre um ativo primeiro.")
         else:
+            if st.session_state.get("reset_price_form", False):
+                st.session_state["px_price_txt"] = ""
+                st.session_state["reset_price_form"] = False
+
             c1, c2, c3 = st.columns([1.5, 1.0, 1.0])
             with c1:
                 sym = st.selectbox("Ativo", list(asset_label.keys()), key="px_sym")
             with c2:
-                px_date = st.date_input("Data", key="px_date")
+                px_date = st.date_input("Data", key="px_date", format="DD/MM/YYYY")
             with c3:
-                price = st.number_input("Cotação / PU / valor unit", min_value=0.0, step=0.01, format="%.8f", key="px_price")
+                price_txt = st.text_input(
+                    "Cotação / PU / valor unit",
+                    value=st.session_state.get("px_price_txt", ""),
+                    placeholder="0,00",
+                    key="px_price_txt",
+                    on_change=lambda: _mask_currency_input_key("px_price_txt"),
+                )
 
             last = invest_repo.get_last_price_by_symbol(sym)
             if last:
@@ -1204,7 +1717,13 @@ with subtabs[1]:
 
             src = st.text_input("Fonte (opcional)", placeholder="manual", key="px_src")
             if st.button("Salvar cotação", type="primary", key="btn_save_px"):
+                try:
+                    price = _parse_brl_decimal(price_txt)
+                except Exception:
+                    st.error("Cotação inválida. Exemplo válido: 12,34")
+                    st.stop()
                 invest_repo.upsert_price(asset_label[sym], px_date.strftime("%Y-%m-%d"), float(price), src.strip() if src.strip() else None)
+                st.session_state["reset_price_form"] = True
                 st.success("Cotação salva.")
                 st.rerun()
 
@@ -1236,7 +1755,7 @@ with subtabs[1]:
         if is_empty_portfolio:
             # cria um DF vazio com colunas mínimas, pra não quebrar o resto
             pos = pd.DataFrame(columns=[
-                "asset_id","symbol","name","asset_class","currency",
+                "asset_id","symbol","name","asset_class","sector","currency",
                 "qty","avg_cost","cost_basis","price","price_date",
                 "market_value","unrealized_pnl","realized_pnl","income"
             ])
@@ -1257,6 +1776,8 @@ with subtabs[1]:
                 pos["price_date"] = None
             if "name" not in pos.columns:
                 pos["name"] = ""
+            if "sector" not in pos.columns:
+                pos["sector"] = "Não definido"
             if "currency" not in pos.columns:
                 pos["currency"] = "BRL"
 
@@ -1317,7 +1838,7 @@ with subtabs[1]:
         view["return_pct_fmt"] = view["return_pct"].apply(lambda x: f"{float(x):.2f}%")
 
         cols = [
-                "symbol", "name", "asset_class",
+                "symbol", "name", "asset_class", "sector",
                 "qty", "avg_cost",
                 "price_date", "price",
                 "cost_basis_fmt", "market_value_fmt",
@@ -1329,6 +1850,7 @@ with subtabs[1]:
                 "symbol": "Ativo",
                 "name": "Nome",
                 "asset_class": "Classe",
+                "sector": "Setor",
                 "qty": "Qtd",
                 "avg_cost": "Preço Médio",
                 "price_date": "Data Preço",
@@ -1352,6 +1874,18 @@ with subtabs[1]:
         else:
                 fig = px.pie(chart_df, names="symbol", values="market_value_abs")
                 st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("#### Distribuição por setor")
+        sector_chart = pos.copy()
+        sector_chart["sector"] = sector_chart["sector"].fillna("Não definido")
+        sector_chart["market_value_abs"] = sector_chart["market_value"].fillna(0.0)
+        sector_chart = sector_chart.groupby("sector", as_index=False)["market_value_abs"].sum()
+        sector_chart = sector_chart[sector_chart["market_value_abs"] > 0]
+        if sector_chart.empty:
+                st.info("Sem dados de mercado por setor ainda.")
+        else:
+                fig_sector = px.pie(sector_chart, names="sector", values="market_value_abs")
+                st.plotly_chart(fig_sector, use_container_width=True)
 
         st.divider()
         st.markdown("#### Alertas rápidos")
@@ -1385,4 +1919,30 @@ with subtabs[1]:
             }),
             use_container_width=True,
             hide_index=True
+        )
+
+        st.divider()
+        st.markdown("#### Totais por setor")
+        by_sector = pos.copy()
+        by_sector["sector"] = by_sector["sector"].fillna("Não definido")
+        by_sector = by_sector.groupby("sector", as_index=False).agg(
+            invested=("cost_basis", "sum"),
+            market=("market_value", "sum"),
+            income=("income", "sum"),
+            total_return=("total_return", "sum"),
+        )
+        by_sector["invested"] = by_sector["invested"].apply(to_brl)
+        by_sector["market"] = by_sector["market"].apply(to_brl)
+        by_sector["income"] = by_sector["income"].apply(to_brl)
+        by_sector["total_return"] = by_sector["total_return"].apply(to_brl)
+        st.dataframe(
+            by_sector.rename(columns={
+                "sector": "Setor",
+                "invested": "Investido",
+                "market": "Mercado",
+                "income": "Proventos",
+                "total_return": "Retorno Total",
+            }),
+            use_container_width=True,
+            hide_index=True,
         )

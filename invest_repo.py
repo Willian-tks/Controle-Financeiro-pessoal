@@ -17,6 +17,18 @@ ASSET_CLASSES = {
     "Outros": "OUTROS",
 }
 
+ASSET_SECTORS = [
+    "Não definido",
+    "Financeiro",
+    "Energia & Utilidades",
+    "Commodities",
+    "Consumo",
+    "Indústria",
+    "Serviços",
+    "Tecnologia & Telecom",
+    "Imobiliário",
+]
+
 INCOME_TYPES = {
     "Dividendos": "DIVIDEND",
     "JCP": "JCP",
@@ -56,6 +68,7 @@ def create_asset(
     symbol: str,
     name: str,
     asset_class: str,
+    sector: str | None = None,
     currency: str = "BRL",
     broker_account_id=None,
     source_account_id=None,
@@ -71,17 +84,19 @@ def create_asset(
         "SELECT id FROM assets WHERE user_id = ? AND UPPER(symbol) = UPPER(?)",
         (uid, symbol.strip().upper()),
     ).fetchone()
+    created = False
     if not exists:
         conn.execute(
             """
             INSERT INTO assets
-            (symbol, name, asset_class, currency, broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date, user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (symbol, name, asset_class, sector, currency, broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol.strip().upper(),
                 name.strip(),
                 asset_class,
+                sector if sector else "Não definido",
                 currency,
                 broker_account_id,
                 source_account_id,
@@ -92,8 +107,10 @@ def create_asset(
                 uid,
             ),
         )
+        created = True
     conn.commit()
     conn.close()
+    return created
 
 
 def insert_trade(
@@ -333,7 +350,7 @@ def get_asset(asset_id: int, user_id: int | None = None):
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, symbol, name, asset_class, broker_account_id, source_account_id
+        SELECT id, symbol, name, asset_class, sector, broker_account_id, source_account_id
         FROM assets
         WHERE id = ? AND user_id = ?
         """,
@@ -423,6 +440,7 @@ def update_asset(
     symbol: str,
     name: str,
     asset_class: str,
+    sector: str,
     currency: str,
     broker_account_id: int | None,
     user_id: int | None = None,
@@ -433,10 +451,10 @@ def update_asset(
         cur.execute(
             """
             UPDATE assets
-            SET symbol = ?, name = ?, asset_class = ?, currency = ?, broker_account_id = ?
+            SET symbol = ?, name = ?, asset_class = ?, sector = ?, currency = ?, broker_account_id = ?
             WHERE id = ? AND user_id = ?
             """,
-            (symbol, name, asset_class, currency, broker_account_id, asset_id, uid),
+            (symbol, name, asset_class, sector, currency, broker_account_id, asset_id, uid),
         )
         conn.commit()
 
