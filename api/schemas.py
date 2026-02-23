@@ -19,6 +19,7 @@ class TransactionCreateRequest(BaseModel):
     category_id: int | None = None
     kind: str | None = None
     source_account_id: int | None = None
+    card_id: int | None = None
     method: str | None = None
     notes: str | None = None
 
@@ -98,17 +99,19 @@ class QuoteUpdateAllRequest(BaseModel):
 class CreditCardCreateRequest(BaseModel):
     name: str
     brand: str | None = None
+    card_type: str | None = None
     card_account_id: int
-    source_account_id: int
-    due_day: int
+    source_account_id: int | None = None
+    due_day: int | None = None
 
 
 class CreditCardUpdateRequest(BaseModel):
     name: str
     brand: str | None = None
+    card_type: str | None = None
     card_account_id: int
-    source_account_id: int
-    due_day: int
+    source_account_id: int | None = None
+    due_day: int | None = None
 
 
 class CreditCardPayInvoiceRequest(BaseModel):

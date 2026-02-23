@@ -118,6 +118,27 @@ def _norm_card_brand(value: Any) -> str:
     return "Visa"
 
 
+def _norm_card_type(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    raw = (
+        raw.replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+    if raw in {"debito"}:
+        return "Debito"
+    return "Credito"
+
+
 def _auth_payload(authorization: str | None = Header(default=None)) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
@@ -433,24 +454,14 @@ def create_transaction(
     destination = account_map[destination_id]
     if kind == "Despesa":
         if method == "Credito":
-            if _norm_account_type(destination.get("type")) != "Cartao":
-                raise HTTPException(status_code=400, detail="Para método Crédito, selecione uma conta do tipo Cartao")
-            card_cfg = repo.get_credit_card_by_account(destination_id, user_id=uid)
+            if body.card_id is None:
+                raise HTTPException(status_code=400, detail="Para método Crédito, selecione um cartão do tipo Crédito")
+            card_cfg = repo.get_credit_card_by_id_and_type(int(body.card_id), "Credito", user_id=uid)
             if not card_cfg:
                 raise HTTPException(
                     status_code=400,
-                    detail="Cartão não cadastrado em Contas. Cadastre o cartão para lançar no crédito.",
+                    detail="Cartão de crédito inválido ou não encontrado.",
                 )
-            repo.insert_transaction(
-                date=body.date,
-                description=desc,
-                amount=-amount_abs,
-                account_id=destination_id,
-                category_id=int(category_id) if category_id is not None else None,
-                method=method,
-                notes=notes,
-                user_id=uid,
-            )
             repo.register_credit_charge(
                 card_id=int(card_cfg["id"]),
                 purchase_date=body.date,
@@ -458,9 +469,33 @@ def create_transaction(
                 note=notes,
                 user_id=uid,
             )
-            return {"ok": True, "mode": "credit_expense", "created": 1}
-        if method in {"Debito", "PIX"} and _norm_account_type(destination.get("type")) == "Cartao":
-            raise HTTPException(status_code=400, detail="Para Débito/PIX selecione uma conta Banco ou Dinheiro")
+            return {"ok": True, "mode": "credit_card_charge", "created": 0}
+        if method == "Debito" and body.card_id is not None:
+            card_cfg = repo.get_credit_card_by_id_and_type(int(body.card_id), "Debito", user_id=uid)
+            if not card_cfg:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cartão de débito inválido ou não encontrado.",
+                )
+            source_id = int(card_cfg["card_account_id"])
+            source_acc = account_map.get(source_id)
+            if not source_acc:
+                raise HTTPException(status_code=400, detail="Conta banco vinculada ao cartão não encontrada")
+            if _norm_account_type(source_acc.get("type")) != "Banco":
+                raise HTTPException(status_code=400, detail="Cartão Débito deve estar vinculado a uma conta Banco")
+            repo.insert_transaction(
+                date=body.date,
+                description=f"DEBITO CARTAO {card_cfg.get('name')} | {desc}",
+                amount=-amount_abs,
+                account_id=source_id,
+                category_id=int(category_id) if category_id is not None else None,
+                method=method,
+                notes=notes,
+                user_id=uid,
+            )
+            return {"ok": True, "mode": "debit_card_expense", "created": 1}
+        if method in {"PIX"} and body.card_id is not None:
+            raise HTTPException(status_code=400, detail="PIX não usa cartão. Selecione somente a conta de origem.")
 
     signed_amount = amount_abs if kind == "Receita" else -amount_abs
     repo.insert_transaction(
@@ -491,32 +526,35 @@ def create_card(
     uid = int(user["id"])
     name = (body.name or "").strip()
     brand = _norm_card_brand(body.brand)
+    card_type = _norm_card_type(body.card_type)
     if not name:
         raise HTTPException(status_code=400, detail="Nome do cartão é obrigatório")
-    if int(body.due_day) < 1 or int(body.due_day) > 31:
-        raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31")
 
     account_map = {int(a["id"]): dict(a) for a in (repo.list_accounts(user_id=uid) or [])}
-    card_acc = account_map.get(int(body.card_account_id))
-    source_acc = account_map.get(int(body.source_account_id))
-    if not card_acc:
-        raise HTTPException(status_code=400, detail="Conta do cartão inválida")
-    if not source_acc:
-        raise HTTPException(status_code=400, detail="Conta pagadora inválida")
-    if _norm_account_type(card_acc.get("type")) != "Cartao":
-        raise HTTPException(status_code=400, detail="Conta do cartão deve ser do tipo Cartao")
-    if _norm_account_type(source_acc.get("type")) == "Corretora":
-        raise HTTPException(status_code=400, detail="Conta pagadora não pode ser Corretora")
-    if int(body.card_account_id) == int(body.source_account_id):
-        raise HTTPException(status_code=400, detail="Conta do cartão e pagadora devem ser diferentes")
+    linked_acc = account_map.get(int(body.card_account_id))
+    source_acc = account_map.get(int(body.source_account_id)) if body.source_account_id is not None else None
+    if not linked_acc or _norm_account_type(linked_acc.get("type")) != "Banco":
+        raise HTTPException(status_code=400, detail="Conta banco vinculada ao cartão é obrigatória e deve ser do tipo Banco")
+
+    if card_type == "Credito":
+        if body.due_day is None or int(body.due_day) < 1 or int(body.due_day) > 31:
+            raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31 para cartão Crédito")
+        if not source_acc or _norm_account_type(source_acc.get("type")) != "Banco":
+            raise HTTPException(status_code=400, detail="Conta de pagamento da fatura deve ser uma conta Banco")
+        due_day = int(body.due_day)
+    else:
+        if source_acc and _norm_account_type(source_acc.get("type")) != "Banco":
+            raise HTTPException(status_code=400, detail="Conta de pagamento, quando informada, deve ser Banco")
+        due_day = 1
 
     try:
         repo.create_credit_card(
             name=name,
             brand=brand,
+            card_type=card_type,
             card_account_id=int(body.card_account_id),
-            source_account_id=int(body.source_account_id),
-            due_day=int(body.due_day),
+            source_account_id=int(body.source_account_id) if body.source_account_id is not None else int(body.card_account_id),
+            due_day=due_day,
             user_id=uid,
         )
     except Exception as e:
@@ -533,26 +571,32 @@ def update_card(
     uid = int(user["id"])
     name = (body.name or "").strip()
     brand = _norm_card_brand(body.brand)
+    card_type = _norm_card_type(body.card_type)
     if not name:
         raise HTTPException(status_code=400, detail="Nome do cartão é obrigatório")
-    if int(body.due_day) < 1 or int(body.due_day) > 31:
-        raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31")
     account_map = {int(a["id"]): dict(a) for a in (repo.list_accounts(user_id=uid) or [])}
-    card_acc = account_map.get(int(body.card_account_id))
-    source_acc = account_map.get(int(body.source_account_id))
-    if not card_acc or _norm_account_type(card_acc.get("type")) != "Cartao":
-        raise HTTPException(status_code=400, detail="Conta do cartão inválida (deve ser Cartao)")
-    if not source_acc or _norm_account_type(source_acc.get("type")) == "Corretora":
-        raise HTTPException(status_code=400, detail="Conta pagadora inválida")
-    if int(body.card_account_id) == int(body.source_account_id):
-        raise HTTPException(status_code=400, detail="Conta do cartão e pagadora devem ser diferentes")
+    linked_acc = account_map.get(int(body.card_account_id))
+    source_acc = account_map.get(int(body.source_account_id)) if body.source_account_id is not None else None
+    if not linked_acc or _norm_account_type(linked_acc.get("type")) != "Banco":
+        raise HTTPException(status_code=400, detail="Conta banco vinculada ao cartão é obrigatória e deve ser Banco")
+    if card_type == "Credito":
+        if body.due_day is None or int(body.due_day) < 1 or int(body.due_day) > 31:
+            raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31 para cartão Crédito")
+        if not source_acc or _norm_account_type(source_acc.get("type")) != "Banco":
+            raise HTTPException(status_code=400, detail="Conta de pagamento da fatura inválida")
+        due_day = int(body.due_day)
+    else:
+        if source_acc and _norm_account_type(source_acc.get("type")) != "Banco":
+            raise HTTPException(status_code=400, detail="Conta de pagamento, quando informada, deve ser Banco")
+        due_day = 1
     repo.update_credit_card(
         card_id=int(card_id),
         name=name,
         brand=brand,
+        card_type=card_type,
         card_account_id=int(body.card_account_id),
-        source_account_id=int(body.source_account_id),
-        due_day=int(body.due_day),
+        source_account_id=int(body.source_account_id) if body.source_account_id is not None else int(body.card_account_id),
+        due_day=due_day,
         user_id=uid,
     )
     return {"ok": True}

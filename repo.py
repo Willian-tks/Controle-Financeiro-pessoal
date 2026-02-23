@@ -338,9 +338,9 @@ def list_credit_cards(user_id: int | None = None):
     rows = conn.execute(
         """
         SELECT
-            cc.id, cc.name, cc.card_account_id, ca.name AS card_account, ca.type AS card_account_type,
+            cc.id, cc.name, cc.card_account_id, ca.name AS linked_account, ca.type AS linked_account_type,
             cc.source_account_id, sa.name AS source_account, sa.type AS source_account_type,
-            cc.due_day, COALESCE(cc.brand, 'Visa') AS brand
+            cc.due_day, COALESCE(cc.brand, 'Visa') AS brand, COALESCE(cc.card_type, 'Credito') AS card_type
         FROM credit_cards cc
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
         JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
@@ -356,8 +356,9 @@ def list_credit_cards(user_id: int | None = None):
 def create_credit_card(
     name: str,
     brand: str,
+    card_type: str,
     card_account_id: int,
-    source_account_id: int,
+    source_account_id: int | None,
     due_day: int,
     user_id: int | None = None,
 ):
@@ -365,10 +366,18 @@ def create_credit_card(
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO credit_cards(name, brand, card_account_id, source_account_id, due_day, user_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO credit_cards(name, brand, card_type, card_account_id, source_account_id, due_day, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (name.strip(), brand.strip(), int(card_account_id), int(source_account_id), int(due_day), uid),
+        (
+            name.strip(),
+            brand.strip(),
+            card_type.strip(),
+            int(card_account_id),
+            int(source_account_id) if source_account_id is not None else int(card_account_id),
+            int(due_day),
+            uid,
+        ),
     )
     conn.commit()
     conn.close()
@@ -378,8 +387,9 @@ def update_credit_card(
     card_id: int,
     name: str,
     brand: str,
+    card_type: str,
     card_account_id: int,
-    source_account_id: int,
+    source_account_id: int | None,
     due_day: int,
     user_id: int | None = None,
 ):
@@ -388,10 +398,19 @@ def update_credit_card(
     conn.execute(
         """
         UPDATE credit_cards
-        SET name = ?, brand = ?, card_account_id = ?, source_account_id = ?, due_day = ?
+        SET name = ?, brand = ?, card_type = ?, card_account_id = ?, source_account_id = ?, due_day = ?
         WHERE id = ? AND user_id = ?
         """,
-        (name.strip(), brand.strip(), int(card_account_id), int(source_account_id), int(due_day), int(card_id), uid),
+        (
+            name.strip(),
+            brand.strip(),
+            card_type.strip(),
+            int(card_account_id),
+            int(source_account_id) if source_account_id is not None else int(card_account_id),
+            int(due_day),
+            int(card_id),
+            uid,
+        ),
     )
     conn.commit()
     conn.close()
@@ -417,16 +436,31 @@ def delete_credit_card(card_id: int, user_id: int | None = None) -> int:
     return int(cur.rowcount or 0)
 
 
-def get_credit_card_by_account(card_account_id: int, user_id: int | None = None):
+def get_credit_card_by_account_and_type(card_account_id: int, card_type: str, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, name, COALESCE(brand, 'Visa') AS brand, card_account_id, source_account_id, due_day
+        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day
         FROM credit_cards
-        WHERE card_account_id = ? AND user_id = ?
+        WHERE card_account_id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ?
         """,
-        (int(card_account_id), uid),
+        (int(card_account_id), uid, str(card_type)),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_credit_card_by_id_and_type(card_id: int, card_type: str, user_id: int | None = None):
+    uid = _uid(user_id)
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day
+        FROM credit_cards
+        WHERE id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ?
+        """,
+        (int(card_id), uid, str(card_type)),
     ).fetchone()
     conn.close()
     return row
@@ -499,7 +533,7 @@ def list_credit_card_invoices(user_id: int | None = None, status: str | None = N
     conn = get_conn()
     q = """
         SELECT
-            i.id, i.card_id, cc.name AS card_name, ca.name AS card_account, sa.name AS source_account,
+            i.id, i.card_id, cc.name AS card_name, ca.name AS linked_account, sa.name AS source_account,
             i.invoice_period, i.due_date, i.total_amount, i.paid_amount, i.status
         FROM credit_card_invoices i
         JOIN credit_cards cc ON cc.id = i.card_id AND cc.user_id = i.user_id
@@ -527,7 +561,7 @@ def pay_credit_card_invoice(invoice_id: int, payment_date: str, user_id: int | N
         """
         SELECT i.id, i.card_id, i.invoice_period, i.due_date, i.total_amount, i.paid_amount, i.status,
                cc.name AS card_name, cc.card_account_id, cc.source_account_id,
-               ca.name AS card_account_name, sa.name AS source_account_name
+               ca.name AS linked_account_name, sa.name AS source_account_name
         FROM credit_card_invoices i
         JOIN credit_cards cc ON cc.id = i.card_id AND cc.user_id = i.user_id
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
@@ -545,9 +579,8 @@ def pay_credit_card_invoice(invoice_id: int, payment_date: str, user_id: int | N
         conn.close()
         raise ValueError("Fatura já está paga.")
 
-    cat_id = ensure_category("Fatura Cartão", "Transferencia", user_id=uid)
-    src_name = str(inv["source_account_name"])
-    card_name = str(inv["card_account_name"])
+    cat_id = ensure_category("Fatura Cartão", "Despesa", user_id=uid)
+    linked_name = str(inv["linked_account_name"])
     period = str(inv["invoice_period"])
 
     conn.execute(
@@ -557,28 +590,12 @@ def pay_credit_card_invoice(invoice_id: int, payment_date: str, user_id: int | N
         """,
         (
             payment_date,
-            f"PGTO FATURA -> {card_name} ({period})",
+            f"PGTO FATURA {inv['card_name']} ({period})",
             -abs(remaining),
             int(inv["source_account_id"]),
             int(cat_id),
             "Credito",
-            f"Pagamento de fatura do cartão {inv['card_name']}",
-            uid,
-        ),
-    )
-    conn.execute(
-        """
-        INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            payment_date,
-            f"PGTO FATURA <- {src_name} ({period})",
-            abs(remaining),
-            int(inv["card_account_id"]),
-            int(cat_id),
-            "Credito",
-            f"Pagamento de fatura do cartão {inv['card_name']}",
+            f"Pagamento de fatura do cartão {inv['card_name']} (vinculado a {linked_name})",
             uid,
         ),
     )

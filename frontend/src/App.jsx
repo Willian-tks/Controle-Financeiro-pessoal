@@ -14,6 +14,8 @@ import bankNubankLogo from "./banks/nubank-logo.svg";
 import bankSantanderLogo from "./banks/santander-logo.svg";
 import cardVisaLogo from "./cards/visa-17.svg";
 import cardMasterLogo from "./cards/mastercard-18.svg";
+import cardVisaBg from "./cards/Cartao_visa.png";
+import cardMasterBg from "./cards/Cartao_mastercard.svg";
 import {
   clearToken,
   createCard,
@@ -150,6 +152,18 @@ function getCardLogo(brand) {
   return cardVisaLogo;
 }
 
+function getCardBackground(brand) {
+  const n = normalizeText(brand);
+  if (n.includes("master")) return cardMasterBg;
+  return cardVisaBg;
+}
+
+function getCardBgClass(brand) {
+  const n = normalizeText(brand);
+  if (n.includes("master")) return "brand-master";
+  return "brand-visa";
+}
+
 export default function App() {
   const [authError, setAuthError] = useState("");
   const [user, setUser] = useState(null);
@@ -174,9 +188,11 @@ export default function App() {
   const [txKind, setTxKind] = useState("Receita");
   const [txMethod, setTxMethod] = useState("PIX");
   const [txSourceAccountId, setTxSourceAccountId] = useState("");
+  const [txCardId, setTxCardId] = useState("");
   const [cardMsg, setCardMsg] = useState("");
   const [cardName, setCardName] = useState("");
   const [cardBrand, setCardBrand] = useState("Visa");
+  const [cardType, setCardType] = useState("Credito");
   const [cardAccountId, setCardAccountId] = useState("");
   const [cardSourceAccountId, setCardSourceAccountId] = useState("");
   const [cardDueDay, setCardDueDay] = useState("10");
@@ -223,6 +239,7 @@ export default function App() {
   const [catEditKind, setCatEditKind] = useState("Despesa");
   const [loading, setLoading] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [walletCardIndex, setWalletCardIndex] = useState(0);
   const userMenuRef = useRef(null);
 
   useEffect(() => {
@@ -305,16 +322,13 @@ export default function App() {
   }, [accounts, txAccountId]);
 
   useEffect(() => {
-    const cardAccounts = accounts.filter((a) => normalizeAccountType(a.type) === "Cartao");
-    const sourceAccounts = accounts.filter((a) => {
-      const t = normalizeAccountType(a.type);
-      return t !== "Cartao" && t !== "Corretora";
-    });
+    const bankAccounts = accounts.filter((a) => normalizeAccountType(a.type) === "Banco");
+    const sourceAccounts = bankAccounts;
 
-    if (!cardAccounts.length) {
+    if (!bankAccounts.length) {
       setCardAccountId("");
-    } else if (!cardAccountId || !cardAccounts.some((a) => String(a.id) === String(cardAccountId))) {
-      setCardAccountId(String(cardAccounts[0].id));
+    } else if (!cardAccountId || !bankAccounts.some((a) => String(a.id) === String(cardAccountId))) {
+      setCardAccountId(String(bankAccounts[0].id));
     }
 
     if (!sourceAccounts.length) {
@@ -322,13 +336,14 @@ export default function App() {
     } else if (!cardSourceAccountId || !sourceAccounts.some((a) => String(a.id) === String(cardSourceAccountId))) {
       setCardSourceAccountId(String(sourceAccounts[0].id));
     }
-  }, [accounts, cardAccountId, cardSourceAccountId]);
+  }, [accounts, cardAccountId, cardSourceAccountId, cardType]);
 
   useEffect(() => {
     if (!cards.length) {
       setCardEditId("");
       setCardName("");
       setCardBrand("Visa");
+      setCardType("Credito");
       setCardDueDay("10");
       return;
     }
@@ -336,6 +351,7 @@ export default function App() {
     setCardEditId(String(cur.id));
     setCardName(String(cur.name || ""));
     setCardBrand(String(cur.brand || "Visa"));
+    setCardType(String(cur.card_type || "Credito"));
     setCardAccountId(String(cur.card_account_id || ""));
     setCardSourceAccountId(String(cur.source_account_id || ""));
     setCardDueDay(String(cur.due_day || 10));
@@ -366,6 +382,30 @@ export default function App() {
   const txEffectiveKind = txCategory?.kind || txKind;
   const txIsTransfer = txEffectiveKind === "Transferencia";
   const txIsExpense = txEffectiveKind === "Despesa";
+  const bankAccountsOnly = useMemo(
+    () => accounts.filter((a) => normalizeAccountType(a.type) === "Banco"),
+    [accounts]
+  );
+  const cardsForTxMethod = useMemo(() => {
+    if (!txIsExpense || txIsTransfer) return [];
+    if (txMethod === "Credito") return (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito");
+    if (txMethod === "Debito") return (cards || []).filter((c) => String(c.card_type || "Credito") === "Debito");
+    return [];
+  }, [cards, txIsExpense, txIsTransfer, txMethod]);
+  useEffect(() => {
+    if (!txIsExpense || txIsTransfer || !["Credito", "Debito"].includes(txMethod)) {
+      setTxCardId("");
+      return;
+    }
+    if (!cardsForTxMethod.length) {
+      setTxCardId("");
+      return;
+    }
+    if (!txCardId || !cardsForTxMethod.some((c) => String(c.id) === String(txCardId))) {
+      setTxCardId(String(cardsForTxMethod[0].id));
+    }
+  }, [txIsExpense, txIsTransfer, txMethod, cardsForTxMethod, txCardId]);
+  const isCreditCardType = cardType === "Credito";
 
   const brl = useMemo(
     () =>
@@ -409,6 +449,20 @@ export default function App() {
         .reduce((acc, i) => acc + Math.max(0, Number(i.total_amount || 0) - Number(i.paid_amount || 0)), 0),
     [cardInvoices]
   );
+  const creditCards = useMemo(
+    () => (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito"),
+    [cards]
+  );
+  useEffect(() => {
+    if (!creditCards.length) {
+      setWalletCardIndex(0);
+      return;
+    }
+    if (walletCardIndex >= creditCards.length) {
+      setWalletCardIndex(0);
+    }
+  }, [creditCards.length, walletCardIndex]);
+  const activeCreditCard = creditCards.length ? creditCards[walletCardIndex] : null;
   const investmentByClass = useMemo(() => {
     const rows = investPortfolio?.positions || [];
     const map = new Map();
@@ -550,6 +604,7 @@ export default function App() {
     const notes = String(form.get("notes") || "").trim();
     const effectiveKind = (category?.kind || txKind || "Receita").trim();
     const sourceAccountId = txSourceAccountId ? Number(txSourceAccountId) : NaN;
+    const selectedCardId = txCardId ? Number(txCardId) : NaN;
 
     if (
       !description ||
@@ -566,17 +621,17 @@ export default function App() {
       setTxMsg("Para Transferência, selecione a conta origem.");
       return;
     }
-    const selectedAccount = accounts.find((a) => Number(a.id) === Number(accountId));
     if (txIsExpense && !txIsTransfer) {
-      if (method === "Credito" && normalizeAccountType(selectedAccount?.type) !== "Cartao") {
-        setTxMsg("Para método Crédito, selecione uma conta do tipo Cartao.");
+      if (method === "Credito" && (!Number.isFinite(selectedCardId) || selectedCardId <= 0)) {
+        setTxMsg("Para despesa no Crédito, selecione um cartão.");
         return;
       }
-      if (
-        (method === "Debito" || method === "PIX") &&
-        normalizeAccountType(selectedAccount?.type) === "Cartao"
-      ) {
-        setTxMsg("Para Débito/PIX, selecione uma conta Banco ou Dinheiro.");
+      if (method === "Debito" && txCardId && (!Number.isFinite(selectedCardId) || selectedCardId <= 0)) {
+        setTxMsg("Cartão de débito inválido.");
+        return;
+      }
+      if (method === "PIX" && txCardId) {
+        setTxMsg("PIX não usa cartão.");
         return;
       }
     }
@@ -590,6 +645,10 @@ export default function App() {
         category_id: categoryId,
         kind: effectiveKind,
         source_account_id: txIsTransfer ? sourceAccountId : null,
+        card_id:
+          txIsExpense && !txIsTransfer && ["Credito", "Debito"].includes(method) && Number.isFinite(selectedCardId)
+            ? selectedCardId
+            : null,
         method: method || null,
         notes: notes || null,
       });
@@ -598,8 +657,11 @@ export default function App() {
       setTxKind("Receita");
       setTxMethod("PIX");
       setTxSourceAccountId("");
+      setTxCardId("");
       if (out?.mode === "transfer") {
         setTxMsg("Transferência registrada (origem debitada e corretora creditada).");
+      } else if (out?.mode === "credit_card_charge") {
+        setTxMsg("Compra no crédito registrada. A despesa será lançada no pagamento da fatura.");
       } else {
         setTxMsg("Lançamento salvo.");
       }
@@ -933,26 +995,34 @@ export default function App() {
     const accId = Number(cardAccountId);
     const srcId = Number(cardSourceAccountId);
     const due = Number(String(cardDueDay || "0"));
+    const isCredit = cardType === "Credito";
+    const hasSource = Number.isFinite(srcId) && srcId > 0;
     if (
       !name ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
-      !Number.isFinite(srcId) ||
-      srcId <= 0 ||
-      !Number.isFinite(due) ||
-      due < 1 ||
-      due > 31
+      (isCredit && !hasSource) ||
+      (isCredit && (!Number.isFinite(due) || due < 1 || due > 31))
     ) {
-      setCardMsg("Preencha nome, conta do cartão, conta pagadora e vencimento.");
+      if (!Number.isFinite(accId) || accId <= 0) {
+        setCardMsg("Selecione a conta banco vinculada ao cartão.");
+        return;
+      }
+      setCardMsg(
+        isCredit
+          ? "Preencha nome, tipo, conta banco vinculada, conta de pagamento da fatura e vencimento."
+          : "Preencha nome, tipo e conta banco vinculada ao cartão."
+      );
       return;
     }
     try {
       await createCard({
         name,
         brand: cardBrand,
+        card_type: cardType,
         card_account_id: accId,
-        source_account_id: srcId,
-        due_day: due,
+        source_account_id: hasSource ? srcId : null,
+        due_day: isCredit ? due : null,
       });
       setCardMsg("Cartão cadastrado.");
       await reloadCardsData();
@@ -970,18 +1040,21 @@ export default function App() {
     const accId = Number(cardAccountId);
     const srcId = Number(cardSourceAccountId);
     const due = Number(String(cardDueDay || "0"));
+    const isCredit = cardType === "Credito";
+    const hasSource = Number.isFinite(srcId) && srcId > 0;
     if (
       !Number.isFinite(id) ||
       id <= 0 ||
       !name ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
-      !Number.isFinite(srcId) ||
-      srcId <= 0 ||
-      !Number.isFinite(due) ||
-      due < 1 ||
-      due > 31
+      (isCredit && !hasSource) ||
+      (isCredit && (!Number.isFinite(due) || due < 1 || due > 31))
     ) {
+      if (!Number.isFinite(accId) || accId <= 0) {
+        setCardMsg("Selecione a conta banco vinculada ao cartão.");
+        return;
+      }
       setCardMsg("Selecione e preencha os dados do cartão.");
       return;
     }
@@ -989,9 +1062,10 @@ export default function App() {
       await updateCard(id, {
         name,
         brand: cardBrand,
+        card_type: cardType,
         card_account_id: accId,
-        source_account_id: srcId,
-        due_day: due,
+        source_account_id: hasSource ? srcId : null,
+        due_day: isCredit ? due : null,
       });
       setCardMsg("Cartão atualizado.");
       await reloadCardsData();
@@ -1013,11 +1087,12 @@ export default function App() {
     }
   }
 
-  async function onPayInvoice(invoiceId) {
+  async function onPayInvoice(invoice) {
     setCardMsg("");
-    const paymentDate = new Date().toISOString().slice(0, 10);
+    const invoiceId = Number(invoice?.id);
+    const paymentDate = String(invoice?.due_date || "").trim() || new Date().toISOString().slice(0, 10);
     try {
-      await payCardInvoice(Number(invoiceId), { payment_date: paymentDate });
+      await payCardInvoice(invoiceId, { payment_date: paymentDate });
       setCardMsg("Fatura paga.");
       await reloadCardsData();
       await reloadAllData();
@@ -1334,20 +1409,66 @@ export default function App() {
               </article>
 
               <article className="card dash-cards-card">
-                <h3>Cartões e faturas</h3>
-                <p className="dash-small">Abertas: {cardInvoices.length}</p>
-                <strong className="dash-hero-value">{brl.format(openInvoiceTotal)}</strong>
-                <ul className="dash-mini-list">
-                  {cards.slice(0, 3).map((c) => (
-                    <li key={c.id}>
-                      <span className="dash-row-label">
-                        <img src={getCardLogo(c.brand || "Visa")} alt="" className="dash-row-icon" />
-                        {c.name}
-                      </span>
-                      <b>{c.brand || "Visa"}</b>
-                    </li>
-                  ))}
-                </ul>
+                {creditCards.length ? (
+                  <div className={`dash-wallet-stack ${creditCards.length === 1 ? "single" : ""}`}>
+                    {activeCreditCard ? (
+                      <article
+                        className="wallet-card wallet-card-front"
+                        key={activeCreditCard.id}
+                        title={`${activeCreditCard.name} (${activeCreditCard.brand || "Visa"})`}
+                      >
+                        <img
+                          src={getCardBackground(activeCreditCard.brand || "Visa")}
+                          alt=""
+                          className={`wallet-bg ${getCardBgClass(activeCreditCard.brand || "Visa")}`}
+                        />
+                        <div className="wallet-overlay" />
+                        <div className="wallet-content">
+                          <div className="wallet-name">{activeCreditCard.name}</div>
+                          <div className="wallet-brand-line">
+                            <img
+                              src={getCardLogo(activeCreditCard.brand || "Visa")}
+                              alt=""
+                              className="wallet-brand-icon"
+                            />
+                          </div>
+                        </div>
+                      </article>
+                    ) : null}
+                    {creditCards.length > 1 ? (
+                      <div className="wallet-controls">
+                        <button
+                          type="button"
+                          className="wallet-nav-btn"
+                          onClick={() =>
+                            setWalletCardIndex((prev) => (prev - 1 + creditCards.length) % creditCards.length)
+                          }
+                          aria-label="Cartão anterior"
+                        >
+                          ‹
+                        </button>
+                        <span className="wallet-page-indicator">
+                          {walletCardIndex + 1}/{creditCards.length}
+                        </span>
+                        <button
+                          type="button"
+                          className="wallet-nav-btn"
+                          onClick={() => setWalletCardIndex((prev) => (prev + 1) % creditCards.length)}
+                          aria-label="Próximo cartão"
+                        >
+                          ›
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="dash-empty">Sem cartões de crédito</div>
+                )}
+                <div className="dash-cards-meta">
+                  <h3>Cartões e faturas</h3>
+                  <p className="dash-small">Abertas: {cardInvoices.length} | Cartões crédito: {creditCards.length}</p>
+                  <strong className="dash-hero-value">{brl.format(openInvoiceTotal)}</strong>
+                </div>
               </article>
 
               <article className="card dash-invest-card">
@@ -1429,33 +1550,44 @@ export default function App() {
                   <option value="Visa">Visa</option>
                   <option value="Master">Master</option>
                 </select>
-                <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)}>
-                  <option value="">Conta do cartão (tipo Cartão)</option>
-                  {accounts
-                    .filter((a) => normalizeAccountType(a.type) === "Cartao")
-                    .map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
+                <select value={cardType} onChange={(e) => setCardType(e.target.value)}>
+                  <option value="Credito">Credito</option>
+                  <option value="Debito">Debito</option>
                 </select>
+                <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)}>
+                  <option value="">Conta banco vinculada</option>
+                  {bankAccountsOnly.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+                {!bankAccountsOnly.length ? (
+                  <input type="text" value="Sem conta Banco cadastrada." disabled />
+                ) : null}
                 <select value={cardSourceAccountId} onChange={(e) => setCardSourceAccountId(e.target.value)}>
-                  <option value="">Conta pagadora da fatura</option>
+                  <option value="">
+                    {isCreditCardType ? "Conta banco de pagamento da fatura" : "Conta de pagamento (opcional)"}
+                  </option>
                   {accounts
                     .filter((a) => {
                       const t = normalizeAccountType(a.type);
-                      return t !== "Cartao" && t !== "Corretora";
+                      return t === "Banco";
                     })
                     .map((a) => (
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                 </select>
-                <input
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={cardDueDay}
-                  onChange={(e) => setCardDueDay(e.target.value)}
-                  placeholder="Dia do vencimento (1-31)"
-                />
+                {isCreditCardType ? (
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={cardDueDay}
+                    onChange={(e) => setCardDueDay(e.target.value)}
+                    placeholder="Dia do vencimento (1-31)"
+                  />
+                ) : (
+                  <input type="text" value="Débito imediato na conta banco" disabled />
+                )}
                 <button onClick={onCreateCard}>Cadastrar cartão</button>
               </div>
             </section>
@@ -1466,7 +1598,9 @@ export default function App() {
                 <select value={cardEditId} onChange={(e) => setCardEditId(e.target.value)}>
                   <option value="">Selecione um cartão</option>
                   {cards.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name} - {c.brand || "Visa"} ({c.card_account})</option>
+                    <option key={c.id} value={c.id}>
+                      {c.name} - {c.brand || "Visa"} - {c.card_type || "Credito"} ({c.linked_account})
+                    </option>
                   ))}
                 </select>
                 <input value={cardName} onChange={(e) => setCardName(e.target.value)} placeholder="Nome do cartão" />
@@ -1474,32 +1608,38 @@ export default function App() {
                   <option value="Visa">Visa</option>
                   <option value="Master">Master</option>
                 </select>
+                <select value={cardType} onChange={(e) => setCardType(e.target.value)}>
+                  <option value="Credito">Credito</option>
+                  <option value="Debito">Debito</option>
+                </select>
                 <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)}>
-                  <option value="">Conta do cartão</option>
-                  {accounts
-                    .filter((a) => normalizeAccountType(a.type) === "Cartao")
-                    .map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
+                  <option value="">Conta banco vinculada</option>
+                  {bankAccountsOnly.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
                 </select>
                 <select value={cardSourceAccountId} onChange={(e) => setCardSourceAccountId(e.target.value)}>
-                  <option value="">Conta pagadora</option>
+                  <option value="">{isCreditCardType ? "Conta banco pagamento fatura" : "Conta de pagamento (opcional)"}</option>
                   {accounts
                     .filter((a) => {
                       const t = normalizeAccountType(a.type);
-                      return t !== "Cartao" && t !== "Corretora";
+                      return t === "Banco";
                     })
                     .map((a) => (
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                 </select>
-                <input
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={cardDueDay}
-                  onChange={(e) => setCardDueDay(e.target.value)}
-                />
+                {isCreditCardType ? (
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={cardDueDay}
+                    onChange={(e) => setCardDueDay(e.target.value)}
+                  />
+                ) : (
+                  <input type="text" value="Débito imediato na conta banco" disabled />
+                )}
                 <button onClick={onUpdateCard}>Atualizar cartão</button>
                 <button className="danger" onClick={onDeleteCard}>Excluir cartão</button>
               </div>
@@ -1532,7 +1672,7 @@ export default function App() {
                         <td>{i.status}</td>
                         <td>
                           {i.status === "OPEN" ? (
-                            <button onClick={() => onPayInvoice(i.id)}>Pagar fatura</button>
+                            <button onClick={() => onPayInvoice(i)}>Pagar fatura</button>
                           ) : (
                             "-"
                           )}
@@ -1560,7 +1700,6 @@ export default function App() {
                 <input name="name" type="text" placeholder="Nome da conta" required />
                 <select name="type" defaultValue="Banco">
                   <option value="Banco">Banco</option>
-                  <option value="Cartao">Cartão</option>
                   <option value="Dinheiro">Dinheiro</option>
                   <option value="Corretora">Corretora</option>
                 </select>
@@ -1590,7 +1729,6 @@ export default function App() {
                 <input value={accEditName} onChange={(e) => setAccEditName(e.target.value)} placeholder="Nome" />
                 <select value={accEditType} onChange={(e) => setAccEditType(e.target.value)}>
                   <option value="Banco">Banco</option>
-                  <option value="Cartao">Cartão</option>
                   <option value="Dinheiro">Dinheiro</option>
                   <option value="Corretora">Corretora</option>
                 </select>
@@ -1661,7 +1799,7 @@ export default function App() {
                   <div className="transfer-hint">
                     <strong className="transfer-badge">Despesa</strong>
                     <span>
-                      Débito/PIX debita na hora. Crédito lança na fatura do cartão (conta do tipo <b>Cartao</b>).
+                      Crédito registra na fatura e só vira despesa no pagamento. Débito com cartão debita na hora a conta banco vinculada.
                     </span>
                   </div>
                 ) : null}
@@ -1721,6 +1859,23 @@ export default function App() {
                   <option value="TED">TED</option>
                   <option value="Dinheiro">Dinheiro</option>
                 </select>
+                {txIsExpense && !txIsTransfer && ["Credito", "Debito"].includes(txMethod) ? (
+                  <select
+                    name="card_id"
+                    value={txCardId}
+                    onChange={(e) => setTxCardId(e.target.value)}
+                    required={txMethod === "Credito"}
+                  >
+                    <option value="">
+                      {txMethod === "Credito" ? "Cartão de crédito (obrigatório)" : "Cartão de débito (opcional)"}
+                    </option>
+                    {cardsForTxMethod.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} - {c.brand || "Visa"} ({c.linked_account})
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
                 <input name="notes" type="text" placeholder="Obs (opcional)" />
                 <button type="submit">Salvar lançamento</button>
               </form>
