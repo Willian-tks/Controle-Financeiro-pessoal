@@ -167,6 +167,60 @@ def _sqlite_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category_id);")
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS credit_cards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        brand TEXT NOT NULL DEFAULT 'Visa',
+        card_account_id INTEGER NOT NULL,
+        source_account_id INTEGER NOT NULL,
+        due_day INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        user_id INTEGER,
+        FOREIGN KEY(card_account_id) REFERENCES accounts(id),
+        FOREIGN KEY(source_account_id) REFERENCES accounts(id)
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS credit_card_invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        card_id INTEGER NOT NULL,
+        invoice_period TEXT NOT NULL,
+        due_date TEXT NOT NULL,
+        total_amount REAL NOT NULL DEFAULT 0,
+        paid_amount REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'OPEN',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        user_id INTEGER,
+        FOREIGN KEY(card_id) REFERENCES credit_cards(id)
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS credit_card_charges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        card_id INTEGER NOT NULL,
+        purchase_date TEXT NOT NULL,
+        amount REAL NOT NULL,
+        invoice_period TEXT NOT NULL,
+        due_date TEXT NOT NULL,
+        paid INTEGER NOT NULL DEFAULT 0,
+        note TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        user_id INTEGER,
+        FOREIGN KEY(card_id) REFERENCES credit_cards(id)
+    );
+    """)
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_cards_user ON credit_cards(user_id);")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_acc ON credit_cards(user_id, card_account_id);")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_name ON credit_cards(user_id, name);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_inv_user ON credit_card_invoices(user_id);")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_inv_user_period ON credit_card_invoices(user_id, card_id, invoice_period);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_period ON credit_card_charges(user_id, card_id, invoice_period);")
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         symbol TEXT NOT NULL UNIQUE,
@@ -308,6 +362,60 @@ def _postgres_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category_id);")
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS credit_cards (
+        id BIGSERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        brand TEXT NOT NULL DEFAULT 'Visa',
+        card_account_id BIGINT NOT NULL,
+        source_account_id BIGINT NOT NULL,
+        due_day INTEGER NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_id BIGINT,
+        CONSTRAINT fk_cc_card_account FOREIGN KEY (card_account_id) REFERENCES accounts(id),
+        CONSTRAINT fk_cc_source_account FOREIGN KEY (source_account_id) REFERENCES accounts(id)
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS credit_card_invoices (
+        id BIGSERIAL PRIMARY KEY,
+        card_id BIGINT NOT NULL,
+        invoice_period TEXT NOT NULL,
+        due_date TEXT NOT NULL,
+        total_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+        paid_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'OPEN',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_id BIGINT,
+        CONSTRAINT fk_cc_inv_card FOREIGN KEY (card_id) REFERENCES credit_cards(id)
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS credit_card_charges (
+        id BIGSERIAL PRIMARY KEY,
+        card_id BIGINT NOT NULL,
+        purchase_date TEXT NOT NULL,
+        amount DOUBLE PRECISION NOT NULL,
+        invoice_period TEXT NOT NULL,
+        due_date TEXT NOT NULL,
+        paid BOOLEAN NOT NULL DEFAULT FALSE,
+        note TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_id BIGINT,
+        CONSTRAINT fk_cc_chg_card FOREIGN KEY (card_id) REFERENCES credit_cards(id)
+    );
+    """)
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_cards_user ON credit_cards(user_id);")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_acc ON credit_cards(user_id, card_account_id);")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_name ON credit_cards(user_id, name);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_inv_user ON credit_card_invoices(user_id);")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_inv_user_period ON credit_card_invoices(user_id, card_id, invoice_period);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_period ON credit_card_charges(user_id, card_id, invoice_period);")
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS assets (
         id BIGSERIAL PRIMARY KEY,
         symbol TEXT NOT NULL UNIQUE,
@@ -397,6 +505,10 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE asset_prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'Visa'")
+    cur.execute("ALTER TABLE credit_card_invoices ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS user_id BIGINT")
 
     cur.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_name_key")
     cur.execute("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key")
@@ -415,8 +527,14 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_income_user ON income_events(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_user ON prices(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_cards_user ON credit_cards(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_inv_user ON credit_card_invoices(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_acc ON credit_cards(user_id, card_account_id)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_name ON credit_cards(user_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_inv_user_period ON credit_card_invoices(user_id, card_id, invoice_period)")
 
 
 def _add_column_sqlite(cur, table: str, column_def: str):
@@ -440,6 +558,10 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "income_events", "user_id INTEGER")
     _add_column_sqlite(cur, "prices", "user_id INTEGER")
     _add_column_sqlite(cur, "asset_prices", "user_id INTEGER")
+    _add_column_sqlite(cur, "credit_cards", "user_id INTEGER")
+    _add_column_sqlite(cur, "credit_cards", "brand TEXT NOT NULL DEFAULT 'Visa'")
+    _add_column_sqlite(cur, "credit_card_invoices", "user_id INTEGER")
+    _add_column_sqlite(cur, "credit_card_charges", "user_id INTEGER")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")
@@ -448,12 +570,18 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_income_user ON income_events(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_user ON prices(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_cards_user ON credit_cards(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_inv_user ON credit_card_invoices(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
     _rebuild_sqlite_unique_tables(cur)
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_user_name ON accounts(user_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_user_name ON categories(user_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_assets_user_symbol ON assets(user_id, symbol)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_acc ON credit_cards(user_id, card_account_id)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_name ON credit_cards(user_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_inv_user_period ON credit_card_invoices(user_id, card_id, invoice_period)")
 
 
 def _table_sql(cur, table: str) -> str:

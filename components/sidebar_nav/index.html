@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sidebar Nav</title>
+  <style>
+    :root {
+      --bg: transparent;
+      --item-bg: rgba(255, 255, 255, 0.02);
+      --item-hover: rgba(255, 255, 255, 0.08);
+      --item-active: linear-gradient(90deg, #22c1ee 0%, #3b82f6 100%);
+      --text: #9fb2d5;
+      --text-active: #eff7ff;
+      --line: rgba(255, 255, 255, 0.12);
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    #root {
+      width: 100%;
+      padding: 0.2rem 0 0 0;
+      box-sizing: border-box;
+    }
+
+    .brand-wrap {
+      padding: 0.35rem 0.55rem 0.65rem 0.55rem;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 0.2rem;
+    }
+
+    .brand {
+      width: 54px;
+      height: 54px;
+      margin: 0 auto;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #3dd8b8 0%, #29a3d9 100%);
+      color: #effcff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.8rem;
+      font-weight: 800;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25), 0 8px 16px rgba(0,0,0,0.2);
+    }
+
+    .nav-item {
+      width: 100%;
+      border: none;
+      border-top: 1px solid var(--line);
+      background: var(--item-bg);
+      color: var(--text);
+      text-align: left;
+      padding: 0.78rem 0.72rem;
+      display: flex;
+      align-items: center;
+      gap: 0.62rem;
+      cursor: pointer;
+      font-size: 0.90rem;
+      font-weight: 700;
+      border-radius: 0;
+    }
+
+    .nav-item:last-child {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .nav-item:hover {
+      background: var(--item-hover);
+    }
+
+    .nav-item.active {
+      background: var(--item-active);
+      color: var(--text-active);
+      box-shadow: inset 3px 0 0 #67e8f9;
+    }
+
+    .icon {
+      width: 1.25rem;
+      text-align: center;
+      opacity: 0.95;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: currentColor;
+    }
+
+    .icon svg {
+      width: 1.1rem;
+      height: 1.1rem;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .label {
+      line-height: 1.1rem;
+      letter-spacing: 0.01em;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+    const Streamlit = {
+      RENDER_EVENT: "streamlit:render",
+      setComponentReady: () => {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 },
+          "*"
+        );
+      },
+      setFrameHeight: (height) => {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height },
+          "*"
+        );
+      },
+      setComponentValue: (value) => {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type: "streamlit:setComponentValue", value, dataType: "json" },
+          "*"
+        );
+      },
+      events: {
+        addEventListener: (type, callback) => {
+          window.addEventListener("message", (event) => {
+            if (!event || !event.data || event.data.type !== type) return;
+            callback({ detail: { args: event.data.args || {} } });
+          });
+        },
+      },
+    };
+
+    const root = document.getElementById("root");
+    let selected = "";
+    let options = [];
+    let icons = {};
+
+    function iconSvg(name) {
+      const svg = {
+        settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V22a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H2a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3h.1a1.6 1.6 0 0 0 1-1.5V2a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5h.1a1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1H22a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>',
+        wallet: '<svg viewBox="0 0 24 24"><path d="M3 7h18v12H3z"/><path d="M3 10h18"/><path d="M16 14h4"/><path d="M6 7V5h12v2"/></svg>',
+        receipt: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-2-1-2 1-2-1-2 1-2-1-2 1z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>',
+        chart: '<svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M8 16v-5"/><path d="M12 16V9"/><path d="M16 16v-8"/></svg>',
+        import: '<svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 21h16"/><path d="M4 14v7"/><path d="M20 14v7"/></svg>',
+        coins: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v4c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 10v4c0 1.7 3.1 3 7 3s7-1.3 7-3v-4"/></svg>',
+        default: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>',
+      };
+      return svg[name] || svg.default;
+    }
+
+    function buildNav() {
+      root.innerHTML = "";
+
+      const brandWrap = document.createElement("div");
+      brandWrap.className = "brand-wrap";
+      const brand = document.createElement("div");
+      brand.className = "brand";
+      brand.textContent = "Z";
+      brandWrap.appendChild(brand);
+      root.appendChild(brandWrap);
+
+      options.forEach((opt) => {
+        const btn = document.createElement("button");
+        btn.className = "nav-item" + (opt === selected ? " active" : "");
+        btn.type = "button";
+
+        const icon = document.createElement("span");
+        icon.className = "icon";
+        icon.innerHTML = iconSvg(icons[opt]);
+
+        const label = document.createElement("span");
+        label.className = "label";
+        label.textContent = opt;
+
+        btn.appendChild(icon);
+        btn.appendChild(label);
+        btn.addEventListener("click", () => {
+          selected = opt;
+          buildNav();
+          Streamlit.setComponentValue(opt);
+        });
+
+        root.appendChild(btn);
+      });
+    }
+
+    function onRender(event) {
+      const args = (event && event.detail && event.detail.args) || {};
+      options = Array.isArray(args.options) ? args.options : [];
+      icons = args.icons || {};
+      selected = args.selected || (options[0] || "");
+      buildNav();
+      Streamlit.setFrameHeight(Math.max(430, 88 + (options.length * 56)));
+    }
+
+    Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+    Streamlit.setComponentReady();
+    Streamlit.setFrameHeight(430);
+  </script>
+</body>
+</html>

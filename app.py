@@ -21,6 +21,7 @@ import repo
 import reports
 from utils import to_brl, normalize_import_df
 from utils import card, end_card, badge
+from nav_component import sidebar_nav
 import auth
 from tenant import set_current_user_id, clear_current_user_id
 
@@ -29,6 +30,8 @@ import invest_reports
 import invest_quotes
 
 st.set_page_config(page_title="Financeiro Pessoal", layout="wide")
+px.defaults.template = "plotly_white"
+px.defaults.color_discrete_sequence = ["#3b82f6", "#34d399", "#f59e0b", "#fb7185", "#22c55e", "#a78bfa"]
 
 
 def _extract_invite_token(raw: str) -> str:
@@ -221,31 +224,182 @@ def _mask_integer_input_key(key: str) -> None:
 def inject_corporate_css():
     st.markdown("""
     <style>
-      /* Layout geral */
-      .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1180px; }
-      section[data-testid="stSidebar"] { border-right: 1px solid #e5e7eb; }
-      hr { margin: 1.2rem 0; }
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap');
 
-      /* Tipografia */
-      h1, h2, h3 { letter-spacing: -0.02em; }
-      h1 { font-weight: 750; }
+      :root {
+        --bg-page: #dfe2ea;
+        --bg-shell: #eef1f7;
+        --bg-surface: #ffffff;
+        --text-main: #132238;
+        --text-muted: #677185;
+        --line: #d7dce8;
+        --primary: #2b95f9;
+        --sidebar-a: #132a56;
+        --sidebar-b: #1a3f76;
+      }
+
+      html, body, [class*="css"] {
+        font-family: "Manrope", "Segoe UI", sans-serif;
+      }
+
+      .stApp {
+        background: var(--bg-page);
+      }
+      .main .block-container {
+        max-width: 1260px;
+        margin-top: 1rem;
+        margin-bottom: 1.6rem;
+        padding: 1.2rem 1.3rem 1.6rem 1.3rem;
+        background: var(--bg-shell);
+        border: 1px solid #cfd5e3;
+        border-radius: 20px;
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+      }
+      hr { margin: 1.2rem 0; border-color: #d6dbe7; }
+
+      section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, var(--sidebar-a) 0%, var(--sidebar-b) 100%);
+        border-right: 0;
+      }
+      section[data-testid="stSidebar"] * {
+        color: #eaf1ff !important;
+      }
+      section[data-testid="stSidebar"] .stTextInput input,
+      section[data-testid="stSidebar"] .stNumberInput input,
+      section[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
+        background: rgba(255,255,255,0.10) !important;
+        border-color: rgba(255,255,255,0.22) !important;
+      }
+      section[data-testid="stSidebar"] div.stButton > button {
+        background: #f3f6fc !important;
+        color: #17315d !important;
+        border: 1px solid #d3ddef !important;
+      }
+      section[data-testid="stSidebar"] div.stButton > button * {
+        color: #17315d !important;
+      }
+      section[data-testid="stSidebar"] div.stButton > button:hover {
+        background: #e7eefb !important;
+        color: #10284e !important;
+      }
+      section[data-testid="stSidebar"] div.stButton > button:hover * {
+        color: #10284e !important;
+      }
+      section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {
+        background: #fee2e2 !important;
+        color: #991b1b !important;
+        border: 1px solid #fecaca !important;
+      }
+      section[data-testid="stSidebar"] div.stButton > button[kind="primary"] * {
+        color: #991b1b !important;
+      }
+      section[data-testid="stSidebar"] div.stButton > button[kind="primary"]:hover {
+        background: #fecaca !important;
+        color: #7f1d1d !important;
+      }
+      section[data-testid="stSidebar"] div.stButton > button[kind="primary"]:hover * {
+        color: #7f1d1d !important;
+      }
+      section[data-testid="stSidebar"] hr {
+        border-color: rgba(255,255,255,0.18);
+      }
+      section[data-testid="stSidebar"] [data-testid="stRadio"] > div {
+        gap: 0 !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stRadio"] label {
+        margin: 0 !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] {
+        gap: 0.15rem !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label {
+        min-height: 3.2rem;
+        border-radius: 12px;
+        padding: 0.45rem 0.65rem;
+        border: 1px solid transparent;
+        background: rgba(255,255,255,0.02);
+      }
+      section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label p {
+        color: #9db2d7 !important;
+        font-weight: 700 !important;
+        font-size: 0.96rem !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:hover {
+        background: rgba(255,255,255,0.08);
+        border-color: rgba(255,255,255,0.14);
+      }
+      section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {
+        background: rgba(48, 124, 255, 0.22);
+        border-color: rgba(96, 165, 250, 0.7);
+      }
+      section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) p {
+        color: #ecf5ff !important;
+      }
+      .sb-logo {
+        width: 64px;
+        height: 64px;
+        margin: 2px auto 12px auto;
+        border-radius: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 34px;
+        font-weight: 800;
+        color: #32b2ff !important;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.15);
+      }
+      section[data-testid="stSidebar"] iframe[title="sidebar_nav"] {
+        background: transparent !important;
+        border: 0 !important;
+      }
+
+      h1, h2, h3 {
+        letter-spacing: -0.02em;
+        color: var(--text-main);
+      }
+      h1 { font-weight: 800; }
       h2, h3 { font-weight: 700; }
-      p, li, label, div { color: #111827; }
+      p, li, label, div {
+        color: var(--text-main);
+      }
+      [data-testid="stCaptionContainer"] p {
+        color: var(--text-muted);
+      }
 
-      /* Cards */
+      /* Cards / métricas */
       .card {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
+        background: var(--bg-surface);
+        border: 1px solid var(--line);
         border-radius: 16px;
         padding: 16px 18px;
-        box-shadow: 0 10px 26px rgba(17,24,39,0.06);
+        box-shadow: 0 8px 24px rgba(15,23,42,0.05);
         margin-bottom: 14px;
       }
       .card-title {
-        font-weight: 700;
+        font-weight: 800;
         margin: 0 0 8px 0;
       }
-      .muted { color: #6b7280; }
+      .muted { color: var(--text-muted); }
+
+      [data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 10px 12px;
+        box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+      }
+      [data-testid="stMetricLabel"] {
+        color: #445169;
+        font-weight: 700;
+      }
+      [data-testid="stMetricValue"] {
+        color: #18263c;
+        font-weight: 800;
+      }
+      [data-testid="stMetricDelta"] {
+        font-weight: 700;
+      }
 
       /* Badges */
       .badge {
@@ -254,9 +408,9 @@ def inject_corporate_css():
         border-radius: 999px;
         font-size: 12px;
         font-weight: 650;
-        border: 1px solid #e5e7eb;
-        background: #f9fafb;
-        color: #111827;
+        border: 1px solid var(--line);
+        background: #f7f9fc;
+        color: #132238;
       }
       .badge-ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
       .badge-warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
@@ -264,31 +418,70 @@ def inject_corporate_css():
 
       /* Botões */
       div.stButton > button {
-        border-radius: 12px !important;
+        border-radius: 11px !important;
         padding: 0.55rem 1rem !important;
-        font-weight: 650 !important;
-        border: 1px solid #d1d5db !important;
+        font-weight: 700 !important;
+        border: 1px solid #cfd7e7 !important;
+        background: #ffffff !important;
+      }
+      div.stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%) !important;
+        color: #ffffff !important;
+        border-color: #0ea5e9 !important;
       }
 
       /* Inputs */
       div[data-baseweb="input"] input, textarea {
         border-radius: 12px !important;
+        border: 1px solid #d5dbea !important;
+        background: #ffffff !important;
       }
       div[data-baseweb="select"] > div {
         border-radius: 12px !important;
+        border: 1px solid #d5dbea !important;
+        background: #ffffff !important;
+      }
+
+      /* Tabs com visual de navegação */
+      [data-testid="stTabs"] [role="tablist"] {
+        gap: 10px;
+        border-bottom: 0;
+        background: #e8ecf5;
+        padding: 8px;
+        border-radius: 12px;
+      }
+      [data-testid="stTabs"] [role="tab"] {
+        border-radius: 10px;
+        padding: 8px 14px;
+        font-weight: 700;
+        color: #40506b;
+      }
+      [data-testid="stTabs"] [aria-selected="true"] {
+        background: #ffffff;
+        color: #12233a;
+        box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
       }
 
       /* DataFrame */
       div[data-testid="stDataFrame"] {
-        border-radius: 16px;
+        border-radius: 14px;
         overflow: hidden;
-        border: 1px solid #e5e7eb;
+        border: 1px solid #d5dbea;
+        background: #ffffff;
       }
 
       /* Alertas (deixa mais corporativo) */
       div[data-testid="stAlert"] {
         border-radius: 14px;
-        border: 1px solid #e5e7eb;
+        border: 1px solid #d6dbe8;
+      }
+
+      /* Plotly */
+      [data-testid="stPlotlyChart"] > div {
+        border-radius: 14px;
+        border: 1px solid #d5dbea;
+        background: #ffffff;
+        padding: 6px;
       }
     </style>
     """, unsafe_allow_html=True)
@@ -300,12 +493,7 @@ inject_corporate_css()
 # Config
 # ----------------------------
 st.title("Controle Financeiro Pessoal (MVP)")
-
-st.caption(f"CWD: {os.getcwd()}")
-if USE_POSTGRES:
-    st.caption("DB: PostgreSQL (via DATABASE_URL)")
-else:
-    st.caption(f"DB_PATH: {DB_PATH}")
+st.caption("Painel financeiro pessoal")
 
 init_db()
 auth.ensure_bootstrap_admin()
@@ -368,8 +556,6 @@ if not current_user:
     st.stop()
 
 set_current_user_id(int(current_user["id"]))
-st.sidebar.caption(f"Usuário: {current_user.get('display_name') or current_user['email']}")
-st.sidebar.caption(f"Perfil: {current_user.get('role', 'user')}")
 
 if current_user.get("role") == "admin":
     st.sidebar.divider()
@@ -402,12 +588,6 @@ if current_user.get("role") == "admin":
                     f"expira: {inv['expires_at']} | {used}"
                 )
 
-if st.sidebar.button("Sair", key="btn_logout"):
-    auth.logout_session()
-    clear_current_user_id()
-    st.rerun()
-
-
 # ----------------------------
 # Helpers: sempre ter mapas (evita NameError)
 # ----------------------------
@@ -427,191 +607,218 @@ accounts, categories, acc_map,acc_type_map, cat_map, cat_kind_map = load_account
 
 
 # =========================================================
-# Sidebar - Cadastros
+# Sidebar - Navegação
 # =========================================================
-st.sidebar.header("Cadastros")
-cad_tab1, cad_tab2 = st.sidebar.tabs(["Contas", "Categorias"])
-
-# --------- CONTAS ----------
-with cad_tab1:
-    st.markdown("### Nova conta")
-    acc_name = st.text_input("Nome da conta", key="acc_name_new")
-    acc_type = st.selectbox("Tipo", ["Banco", "Cartao", "Dinheiro", "Corretora"], key="acc_type_new")
-
-    if st.button("Salvar conta", key="btn_save_acc"):
-        if acc_name.strip():
-            repo.create_account(acc_name.strip(), acc_type)
-            st.success("Conta salva.")
-            st.rerun()
-        else:
-            st.warning("Informe um nome.")
+with st.sidebar:
+    st.divider()
+    page_icons = {
+        "Gerenciador": "settings",
+        "Contas": "wallet",
+        "Lançamentos": "receipt",
+        "Dashboard": "chart",
+        "Importar CSV": "import",
+        "Investimentos": "coins",
+    }
+    page_options = list(page_icons.keys())
+    selected_page = sidebar_nav(
+        options=page_options,
+        icons=page_icons,
+        selected=st.session_state.get("main_page_nav", "Gerenciador"),
+        key="main_sidebar_component",
+    )
+    st.session_state["main_page_nav"] = selected_page
 
     st.divider()
-    st.markdown("### Gerenciar contas")
+    st.caption(f"Usuário: {current_user.get('display_name') or current_user['email']}")
+    st.caption(f"Perfil: {current_user.get('role', 'user')}")
+    if st.button("Sair", key="btn_logout", type="primary"):
+        auth.logout_session()
+        clear_current_user_id()
+        st.rerun()
 
-    accounts_list = repo.list_accounts() or []
-    if not accounts_list:
-        st.info("Nenhuma conta cadastrada.")
-    else:
-        acc_names = [f'{r["id"]} - {r["name"]} ({r["type"]})' for r in accounts_list]
-        acc_pick = st.selectbox("Selecione", acc_names, key="acc_pick")
 
-        acc_id = int(acc_pick.split(" - ")[0])  
-        acc_row = next(r for r in accounts_list if int(r["id"]) == acc_id)
+# =========================================================
+# Página: Gerenciador
+# =========================================================
+if selected_page == "Gerenciador":
+    st.subheader("Gerenciador")
+    cad_tab1, cad_tab2, cad_tab3 = st.tabs(["Contas", "Categorias", "Limpeza"])
 
-        new_name = st.text_input("Editar nome", value=acc_row["name"], key="acc_edit_name")
-        new_type = st.selectbox(
-            "Editar tipo",
-            ["Banco", "Cartao", "Dinheiro", "Corretora"],
-            index=["Banco", "Cartao", "Dinheiro", "Corretora"].index(acc_row["type"]),
-            key="acc_edit_type"
-        )
+    with cad_tab1:
+        st.markdown("### Nova conta")
+        acc_name = st.text_input("Nome da conta", key="acc_name_new")
+        acc_type = st.selectbox("Tipo", ["Banco", "Cartao", "Dinheiro", "Corretora"], key="acc_type_new")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Atualizar conta", key="btn_upd_acc"):
-                if not new_name.strip():
-                    st.warning("Nome não pode ser vazio.")
-                else:
-                    repo.update_account(acc_id, new_name.strip(), new_type)
-                    st.success("Conta atualizada.")
-                    st.rerun()
+        if st.button("Salvar conta", key="btn_save_acc"):
+            if acc_name.strip():
+                repo.create_account(acc_name.strip(), acc_type)
+                st.success("Conta salva.")
+                st.rerun()
+            else:
+                st.warning("Informe um nome.")
 
-        with c2:
-            used = repo.account_usage_count(acc_id)
-            if st.button("Excluir conta", key="btn_del_acc"):
-                if used > 0:
-                    st.warning(f"Não pode excluir: {used} lançamento(s) usam esta conta.")
-                else:
-                    deleted = repo.delete_account(acc_id)
-                    if deleted:
-                        st.success("Conta excluída.")
-                        st.rerun()
-                    else:
-                        st.warning("Não foi possível excluir (talvez já tenha sido removida).")
+        st.divider()
+        st.markdown("### Gerenciar contas")
 
-# --------- CATEGORIAS ----------
-with cad_tab2:
-    st.markdown("### Nova categoria")
-    cat_name = st.text_input("Nome da categoria", key="cat_name_new")
-    cat_kind = st.selectbox("Tipo", ["Despesa", "Receita", "Transferencia"], key="cat_kind_new")
-
-    if st.button("Salvar categoria", key="btn_save_cat"):
-        if cat_name.strip():
-            repo.create_category(cat_name.strip(), cat_kind)
-            st.success("Categoria salva.")
-            st.rerun()
+        accounts_list = repo.list_accounts() or []
+        if not accounts_list:
+            st.info("Nenhuma conta cadastrada.")
         else:
-            st.warning("Informe um nome.")
+            acc_names = [f'{r["id"]} - {r["name"]} ({r["type"]})' for r in accounts_list]
+            acc_pick = st.selectbox("Selecione", acc_names, key="acc_pick")
 
-    st.divider()
-    st.markdown("### Gerenciar categorias")
+            acc_id = int(acc_pick.split(" - ")[0])
+            acc_row = next(r for r in accounts_list if int(r["id"]) == acc_id)
 
-    categories_list = repo.list_categories() or []
-    if not categories_list:
-        st.info("Nenhuma categoria cadastrada.")
-    else:
-        cat_names = [f'{r["id"]} - {r["name"]} ({r["kind"]})' for r in categories_list]
-        cat_pick = st.selectbox("Selecione", cat_names, key="cat_pick")
-
-        cat_id = int(cat_pick.split(" - ")[0])
-        cat_row = next(r for r in categories_list if int(r["id"]) == cat_id)
-
-        new_cat_name = st.text_input("Editar nome", value=cat_row["name"], key="cat_edit_name")
-        new_kind = st.selectbox(
-            "Editar tipo",
-            ["Despesa", "Receita", "Transferencia"],
-            index=["Despesa", "Receita", "Transferencia"].index(cat_row["kind"]),
-            key="cat_edit_kind"
-        )
-
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Atualizar categoria", key="btn_upd_cat"):
-                if not new_cat_name.strip():
-                    st.warning("Nome não pode ser vazio.")
-                else:
-                    repo.update_category(cat_id, new_cat_name.strip(), new_kind)
-                    st.success("Categoria atualizada.")
-                    st.rerun()
-
-        with c2:
-            used = repo.category_usage_count(cat_id)
-            if st.button("Excluir categoria", key="btn_del_cat"):
-                if used > 0:
-                    st.warning(f"Não pode excluir: {used} lançamento(s) usam esta categoria.")
-                else:
-                    deleted = repo.delete_category(cat_id)
-                    if deleted:
-                        st.success("Categoria excluída.")
-                        st.rerun()
-                    else:
-                        st.warning("Não foi possível excluir (talvez já tenha sido removida).")
-
-
-st.sidebar.divider()
-st.sidebar.subheader("Limpeza de dados (TESTES)")
-
-st.sidebar.caption(
-    "Use apenas em ambiente de testes.\n"
-    "Digite LIMPAR para habilitar os botões."
-)
-
-confirm = st.sidebar.text_input(
-    'Confirmação',
-    placeholder='Digite LIMPAR',
-    key="confirm_clear"
-)
-
-c1, c2 = st.sidebar.columns(2)
-c3, c4 = st.sidebar.columns(2)
-
-with c1:
-    if st.button("Lançamentos", disabled=(confirm != "LIMPAR")):
-        n = repo.clear_transactions()
-        st.sidebar.success(f"{n} lançamentos removidos")
-        st.rerun()
-
-with c2:
-    if st.button("Mov. Invest.", disabled=(confirm != "LIMPAR")):
-        res = invest_repo.clear_invest_movements()
-        st.sidebar.success(
-            f"Trades: {res['trades']} | "
-            f"Proventos: {res['income_events']} | "
-            f"Cotações: {res['prices']}"
-        )
-        st.rerun()
-
-with c3:
-    if st.button("Ativos", disabled=(confirm != "LIMPAR")):
-        try:
-            n = invest_repo.clear_assets()
-            st.sidebar.success(f"{n} ativos removidos")
-            st.rerun()
-        except Exception as e:
-            st.sidebar.error(
-                "Erro ao remover ativos.\n"
-                "Limpe primeiro trades, proventos e cotações."
+            new_name = st.text_input("Editar nome", value=acc_row["name"], key="acc_edit_name")
+            new_type = st.selectbox(
+                "Editar tipo",
+                ["Banco", "Cartao", "Dinheiro", "Corretora"],
+                index=["Banco", "Cartao", "Dinheiro", "Corretora"].index(acc_row["type"]),
+                key="acc_edit_type"
             )
 
-with c4:
-    if st.button("RESET TOTAL", disabled=(confirm != "LIMPAR")):
-        repo.clear_transactions()
-        invest_repo.clear_invest_movements()
-        invest_repo.clear_assets()
-        st.sidebar.success("Base de investimentos zerada.")
-        st.rerun()
-# Recarrega mapas (pois sidebar pode ter alterado)
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Atualizar conta", key="btn_upd_acc"):
+                    if not new_name.strip():
+                        st.warning("Nome não pode ser vazio.")
+                    else:
+                        repo.update_account(acc_id, new_name.strip(), new_type)
+                        st.success("Conta atualizada.")
+                        st.rerun()
+
+            with c2:
+                used = repo.account_usage_count(acc_id)
+                if st.button("Excluir conta", key="btn_del_acc"):
+                    if used > 0:
+                        st.warning(f"Não pode excluir: {used} lançamento(s) usam esta conta.")
+                    else:
+                        deleted = repo.delete_account(acc_id)
+                        if deleted:
+                            st.success("Conta excluída.")
+                            st.rerun()
+                        else:
+                            st.warning("Não foi possível excluir (talvez já tenha sido removida).")
+
+    with cad_tab2:
+        st.markdown("### Nova categoria")
+        cat_name = st.text_input("Nome da categoria", key="cat_name_new")
+        cat_kind = st.selectbox("Tipo", ["Despesa", "Receita", "Transferencia"], key="cat_kind_new")
+
+        if st.button("Salvar categoria", key="btn_save_cat"):
+            if cat_name.strip():
+                repo.create_category(cat_name.strip(), cat_kind)
+                st.success("Categoria salva.")
+                st.rerun()
+            else:
+                st.warning("Informe um nome.")
+
+        st.divider()
+        st.markdown("### Gerenciar categorias")
+
+        categories_list = repo.list_categories() or []
+        if not categories_list:
+            st.info("Nenhuma categoria cadastrada.")
+        else:
+            cat_names = [f'{r["id"]} - {r["name"]} ({r["kind"]})' for r in categories_list]
+            cat_pick = st.selectbox("Selecione", cat_names, key="cat_pick")
+
+            cat_id = int(cat_pick.split(" - ")[0])
+            cat_row = next(r for r in categories_list if int(r["id"]) == cat_id)
+
+            new_cat_name = st.text_input("Editar nome", value=cat_row["name"], key="cat_edit_name")
+            new_kind = st.selectbox(
+                "Editar tipo",
+                ["Despesa", "Receita", "Transferencia"],
+                index=["Despesa", "Receita", "Transferencia"].index(cat_row["kind"]),
+                key="cat_edit_kind"
+            )
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Atualizar categoria", key="btn_upd_cat"):
+                    if not new_cat_name.strip():
+                        st.warning("Nome não pode ser vazio.")
+                    else:
+                        repo.update_category(cat_id, new_cat_name.strip(), new_kind)
+                        st.success("Categoria atualizada.")
+                        st.rerun()
+
+            with c2:
+                used = repo.category_usage_count(cat_id)
+                if st.button("Excluir categoria", key="btn_del_cat"):
+                    if used > 0:
+                        st.warning(f"Não pode excluir: {used} lançamento(s) usam esta categoria.")
+                    else:
+                        deleted = repo.delete_category(cat_id)
+                        if deleted:
+                            st.success("Categoria excluída.")
+                            st.rerun()
+                        else:
+                            st.warning("Não foi possível excluir (talvez já tenha sido removida).")
+
+    with cad_tab3:
+        st.markdown("### Limpeza de dados (TESTES)")
+        st.caption(
+            "Use apenas em ambiente de testes.\n"
+            "Digite LIMPAR para habilitar os botões."
+        )
+
+        confirm = st.text_input(
+            "Confirmação",
+            placeholder="Digite LIMPAR",
+            key="confirm_clear"
+        )
+
+        c1, c2 = st.columns(2)
+        c3, c4 = st.columns(2)
+
+        with c1:
+            if st.button("Lançamentos", disabled=(confirm != "LIMPAR")):
+                n = repo.clear_transactions()
+                st.success(f"{n} lançamentos removidos")
+                st.rerun()
+
+        with c2:
+            if st.button("Mov. Invest.", disabled=(confirm != "LIMPAR")):
+                res = invest_repo.clear_invest_movements()
+                st.success(
+                    f"Trades: {res['trades']} | "
+                    f"Proventos: {res['income_events']} | "
+                    f"Cotações: {res['prices']}"
+                )
+                st.rerun()
+
+        with c3:
+            if st.button("Ativos", disabled=(confirm != "LIMPAR")):
+                try:
+                    n = invest_repo.clear_assets()
+                    st.success(f"{n} ativos removidos")
+                    st.rerun()
+                except Exception:
+                    st.error(
+                        "Erro ao remover ativos.\n"
+                        "Limpe primeiro trades, proventos e cotações."
+                    )
+
+        with c4:
+            if st.button("RESET TOTAL", disabled=(confirm != "LIMPAR")):
+                repo.clear_transactions()
+                invest_repo.clear_invest_movements()
+                invest_repo.clear_assets()
+                st.success("Base de investimentos zerada.")
+                st.rerun()
+
+# Recarrega mapas (pois gerenciador pode ter alterado)
 accounts, categories, acc_map, acc_type_map, cat_map, cat_kind_map = load_accounts_categories()
 
 
 # =========================================================
-# Tabs principais
+# Páginas principais
 # =========================================================
-tab0, tab1, tab2, tab3, tab4 = st.tabs(["Contas", "Lançamentos", "Dashboard", "Importar CSV", "Investimentos"])
-
 # ========== TAB 0: Contas (Saldos) ==========
-with tab0:
+if selected_page == "Contas":
     st.subheader("Saldos das contas")
 
     df_all = reports.df_transactions()
@@ -637,7 +844,7 @@ with tab0:
 # =========================================================
 # TAB 1: Lançamentos
 # =========================================================
-with tab1:
+if selected_page == "Lançamentos":
     st.subheader("Novo lançamento")
 
     col1, col2, col3, col4 = st.columns([1.2, 2.5, 1.2, 1.2])
@@ -827,7 +1034,7 @@ with tab1:
 # =========================================================
 # TAB 2: Dashboard (tudo aqui dentro!)
 # =========================================================
-with tab2:
+if selected_page == "Dashboard":
     st.subheader("Filtros")
 
     f1, f2, f3 = st.columns([1.2, 1.2, 2.0])
@@ -963,7 +1170,7 @@ with tab2:
 # =========================================================
 # TAB 3: Importar CSV
 # =========================================================
-with tab3:
+if selected_page == "Importar CSV":
     st.subheader("Importação (modelo genérico)")
 
     st.markdown("""
@@ -1017,7 +1224,7 @@ with tab3:
 # =========================================================
 # TAB 4: Investimentos (tudo dentro!)
 # =========================================================
-with tab4:
+if selected_page == "Investimentos":
     st.subheader("Investimentos (Ações/FIIs + Cripto + Renda Fixa)")
 
     subtabs = st.tabs(["Ativos", "Operações", "Proventos", "Cotações", "Carteira"])
@@ -1211,45 +1418,45 @@ with tab4:
                         st.rerun()
                     else:
                         st.warning(msg)
-if "edit_asset_id" in st.session_state:
-    asset = invest_repo.get_asset_by_id(st.session_state["edit_asset_id"])
-    asset = dict(asset)
+        if "edit_asset_id" in st.session_state:
+            asset = invest_repo.get_asset_by_id(st.session_state["edit_asset_id"])
+            asset = dict(asset)
 
-    st.markdown("### Editar ativo")
+            st.markdown("### Editar ativo")
 
-    symbol = st.text_input("Symbol", value=asset["symbol"])
-    name = st.text_input("Nome", value=asset["name"])
-    asset_class = st.selectbox(
-        "Classe",
-        invest_repo.ASSET_CLASSES,
-        index=list(invest_repo.ASSET_CLASSES).index(asset["asset_class"]) if asset["asset_class"] in invest_repo.ASSET_CLASSES else 0,
-    )
-    sector_val = asset.get("sector") or "Não definido"
-    sector = st.selectbox(
-        "Setor",
-        invest_repo.ASSET_SECTORS,
-        index=invest_repo.ASSET_SECTORS.index(sector_val) if sector_val in invest_repo.ASSET_SECTORS else 0,
-    )
-    currency = st.selectbox("Moeda", ["BRL", "USD"], index=0 if str(asset["currency"]).upper() == "BRL" else 1)
+            symbol = st.text_input("Symbol", value=asset["symbol"])
+            name = st.text_input("Nome", value=asset["name"])
+            asset_class = st.selectbox(
+                "Classe",
+                invest_repo.ASSET_CLASSES,
+                index=list(invest_repo.ASSET_CLASSES).index(asset["asset_class"]) if asset["asset_class"] in invest_repo.ASSET_CLASSES else 0,
+            )
+            sector_val = asset.get("sector") or "Não definido"
+            sector = st.selectbox(
+                "Setor",
+                invest_repo.ASSET_SECTORS,
+                index=invest_repo.ASSET_SECTORS.index(sector_val) if sector_val in invest_repo.ASSET_SECTORS else 0,
+            )
+            currency = st.selectbox("Moeda", ["BRL", "USD"], index=0 if str(asset["currency"]).upper() == "BRL" else 1)
 
-    if st.button("Salvar alterações"):
-        invest_repo.update_asset(
-            asset_id=asset["id"],
-            symbol=symbol,
-            name=name,
-            asset_class=asset_class,
-            sector=sector,
-            currency=currency,
-            broker_account_id=asset.get("broker_account_id")
-        )
+            if st.button("Salvar alterações"):
+                invest_repo.update_asset(
+                    asset_id=asset["id"],
+                    symbol=symbol,
+                    name=name,
+                    asset_class=asset_class,
+                    sector=sector,
+                    currency=currency,
+                    broker_account_id=asset.get("broker_account_id")
+                )
 
-        st.success("Ativo atualizado com sucesso.")
-        del st.session_state["edit_asset_id"]
-        st.rerun()    
+                st.success("Ativo atualizado com sucesso.")
+                del st.session_state["edit_asset_id"]
+                st.rerun()
 
-# ===== Operações =====
-with subtabs[1]:
-    st.markdown("### Nova operação (BUY/SELL)")
+    # ===== Operações =====
+    with subtabs[1]:
+        st.markdown("### Nova operação (BUY/SELL)")
 
     if not assets:
         st.warning("Cadastre um ativo primeiro.")
@@ -1530,158 +1737,157 @@ with subtabs[1]:
         else:
             st.info("Sem proventos ainda.")
 
-   # ===== Cotações =====
     # ===== Cotações =====
-        with subtabs[3]:
-            st.markdown("### Cotações automáticas")
-            st.session_state.setdefault("quote_last_report", [])
-            cset1, cset2 = st.columns([1.1, 1.1])
-            with cset1:
-                quote_timeout_s = st.number_input(
-                    "Timeout por ativo (s)",
-                    min_value=5,
-                    max_value=120,
-                    value=int(st.session_state.get("quote_timeout_s", 25)),
-                    step=1,
-                    key="quote_timeout_s",
+    with subtabs[3]:
+        st.markdown("### Cotações automáticas")
+        st.session_state.setdefault("quote_last_report", [])
+        cset1, cset2 = st.columns([1.1, 1.1])
+        with cset1:
+            quote_timeout_s = st.number_input(
+                "Timeout por ativo (s)",
+                min_value=5,
+                max_value=120,
+                value=int(st.session_state.get("quote_timeout_s", 25)),
+                step=1,
+                key="quote_timeout_s",
+            )
+        with cset2:
+            quote_workers = st.number_input(
+                "Paralelismo",
+                min_value=1,
+                max_value=16,
+                value=int(st.session_state.get("quote_workers", 4)),
+                step=1,
+                key="quote_workers",
+            )
+
+        if st.button("Atualizar cotação agora", key="btn_update_quotes"):
+            try:
+                assets = invest_repo.list_assets()
+                total_assets = len(assets or [])
+                if total_assets == 0:
+                    st.warning("Nenhum ativo cadastrado para atualizar cotação.")
+                    st.stop()
+
+                st.caption("Busca em paralelo ativa. Ajuste timeout e paralelismo acima.")
+                progress_bar = st.progress(0.0)
+                progress_txt = st.empty()
+                t0 = time.monotonic()
+
+                def _on_progress(done: int, total: int, row: dict):
+                    pct = done / max(total, 1)
+                    progress_bar.progress(pct)
+                    symbol = row.get("symbol") or "-"
+                    progress_txt.caption(f"Consultando... {done}/{total} | último: {symbol}")
+
+                report = invest_quotes.update_all_prices(
+                    assets,
+                    progress_cb=_on_progress,
+                    timeout_s=float(quote_timeout_s),
+                    max_workers=int(quote_workers),
                 )
-            with cset2:
-                quote_workers = st.number_input(
-                    "Paralelismo",
-                    min_value=1,
-                    max_value=16,
-                    value=int(st.session_state.get("quote_workers", 4)),
-                    step=1,
-                    key="quote_workers",
-                )
+                elapsed_total = time.monotonic() - t0
+                progress_bar.progress(1.0)
+                progress_txt.caption(f"Concluído em {elapsed_total:.1f}s ({len(report)} ativos processados).")
 
-            if st.button("Atualizar cotação agora", key="btn_update_quotes"):
-                try:
-                    assets = invest_repo.list_assets()
-                    total_assets = len(assets or [])
-                    if total_assets == 0:
-                        st.warning("Nenhum ativo cadastrado para atualizar cotação.")
-                        st.stop()
-
-                    st.caption("Busca em paralelo ativa. Ajuste timeout e paralelismo acima.")
-                    progress_bar = st.progress(0.0)
-                    progress_txt = st.empty()
-                    t0 = time.monotonic()
-
-                    def _on_progress(done: int, total: int, row: dict):
-                        pct = done / max(total, 1)
-                        progress_bar.progress(pct)
-                        symbol = row.get("symbol") or "-"
-                        progress_txt.caption(f"Consultando... {done}/{total} | último: {symbol}")
-
-                    report = invest_quotes.update_all_prices(
-                        assets,
-                        progress_cb=_on_progress,
-                        timeout_s=float(quote_timeout_s),
-                        max_workers=int(quote_workers),
-                    )
-                    elapsed_total = time.monotonic() - t0
-                    progress_bar.progress(1.0)
-                    progress_txt.caption(f"Concluído em {elapsed_total:.1f}s ({len(report)} ativos processados).")
-
-                    saved = 0
-                    for r in report:
-                        if r.get("ok"):
-                            invest_repo.upsert_price(
-                                asset_id=int(r["asset_id"]),
-                                date=str(r["px_date"]),          # YYYY-MM-DD
-                                price=float(r["price"]),
-                                source=r.get("src") or "brapi",
-                            )
-                            saved += 1
-
-                    st.success(f"Cotações salvas: {saved}/{len(report)}")
-                    if saved < len(report):
-                        st.warning("Alguns ativos não retornaram cotação nesta tentativa. Veja a coluna 'error' abaixo.")
-                    st.session_state["quote_last_report"] = report
-                    st.dataframe(pd.DataFrame(report), use_container_width=True)
-
-                except Exception as e:
-                    st.error(f"Erro ao atualizar cotação: {e}")
-
-            last_report = st.session_state.get("quote_last_report") or []
-            pending_rows = [r for r in last_report if not r.get("ok")]
-            if pending_rows:
-                st.divider()
-                st.markdown("### Pendentes de cotação (preenchimento manual)")
-                manual_date = st.date_input(
-                    "Data para salvar as cotações manuais",
-                    key="pending_px_date",
-                    format="DD/MM/YYYY",
-                )
-
-                for r in pending_rows:
-                    asset_id = int(r.get("asset_id"))
-                    symbol = str(r.get("symbol") or "")
-                    err = str(r.get("error") or "Sem detalhe")
-                    key_px = f"pending_px_{asset_id}"
-                    key_btn = f"btn_save_pending_{asset_id}"
-
-                    c1, c2, c3, c4 = st.columns([1.2, 2.0, 1.0, 0.9])
-                    with c1:
-                        st.write(f"**{symbol}**")
-                    with c2:
-                        st.caption(err)
-                    with c3:
-                        st.text_input(
-                            "Preço",
-                            value=st.session_state.get(key_px, ""),
-                            placeholder="0,00",
-                            key=key_px,
-                            on_change=(lambda k=key_px: _mask_currency_input_key(k)),
+                saved = 0
+                for r in report:
+                    if r.get("ok"):
+                        invest_repo.upsert_price(
+                            asset_id=int(r["asset_id"]),
+                            date=str(r["px_date"]),          # YYYY-MM-DD
+                            price=float(r["price"]),
+                            source=r.get("src") or "brapi",
                         )
-                    with c4:
-                        if st.button("Salvar", key=key_btn):
-                            try:
-                                px_val = _parse_brl_decimal(st.session_state.get(key_px, ""))
-                            except Exception:
-                                st.error(f"{symbol}: preço inválido.")
-                                st.stop()
-                            if px_val <= 0:
-                                st.error(f"{symbol}: preço deve ser maior que zero.")
-                                st.stop()
-                            invest_repo.upsert_price(
-                                asset_id=asset_id,
-                                date=manual_date.strftime("%Y-%m-%d"),
-                                price=float(px_val),
-                                source="manual",
-                            )
-                            st.success(f"{symbol}: cotação manual salva.")
-                            st.rerun()
+                        saved += 1
 
-                if st.button("Salvar todos os preços preenchidos", key="btn_save_all_pending"):
-                    saved_manual = 0
-                    for r in pending_rows:
-                        asset_id = int(r.get("asset_id"))
-                        key_px = f"pending_px_{asset_id}"
-                        raw_px = str(st.session_state.get(key_px, "") or "").strip()
-                        if not raw_px:
-                            continue
+                st.success(f"Cotações salvas: {saved}/{len(report)}")
+                if saved < len(report):
+                    st.warning("Alguns ativos não retornaram cotação nesta tentativa. Veja a coluna 'error' abaixo.")
+                st.session_state["quote_last_report"] = report
+                st.dataframe(pd.DataFrame(report), use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Erro ao atualizar cotação: {e}")
+
+        last_report = st.session_state.get("quote_last_report") or []
+        pending_rows = [r for r in last_report if not r.get("ok")]
+        if pending_rows:
+            st.divider()
+            st.markdown("### Pendentes de cotação (preenchimento manual)")
+            manual_date = st.date_input(
+                "Data para salvar as cotações manuais",
+                key="pending_px_date",
+                format="DD/MM/YYYY",
+            )
+
+            for r in pending_rows:
+                asset_id = int(r.get("asset_id"))
+                symbol = str(r.get("symbol") or "")
+                err = str(r.get("error") or "Sem detalhe")
+                key_px = f"pending_px_{asset_id}"
+                key_btn = f"btn_save_pending_{asset_id}"
+
+                c1, c2, c3, c4 = st.columns([1.2, 2.0, 1.0, 0.9])
+                with c1:
+                    st.write(f"**{symbol}**")
+                with c2:
+                    st.caption(err)
+                with c3:
+                    st.text_input(
+                        "Preço",
+                        value=st.session_state.get(key_px, ""),
+                        placeholder="0,00",
+                        key=key_px,
+                        on_change=(lambda k=key_px: _mask_currency_input_key(k)),
+                    )
+                with c4:
+                    if st.button("Salvar", key=key_btn):
                         try:
-                            px_val = _parse_brl_decimal(raw_px)
+                            px_val = _parse_brl_decimal(st.session_state.get(key_px, ""))
                         except Exception:
-                            continue
+                            st.error(f"{symbol}: preço inválido.")
+                            st.stop()
                         if px_val <= 0:
-                            continue
+                            st.error(f"{symbol}: preço deve ser maior que zero.")
+                            st.stop()
                         invest_repo.upsert_price(
                             asset_id=asset_id,
                             date=manual_date.strftime("%Y-%m-%d"),
                             price=float(px_val),
                             source="manual",
                         )
-                        saved_manual += 1
-                    if saved_manual > 0:
-                        st.success(f"Cotações manuais salvas: {saved_manual}.")
+                        st.success(f"{symbol}: cotação manual salva.")
                         st.rerun()
-                    else:
-                        st.warning("Nenhum preço válido preenchido para salvar.")
 
-            st.divider()
+            if st.button("Salvar todos os preços preenchidos", key="btn_save_all_pending"):
+                saved_manual = 0
+                for r in pending_rows:
+                    asset_id = int(r.get("asset_id"))
+                    key_px = f"pending_px_{asset_id}"
+                    raw_px = str(st.session_state.get(key_px, "") or "").strip()
+                    if not raw_px:
+                        continue
+                    try:
+                        px_val = _parse_brl_decimal(raw_px)
+                    except Exception:
+                        continue
+                    if px_val <= 0:
+                        continue
+                    invest_repo.upsert_price(
+                        asset_id=asset_id,
+                        date=manual_date.strftime("%Y-%m-%d"),
+                        price=float(px_val),
+                        source="manual",
+                    )
+                    saved_manual += 1
+                if saved_manual > 0:
+                    st.success(f"Cotações manuais salvas: {saved_manual}.")
+                    st.rerun()
+                else:
+                    st.warning("Nenhum preço válido preenchido para salvar.")
+
+        st.divider()
 
         st.markdown("### Cadastrar cotação manual")
         if not assets:

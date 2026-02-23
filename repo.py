@@ -1,5 +1,7 @@
 from db import get_conn
 from tenant import get_current_user_id
+from datetime import date, datetime
+import calendar
 
 
 def _uid(user_id: int | None = None) -> int:
@@ -328,3 +330,266 @@ def account_balance_value(account_id: int, user_id: int | None = None) -> float:
     ).fetchone()
     conn.close()
     return float(row["bal"] if row else 0.0)
+
+
+def list_credit_cards(user_id: int | None = None):
+    uid = _uid(user_id)
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT
+            cc.id, cc.name, cc.card_account_id, ca.name AS card_account, ca.type AS card_account_type,
+            cc.source_account_id, sa.name AS source_account, sa.type AS source_account_type,
+            cc.due_day, COALESCE(cc.brand, 'Visa') AS brand
+        FROM credit_cards cc
+        JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
+        JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
+        WHERE cc.user_id = ?
+        ORDER BY cc.name
+        """,
+        (uid,),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def create_credit_card(
+    name: str,
+    brand: str,
+    card_account_id: int,
+    source_account_id: int,
+    due_day: int,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO credit_cards(name, brand, card_account_id, source_account_id, due_day, user_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (name.strip(), brand.strip(), int(card_account_id), int(source_account_id), int(due_day), uid),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_credit_card(
+    card_id: int,
+    name: str,
+    brand: str,
+    card_account_id: int,
+    source_account_id: int,
+    due_day: int,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
+    conn = get_conn()
+    conn.execute(
+        """
+        UPDATE credit_cards
+        SET name = ?, brand = ?, card_account_id = ?, source_account_id = ?, due_day = ?
+        WHERE id = ? AND user_id = ?
+        """,
+        (name.strip(), brand.strip(), int(card_account_id), int(source_account_id), int(due_day), int(card_id), uid),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_credit_card(card_id: int, user_id: int | None = None) -> int:
+    uid = _uid(user_id)
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM credit_card_charges
+        WHERE card_id = ? AND user_id = ?
+        """,
+        (int(card_id), uid),
+    ).fetchone()
+    if row and int(row["n"]) > 0:
+        conn.close()
+        return 0
+    cur = conn.execute("DELETE FROM credit_cards WHERE id = ? AND user_id = ?", (int(card_id), uid))
+    conn.commit()
+    conn.close()
+    return int(cur.rowcount or 0)
+
+
+def get_credit_card_by_account(card_account_id: int, user_id: int | None = None):
+    uid = _uid(user_id)
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id, name, COALESCE(brand, 'Visa') AS brand, card_account_id, source_account_id, due_day
+        FROM credit_cards
+        WHERE card_account_id = ? AND user_id = ?
+        """,
+        (int(card_account_id), uid),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def _next_month_due_date(purchase_date: str, due_day: int) -> tuple[str, str]:
+    d = datetime.strptime(purchase_date, "%Y-%m-%d").date()
+    y = d.year + (1 if d.month == 12 else 0)
+    m = 1 if d.month == 12 else d.month + 1
+    last = calendar.monthrange(y, m)[1]
+    day = max(1, min(int(due_day), last))
+    due = date(y, m, day)
+    return due.strftime("%Y-%m"), due.strftime("%Y-%m-%d")
+
+
+def register_credit_charge(
+    card_id: int,
+    purchase_date: str,
+    amount: float,
+    note: str | None = None,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
+    conn = get_conn()
+    card = conn.execute(
+        "SELECT id, due_day FROM credit_cards WHERE id = ? AND user_id = ?",
+        (int(card_id), uid),
+    ).fetchone()
+    if not card:
+        conn.close()
+        raise ValueError("Cartão não encontrado.")
+
+    invoice_period, due_date = _next_month_due_date(purchase_date, int(card["due_day"]))
+    value = abs(float(amount))
+    conn.execute(
+        """
+        INSERT INTO credit_card_charges(card_id, purchase_date, amount, invoice_period, due_date, paid, note, user_id)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+        """,
+        (int(card_id), purchase_date, value, invoice_period, due_date, note, uid),
+    )
+
+    existing = conn.execute(
+        """
+        SELECT id, total_amount
+        FROM credit_card_invoices
+        WHERE user_id = ? AND card_id = ? AND invoice_period = ?
+        """,
+        (uid, int(card_id), invoice_period),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE credit_card_invoices SET total_amount = ? WHERE id = ? AND user_id = ?",
+            (float(existing["total_amount"] or 0.0) + value, int(existing["id"]), uid),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO credit_card_invoices(card_id, invoice_period, due_date, total_amount, paid_amount, status, user_id)
+            VALUES (?, ?, ?, ?, 0, 'OPEN', ?)
+            """,
+            (int(card_id), invoice_period, due_date, value, uid),
+        )
+    conn.commit()
+    conn.close()
+
+
+def list_credit_card_invoices(user_id: int | None = None, status: str | None = None, card_id: int | None = None):
+    uid = _uid(user_id)
+    conn = get_conn()
+    q = """
+        SELECT
+            i.id, i.card_id, cc.name AS card_name, ca.name AS card_account, sa.name AS source_account,
+            i.invoice_period, i.due_date, i.total_amount, i.paid_amount, i.status
+        FROM credit_card_invoices i
+        JOIN credit_cards cc ON cc.id = i.card_id AND cc.user_id = i.user_id
+        JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
+        JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
+        WHERE i.user_id = ?
+    """
+    params: list = [uid]
+    if status:
+        q += " AND i.status = ?"
+        params.append(status)
+    if card_id is not None:
+        q += " AND i.card_id = ?"
+        params.append(int(card_id))
+    q += " ORDER BY i.due_date DESC, i.id DESC"
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return rows
+
+
+def pay_credit_card_invoice(invoice_id: int, payment_date: str, user_id: int | None = None) -> dict:
+    uid = _uid(user_id)
+    conn = get_conn()
+    inv = conn.execute(
+        """
+        SELECT i.id, i.card_id, i.invoice_period, i.due_date, i.total_amount, i.paid_amount, i.status,
+               cc.name AS card_name, cc.card_account_id, cc.source_account_id,
+               ca.name AS card_account_name, sa.name AS source_account_name
+        FROM credit_card_invoices i
+        JOIN credit_cards cc ON cc.id = i.card_id AND cc.user_id = i.user_id
+        JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
+        JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
+        WHERE i.id = ? AND i.user_id = ?
+        """,
+        (int(invoice_id), uid),
+    ).fetchone()
+    if not inv:
+        conn.close()
+        raise ValueError("Fatura não encontrada.")
+
+    remaining = float(inv["total_amount"] or 0.0) - float(inv["paid_amount"] or 0.0)
+    if remaining <= 0 or str(inv["status"]).upper() == "PAID":
+        conn.close()
+        raise ValueError("Fatura já está paga.")
+
+    cat_id = ensure_category("Fatura Cartão", "Transferencia", user_id=uid)
+    src_name = str(inv["source_account_name"])
+    card_name = str(inv["card_account_name"])
+    period = str(inv["invoice_period"])
+
+    conn.execute(
+        """
+        INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payment_date,
+            f"PGTO FATURA -> {card_name} ({period})",
+            -abs(remaining),
+            int(inv["source_account_id"]),
+            int(cat_id),
+            "Credito",
+            f"Pagamento de fatura do cartão {inv['card_name']}",
+            uid,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payment_date,
+            f"PGTO FATURA <- {src_name} ({period})",
+            abs(remaining),
+            int(inv["card_account_id"]),
+            int(cat_id),
+            "Credito",
+            f"Pagamento de fatura do cartão {inv['card_name']}",
+            uid,
+        ),
+    )
+    conn.execute(
+        "UPDATE credit_card_invoices SET paid_amount = total_amount, status = 'PAID' WHERE id = ? AND user_id = ?",
+        (int(invoice_id), uid),
+    )
+    conn.execute(
+        "UPDATE credit_card_charges SET paid = 1 WHERE user_id = ? AND card_id = ? AND invoice_period = ?",
+        (uid, int(inv["card_id"]), str(inv["invoice_period"])),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "paid_amount": abs(remaining)}
