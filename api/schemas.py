@@ -99,6 +99,7 @@ class QuoteUpdateAllRequest(BaseModel):
 class CreditCardCreateRequest(BaseModel):
     name: str
     brand: str | None = None
+    model: str | None = None
     card_type: str | None = None
     card_account_id: int
     source_account_id: int | None = None
@@ -108,6 +109,7 @@ class CreditCardCreateRequest(BaseModel):
 class CreditCardUpdateRequest(BaseModel):
     name: str
     brand: str | None = None
+    model: str | None = None
     card_type: str | None = None
     card_account_id: int
     source_account_id: int | None = None

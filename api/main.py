@@ -139,6 +139,35 @@ def _norm_card_type(value: Any) -> str:
     return "Credito"
 
 
+def _norm_card_model(value: Any) -> str:
+    allowed = {"Black", "Gold", "Platinum", "Orange", "Violeta", "Vermelho"}
+    raw = str(value or "").strip().lower()
+    raw = (
+        raw.replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+    mapping = {
+        "black": "Black",
+        "gold": "Gold",
+        "platinum": "Platinum",
+        "orange": "Orange",
+        "violeta": "Violeta",
+        "vermelho": "Vermelho",
+    }
+    model = mapping.get(raw, "Black")
+    return model if model in allowed else "Black"
+
+
 def _auth_payload(authorization: str | None = Header(default=None)) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
@@ -526,38 +555,38 @@ def create_card(
     uid = int(user["id"])
     name = (body.name or "").strip()
     brand = _norm_card_brand(body.brand)
+    model = _norm_card_model(body.model)
     card_type = _norm_card_type(body.card_type)
     if not name:
         raise HTTPException(status_code=400, detail="Nome do cartão é obrigatório")
 
     account_map = {int(a["id"]): dict(a) for a in (repo.list_accounts(user_id=uid) or [])}
     linked_acc = account_map.get(int(body.card_account_id))
-    source_acc = account_map.get(int(body.source_account_id)) if body.source_account_id is not None else None
     if not linked_acc or _norm_account_type(linked_acc.get("type")) != "Banco":
         raise HTTPException(status_code=400, detail="Conta banco vinculada ao cartão é obrigatória e deve ser do tipo Banco")
 
     if card_type == "Credito":
         if body.due_day is None or int(body.due_day) < 1 or int(body.due_day) > 31:
             raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31 para cartão Crédito")
-        if not source_acc or _norm_account_type(source_acc.get("type")) != "Banco":
-            raise HTTPException(status_code=400, detail="Conta de pagamento da fatura deve ser uma conta Banco")
         due_day = int(body.due_day)
     else:
-        if source_acc and _norm_account_type(source_acc.get("type")) != "Banco":
-            raise HTTPException(status_code=400, detail="Conta de pagamento, quando informada, deve ser Banco")
         due_day = 1
 
     try:
         repo.create_credit_card(
             name=name,
             brand=brand,
+            model=model,
             card_type=card_type,
             card_account_id=int(body.card_account_id),
-            source_account_id=int(body.source_account_id) if body.source_account_id is not None else int(body.card_account_id),
+            source_account_id=int(body.card_account_id),
             due_day=due_day,
             user_id=uid,
         )
     except Exception as e:
+        msg = str(e)
+        if "UNIQUE constraint failed" in msg and "credit_cards.user_id" in msg and "credit_cards.name" in msg and "credit_cards.card_type" in msg:
+            raise HTTPException(status_code=400, detail="Já existe um cartão com este nome, tipo e conta banco.")
         raise HTTPException(status_code=400, detail=f"Erro ao cadastrar cartão: {e}")
     return {"ok": True}
 
@@ -571,34 +600,37 @@ def update_card(
     uid = int(user["id"])
     name = (body.name or "").strip()
     brand = _norm_card_brand(body.brand)
+    model = _norm_card_model(body.model)
     card_type = _norm_card_type(body.card_type)
     if not name:
         raise HTTPException(status_code=400, detail="Nome do cartão é obrigatório")
     account_map = {int(a["id"]): dict(a) for a in (repo.list_accounts(user_id=uid) or [])}
     linked_acc = account_map.get(int(body.card_account_id))
-    source_acc = account_map.get(int(body.source_account_id)) if body.source_account_id is not None else None
     if not linked_acc or _norm_account_type(linked_acc.get("type")) != "Banco":
         raise HTTPException(status_code=400, detail="Conta banco vinculada ao cartão é obrigatória e deve ser Banco")
     if card_type == "Credito":
         if body.due_day is None or int(body.due_day) < 1 or int(body.due_day) > 31:
             raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31 para cartão Crédito")
-        if not source_acc or _norm_account_type(source_acc.get("type")) != "Banco":
-            raise HTTPException(status_code=400, detail="Conta de pagamento da fatura inválida")
         due_day = int(body.due_day)
     else:
-        if source_acc and _norm_account_type(source_acc.get("type")) != "Banco":
-            raise HTTPException(status_code=400, detail="Conta de pagamento, quando informada, deve ser Banco")
         due_day = 1
-    repo.update_credit_card(
-        card_id=int(card_id),
-        name=name,
-        brand=brand,
-        card_type=card_type,
-        card_account_id=int(body.card_account_id),
-        source_account_id=int(body.source_account_id) if body.source_account_id is not None else int(body.card_account_id),
-        due_day=due_day,
-        user_id=uid,
-    )
+    try:
+        repo.update_credit_card(
+            card_id=int(card_id),
+            name=name,
+            brand=brand,
+            model=model,
+            card_type=card_type,
+            card_account_id=int(body.card_account_id),
+            source_account_id=int(body.card_account_id),
+            due_day=due_day,
+            user_id=uid,
+        )
+    except Exception as e:
+        msg = str(e)
+        if "UNIQUE constraint failed" in msg and "credit_cards.user_id" in msg and "credit_cards.name" in msg and "credit_cards.card_type" in msg:
+            raise HTTPException(status_code=400, detail="Já existe um cartão com este nome, tipo e conta banco.")
+        raise HTTPException(status_code=400, detail=f"Erro ao atualizar cartão: {e}")
     return {"ok": True}
 
 

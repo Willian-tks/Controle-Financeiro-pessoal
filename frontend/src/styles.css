@@ -726,6 +726,7 @@ body {
   inset: 0;
   border-radius: 16px;
   overflow: hidden;
+  background: linear-gradient(180deg, #102450, #0b1b3f);
   border: 1px solid rgba(170, 193, 244, 0.24);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -772,7 +773,7 @@ body {
 
 .wallet-bg.brand-master {
   object-position: center;
-  transform: scale(1.1);
+  transform: scale(1.12);
 }
 
 .wallet-overlay {
@@ -784,36 +785,41 @@ body {
 .wallet-content {
   position: absolute;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 16px 20px 14px;
+  display: block;
+  padding: 0;
   color: #ffffff;
+  pointer-events: none;
 }
 
 .dash-wallet-stack.single .wallet-content {
-  padding: 14px 14px 12px;
+  padding: 0;
 }
 
 .wallet-name {
-  font-weight: 800;
-  font-size: 21px;
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
-  max-width: 68%;
+  position: absolute;
+  left: 58px;
+  bottom: 18px;
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: rgba(244, 247, 255, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  max-width: 58%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-left: 28px;
-  margin-top: 6px;
 }
 
 .wallet-brand-line {
-  display: inline-flex;
+  position: absolute;
+  right: 60px;
+  bottom: 10px;
+  display: flex;
   align-items: center;
   justify-content: flex-end;
-  align-self: flex-end;
-  margin-right: 38px;
-  margin-bottom: 4px;
+  margin: 0;
 }
 
 .wallet-brand-icon {

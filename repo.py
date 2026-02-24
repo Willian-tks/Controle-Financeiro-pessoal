@@ -340,7 +340,7 @@ def list_credit_cards(user_id: int | None = None):
         SELECT
             cc.id, cc.name, cc.card_account_id, ca.name AS linked_account, ca.type AS linked_account_type,
             cc.source_account_id, sa.name AS source_account, sa.type AS source_account_type,
-            cc.due_day, COALESCE(cc.brand, 'Visa') AS brand, COALESCE(cc.card_type, 'Credito') AS card_type
+            cc.due_day, COALESCE(cc.brand, 'Visa') AS brand, COALESCE(cc.model, 'Black') AS model, COALESCE(cc.card_type, 'Credito') AS card_type
         FROM credit_cards cc
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
         JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
@@ -356,6 +356,7 @@ def list_credit_cards(user_id: int | None = None):
 def create_credit_card(
     name: str,
     brand: str,
+    model: str,
     card_type: str,
     card_account_id: int,
     source_account_id: int | None,
@@ -366,12 +367,13 @@ def create_credit_card(
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO credit_cards(name, brand, card_type, card_account_id, source_account_id, due_day, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO credit_cards(name, brand, model, card_type, card_account_id, source_account_id, due_day, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name.strip(),
             brand.strip(),
+            model.strip(),
             card_type.strip(),
             int(card_account_id),
             int(source_account_id) if source_account_id is not None else int(card_account_id),
@@ -387,6 +389,7 @@ def update_credit_card(
     card_id: int,
     name: str,
     brand: str,
+    model: str,
     card_type: str,
     card_account_id: int,
     source_account_id: int | None,
@@ -398,12 +401,13 @@ def update_credit_card(
     conn.execute(
         """
         UPDATE credit_cards
-        SET name = ?, brand = ?, card_type = ?, card_account_id = ?, source_account_id = ?, due_day = ?
+        SET name = ?, brand = ?, model = ?, card_type = ?, card_account_id = ?, source_account_id = ?, due_day = ?
         WHERE id = ? AND user_id = ?
         """,
         (
             name.strip(),
             brand.strip(),
+            model.strip(),
             card_type.strip(),
             int(card_account_id),
             int(source_account_id) if source_account_id is not None else int(card_account_id),
@@ -441,7 +445,7 @@ def get_credit_card_by_account_and_type(card_account_id: int, card_type: str, us
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day
+        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day
         FROM credit_cards
         WHERE card_account_id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ?
         """,
@@ -456,7 +460,7 @@ def get_credit_card_by_id_and_type(card_id: int, card_type: str, user_id: int | 
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day
+        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day
         FROM credit_cards
         WHERE id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ?
         """,

@@ -14,8 +14,12 @@ import bankNubankLogo from "./banks/nubank-logo.svg";
 import bankSantanderLogo from "./banks/santander-logo.svg";
 import cardVisaLogo from "./cards/visa-17.svg";
 import cardMasterLogo from "./cards/mastercard-18.svg";
-import cardVisaBg from "./cards/Cartao_visa.png";
-import cardMasterBg from "./cards/Cartao_mastercard.svg";
+import cardModelBlack from "./cards/Black.png";
+import cardModelGold from "./cards/Gold.png";
+import cardModelPlatinum from "./cards/Platinum.png";
+import cardModelOrange from "./cards/Orange.png";
+import cardModelVioleta from "./cards/Violeta.png";
+import cardModelVermelho from "./cards/Vermelho.png";
 import {
   clearToken,
   createCard,
@@ -85,6 +89,7 @@ const PAGE_SUBTITLES = {
 
 const INVEST_TABS = ["Resumo", "Ativos", "Operações", "Proventos", "Cotações"];
 const DONUT_COLORS = ["#f4c84b", "#4e7ff3", "#73d39f", "#ef6f5c", "#9a7df9"];
+const CARD_MODELS = ["Black", "Gold", "Platinum", "Orange", "Violeta", "Vermelho"];
 const PAGE_ICONS = {
   Dashboard: icDashboard,
   Contas: icContas,
@@ -152,10 +157,16 @@ function getCardLogo(brand) {
   return cardVisaLogo;
 }
 
-function getCardBackground(brand) {
-  const n = normalizeText(brand);
-  if (n.includes("master")) return cardMasterBg;
-  return cardVisaBg;
+function getCardBackground(model) {
+  const map = {
+    black: cardModelBlack,
+    gold: cardModelGold,
+    platinum: cardModelPlatinum,
+    orange: cardModelOrange,
+    violeta: cardModelVioleta,
+    vermelho: cardModelVermelho,
+  };
+  return map[normalizeText(model)] || cardModelBlack;
 }
 
 function getCardBgClass(brand) {
@@ -192,6 +203,7 @@ export default function App() {
   const [cardMsg, setCardMsg] = useState("");
   const [cardName, setCardName] = useState("");
   const [cardBrand, setCardBrand] = useState("Visa");
+  const [cardModel, setCardModel] = useState("Black");
   const [cardType, setCardType] = useState("Credito");
   const [cardAccountId, setCardAccountId] = useState("");
   const [cardSourceAccountId, setCardSourceAccountId] = useState("");
@@ -323,26 +335,24 @@ export default function App() {
 
   useEffect(() => {
     const bankAccounts = accounts.filter((a) => normalizeAccountType(a.type) === "Banco");
-    const sourceAccounts = bankAccounts;
 
     if (!bankAccounts.length) {
       setCardAccountId("");
+      setCardSourceAccountId("");
     } else if (!cardAccountId || !bankAccounts.some((a) => String(a.id) === String(cardAccountId))) {
       setCardAccountId(String(bankAccounts[0].id));
+      setCardSourceAccountId(String(bankAccounts[0].id));
+    } else {
+      setCardSourceAccountId(String(cardAccountId));
     }
-
-    if (!sourceAccounts.length) {
-      setCardSourceAccountId("");
-    } else if (!cardSourceAccountId || !sourceAccounts.some((a) => String(a.id) === String(cardSourceAccountId))) {
-      setCardSourceAccountId(String(sourceAccounts[0].id));
-    }
-  }, [accounts, cardAccountId, cardSourceAccountId, cardType]);
+  }, [accounts, cardAccountId]);
 
   useEffect(() => {
     if (!cards.length) {
       setCardEditId("");
       setCardName("");
       setCardBrand("Visa");
+      setCardModel("Black");
       setCardType("Credito");
       setCardDueDay("10");
       return;
@@ -351,11 +361,12 @@ export default function App() {
     setCardEditId(String(cur.id));
     setCardName(String(cur.name || ""));
     setCardBrand(String(cur.brand || "Visa"));
+    setCardModel(String(cur.model || "Black"));
     setCardType(String(cur.card_type || "Credito"));
     setCardAccountId(String(cur.card_account_id || ""));
     setCardSourceAccountId(String(cur.source_account_id || ""));
     setCardDueDay(String(cur.due_day || 10));
-  }, [cards]);
+  }, [cards, cardEditId]);
 
   useEffect(() => {
     if (!investAssets.length) {
@@ -993,15 +1004,12 @@ export default function App() {
     setCardMsg("");
     const name = String(cardName || "").trim();
     const accId = Number(cardAccountId);
-    const srcId = Number(cardSourceAccountId);
     const due = Number(String(cardDueDay || "0"));
     const isCredit = cardType === "Credito";
-    const hasSource = Number.isFinite(srcId) && srcId > 0;
     if (
       !name ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
-      (isCredit && !hasSource) ||
       (isCredit && (!Number.isFinite(due) || due < 1 || due > 31))
     ) {
       if (!Number.isFinite(accId) || accId <= 0) {
@@ -1010,7 +1018,7 @@ export default function App() {
       }
       setCardMsg(
         isCredit
-          ? "Preencha nome, tipo, conta banco vinculada, conta de pagamento da fatura e vencimento."
+          ? "Preencha nome, tipo, conta banco vinculada e vencimento."
           : "Preencha nome, tipo e conta banco vinculada ao cartão."
       );
       return;
@@ -1019,9 +1027,10 @@ export default function App() {
       await createCard({
         name,
         brand: cardBrand,
+        model: cardModel,
         card_type: cardType,
         card_account_id: accId,
-        source_account_id: hasSource ? srcId : null,
+        source_account_id: accId,
         due_day: isCredit ? due : null,
       });
       setCardMsg("Cartão cadastrado.");
@@ -1038,17 +1047,14 @@ export default function App() {
     const id = Number(cardEditId);
     const name = String(cardName || "").trim();
     const accId = Number(cardAccountId);
-    const srcId = Number(cardSourceAccountId);
     const due = Number(String(cardDueDay || "0"));
     const isCredit = cardType === "Credito";
-    const hasSource = Number.isFinite(srcId) && srcId > 0;
     if (
       !Number.isFinite(id) ||
       id <= 0 ||
       !name ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
-      (isCredit && !hasSource) ||
       (isCredit && (!Number.isFinite(due) || due < 1 || due > 31))
     ) {
       if (!Number.isFinite(accId) || accId <= 0) {
@@ -1062,13 +1068,16 @@ export default function App() {
       await updateCard(id, {
         name,
         brand: cardBrand,
+        model: cardModel,
         card_type: cardType,
         card_account_id: accId,
-        source_account_id: hasSource ? srcId : null,
+        source_account_id: accId,
         due_day: isCredit ? due : null,
       });
       setCardMsg("Cartão atualizado.");
       await reloadCardsData();
+      await reloadAllData();
+      await reloadDashboard();
     } catch (err) {
       setCardMsg(String(err.message || err));
     }
@@ -1082,9 +1091,24 @@ export default function App() {
       await deleteCard(id);
       setCardMsg("Cartão excluído.");
       await reloadCardsData();
+      await reloadAllData();
+      await reloadDashboard();
     } catch (err) {
       setCardMsg(String(err.message || err));
     }
+  }
+
+  function onSelectCardEdit(id) {
+    setCardEditId(id);
+    const cur = (cards || []).find((c) => String(c.id) === String(id));
+    if (!cur) return;
+    setCardName(String(cur.name || ""));
+    setCardBrand(String(cur.brand || "Visa"));
+    setCardModel(String(cur.model || "Black"));
+    setCardType(String(cur.card_type || "Credito"));
+    setCardAccountId(String(cur.card_account_id || ""));
+    setCardSourceAccountId(String(cur.source_account_id || ""));
+    setCardDueDay(String(cur.due_day || 10));
   }
 
   async function onPayInvoice(invoice) {
@@ -1415,12 +1439,12 @@ export default function App() {
                       <article
                         className="wallet-card wallet-card-front"
                         key={activeCreditCard.id}
-                        title={`${activeCreditCard.name} (${activeCreditCard.brand || "Visa"})`}
+                        title={`${activeCreditCard.name} (${activeCreditCard.model || "Black"})`}
                       >
                         <img
-                          src={getCardBackground(activeCreditCard.brand || "Visa")}
+                          src={getCardBackground(activeCreditCard.model || "Black")}
                           alt=""
-                          className={`wallet-bg ${getCardBgClass(activeCreditCard.brand || "Visa")}`}
+                          className="wallet-bg"
                         />
                         <div className="wallet-overlay" />
                         <div className="wallet-content">
@@ -1550,6 +1574,11 @@ export default function App() {
                   <option value="Visa">Visa</option>
                   <option value="Master">Master</option>
                 </select>
+                <select value={cardModel} onChange={(e) => setCardModel(e.target.value)}>
+                  {CARD_MODELS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
                 <select value={cardType} onChange={(e) => setCardType(e.target.value)}>
                   <option value="Credito">Credito</option>
                   <option value="Debito">Debito</option>
@@ -1563,19 +1592,6 @@ export default function App() {
                 {!bankAccountsOnly.length ? (
                   <input type="text" value="Sem conta Banco cadastrada." disabled />
                 ) : null}
-                <select value={cardSourceAccountId} onChange={(e) => setCardSourceAccountId(e.target.value)}>
-                  <option value="">
-                    {isCreditCardType ? "Conta banco de pagamento da fatura" : "Conta de pagamento (opcional)"}
-                  </option>
-                  {accounts
-                    .filter((a) => {
-                      const t = normalizeAccountType(a.type);
-                      return t === "Banco";
-                    })
-                    .map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                </select>
                 {isCreditCardType ? (
                   <input
                     type="number"
@@ -1588,18 +1604,18 @@ export default function App() {
                 ) : (
                   <input type="text" value="Débito imediato na conta banco" disabled />
                 )}
-                <button onClick={onCreateCard}>Cadastrar cartão</button>
+                <button type="button" onClick={onCreateCard}>Cadastrar cartão</button>
               </div>
             </section>
 
             <section className="card">
               <h3>Cartões cadastrados</h3>
               <div className="mgr-grid">
-                <select value={cardEditId} onChange={(e) => setCardEditId(e.target.value)}>
+                <select value={cardEditId} onChange={(e) => onSelectCardEdit(e.target.value)}>
                   <option value="">Selecione um cartão</option>
                   {cards.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name} - {c.brand || "Visa"} - {c.card_type || "Credito"} ({c.linked_account})
+                      {c.name} - {c.brand || "Visa"} - {c.model || "Black"} - {c.card_type || "Credito"} ({c.linked_account})
                     </option>
                   ))}
                 </select>
@@ -1607,6 +1623,11 @@ export default function App() {
                 <select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)}>
                   <option value="Visa">Visa</option>
                   <option value="Master">Master</option>
+                </select>
+                <select value={cardModel} onChange={(e) => setCardModel(e.target.value)}>
+                  {CARD_MODELS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
                 </select>
                 <select value={cardType} onChange={(e) => setCardType(e.target.value)}>
                   <option value="Credito">Credito</option>
@@ -1617,17 +1638,6 @@ export default function App() {
                   {bankAccountsOnly.map((a) => (
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}
-                </select>
-                <select value={cardSourceAccountId} onChange={(e) => setCardSourceAccountId(e.target.value)}>
-                  <option value="">{isCreditCardType ? "Conta banco pagamento fatura" : "Conta de pagamento (opcional)"}</option>
-                  {accounts
-                    .filter((a) => {
-                      const t = normalizeAccountType(a.type);
-                      return t === "Banco";
-                    })
-                    .map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
                 </select>
                 {isCreditCardType ? (
                   <input
@@ -1640,8 +1650,8 @@ export default function App() {
                 ) : (
                   <input type="text" value="Débito imediato na conta banco" disabled />
                 )}
-                <button onClick={onUpdateCard}>Atualizar cartão</button>
-                <button className="danger" onClick={onDeleteCard}>Excluir cartão</button>
+                <button type="button" onClick={onUpdateCard}>Atualizar cartão</button>
+                <button type="button" className="danger" onClick={onDeleteCard}>Excluir cartão</button>
               </div>
               {cardMsg ? <p>{cardMsg}</p> : null}
             </section>
