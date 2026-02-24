@@ -118,3 +118,4 @@ class CreditCardUpdateRequest(BaseModel):
 
 class CreditCardPayInvoiceRequest(BaseModel):
     payment_date: str
+    source_account_id: int | None = None

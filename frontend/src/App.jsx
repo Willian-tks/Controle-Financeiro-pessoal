@@ -192,12 +192,13 @@ export default function App() {
   const [dashDateFrom, setDashDateFrom] = useState("");
   const [dashDateTo, setDashDateTo] = useState("");
   const [dashAccount, setDashAccount] = useState("");
+  const [dashView, setDashView] = useState("caixa");
   const [dashMsg, setDashMsg] = useState("");
   const [txMsg, setTxMsg] = useState("");
   const [txAccountId, setTxAccountId] = useState("");
   const [txCategoryId, setTxCategoryId] = useState("");
-  const [txKind, setTxKind] = useState("Receita");
   const [txMethod, setTxMethod] = useState("PIX");
+  const [txView, setTxView] = useState("caixa");
   const [txSourceAccountId, setTxSourceAccountId] = useState("");
   const [txCardId, setTxCardId] = useState("");
   const [cardMsg, setCardMsg] = useState("");
@@ -252,6 +253,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [walletCardIndex, setWalletCardIndex] = useState(0);
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [payInvoiceTarget, setPayInvoiceTarget] = useState(null);
+  const [payAccountId, setPayAccountId] = useState("");
   const userMenuRef = useRef(null);
 
   useEffect(() => {
@@ -277,6 +281,7 @@ export default function App() {
           date_from: "",
           date_to: "",
           account: "",
+          view: dashView,
         });
         await reloadInvestData();
       } catch {
@@ -390,9 +395,17 @@ export default function App() {
     () => categories.find((c) => String(c.id) === String(txCategoryId)) || null,
     [categories, txCategoryId]
   );
-  const txEffectiveKind = txCategory?.kind || txKind;
+  const txEffectiveKind = txCategory?.kind || "";
   const txIsTransfer = txEffectiveKind === "Transferencia";
   const txIsExpense = txEffectiveKind === "Despesa";
+  const txIsIncome = txEffectiveKind === "Receita";
+  const txIsExpenseCredit = txIsExpense && !txIsTransfer && txMethod === "Credito";
+  const txMethodOptions = useMemo(() => {
+    if (txIsIncome) return ["PIX", "TED", "Dinheiro"];
+    if (txIsExpense) return ["PIX", "Debito", "Credito", "TED", "Dinheiro"];
+    if (txIsTransfer) return ["PIX", "TED", "Dinheiro"];
+    return [];
+  }, [txIsIncome, txIsExpense, txIsTransfer]);
   const bankAccountsOnly = useMemo(
     () => accounts.filter((a) => normalizeAccountType(a.type) === "Banco"),
     [accounts]
@@ -400,11 +413,14 @@ export default function App() {
   const cardsForTxMethod = useMemo(() => {
     if (!txIsExpense || txIsTransfer) return [];
     if (txMethod === "Credito") return (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito");
-    if (txMethod === "Debito") return (cards || []).filter((c) => String(c.card_type || "Credito") === "Debito");
     return [];
   }, [cards, txIsExpense, txIsTransfer, txMethod]);
+  const selectedTxCard = useMemo(
+    () => cardsForTxMethod.find((c) => String(c.id) === String(txCardId)) || null,
+    [cardsForTxMethod, txCardId]
+  );
   useEffect(() => {
-    if (!txIsExpense || txIsTransfer || !["Credito", "Debito"].includes(txMethod)) {
+    if (!txIsExpense || txIsTransfer || txMethod !== "Credito") {
       setTxCardId("");
       return;
     }
@@ -416,6 +432,46 @@ export default function App() {
       setTxCardId(String(cardsForTxMethod[0].id));
     }
   }, [txIsExpense, txIsTransfer, txMethod, cardsForTxMethod, txCardId]);
+
+  useEffect(() => {
+    if (!txMethodOptions.length) {
+      setTxMethod("");
+      return;
+    }
+    if (!txMethod || !txMethodOptions.includes(txMethod)) {
+      setTxMethod(txMethodOptions[0]);
+    }
+  }, [txMethodOptions, txMethod]);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        await reloadTransactions({ view: txView });
+      } catch {
+        // mensagem já tratada nos fluxos de ação
+      }
+    })();
+  }, [txView, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        await reloadDashboard({ view: dashView });
+      } catch {
+        // mensagem já tratada nos fluxos de ação
+      }
+    })();
+  }, [dashView, user]);
+
+  useEffect(() => {
+    if (!txIsExpenseCredit) return;
+    if (!selectedTxCard) return;
+    if (String(txAccountId) !== String(selectedTxCard.card_account_id || "")) {
+      setTxAccountId(String(selectedTxCard.card_account_id || ""));
+    }
+  }, [txIsExpenseCredit, selectedTxCard, txAccountId]);
   const isCreditCardType = cardType === "Credito";
 
   const brl = useMemo(
@@ -453,13 +509,6 @@ export default function App() {
         .slice(0, 4),
     [dashExpenses]
   );
-  const openInvoiceTotal = useMemo(
-    () =>
-      (cardInvoices || [])
-        .filter((i) => String(i.status || "").toUpperCase() === "OPEN")
-        .reduce((acc, i) => acc + Math.max(0, Number(i.total_amount || 0) - Number(i.paid_amount || 0)), 0),
-    [cardInvoices]
-  );
   const creditCards = useMemo(
     () => (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito"),
     [cards]
@@ -474,6 +523,31 @@ export default function App() {
     }
   }, [creditCards.length, walletCardIndex]);
   const activeCreditCard = creditCards.length ? creditCards[walletCardIndex] : null;
+  const activeCardOpenInvoices = useMemo(() => {
+    if (!activeCreditCard) return [];
+    return (cardInvoices || []).filter(
+      (i) =>
+        String(i.status || "").toUpperCase() === "OPEN" &&
+        Number(i.card_id) === Number(activeCreditCard.id)
+    );
+  }, [cardInvoices, activeCreditCard]);
+  const activeCardCurrentInvoice = useMemo(() => {
+    if (!activeCardOpenInvoices.length) return null;
+    const sorted = [...activeCardOpenInvoices].sort((a, b) =>
+      String(a.due_date || "").localeCompare(String(b.due_date || ""))
+    );
+    return sorted[0] || null;
+  }, [activeCardOpenInvoices]);
+  const activeCardCurrentInvoiceAmount = useMemo(
+    () =>
+      activeCardCurrentInvoice
+        ? Math.max(
+            0,
+            Number(activeCardCurrentInvoice.total_amount || 0) - Number(activeCardCurrentInvoice.paid_amount || 0)
+          )
+        : 0,
+    [activeCardCurrentInvoice]
+  );
   const investmentByClass = useMemo(() => {
     const rows = investPortfolio?.positions || [];
     const map = new Map();
@@ -526,7 +600,7 @@ export default function App() {
       getAccounts(),
       getCategories(),
       getKpis(),
-      getTransactions(),
+      getTransactions({ view: txView }),
     ]);
     setAccounts(acc);
     setCategories(cat);
@@ -545,6 +619,7 @@ export default function App() {
       date_from: params.date_from ?? dashDateFrom,
       date_to: params.date_to ?? dashDateTo,
       account: params.account ?? dashAccount,
+      view: params.view ?? dashView,
     };
     try {
       const [k, m, e, ab] = await Promise.all([
@@ -563,8 +638,8 @@ export default function App() {
     }
   }
 
-  async function reloadTransactions() {
-    const tx = await getTransactions();
+  async function reloadTransactions(params = {}) {
+    const tx = await getTransactions({ view: params.view ?? txView });
     setTransactions(tx);
   }
 
@@ -613,19 +688,29 @@ export default function App() {
     const category = categories.find((c) => Number(c.id) === Number(categoryId));
     const method = String(txMethod || "").trim();
     const notes = String(form.get("notes") || "").trim();
-    const effectiveKind = (category?.kind || txKind || "Receita").trim();
+    const effectiveKind = String(category?.kind || "").trim();
     const sourceAccountId = txSourceAccountId ? Number(txSourceAccountId) : NaN;
     const selectedCardId = txCardId ? Number(txCardId) : NaN;
+    const cardLinkedAccountId = selectedTxCard ? Number(selectedTxCard.card_account_id) : NaN;
+    const effectiveAccountId = txIsExpenseCredit && Number.isFinite(cardLinkedAccountId) ? cardLinkedAccountId : accountId;
 
+    if (!Number.isFinite(categoryId || NaN) || !category) {
+      setTxMsg("Selecione uma categoria para definir o tipo do lançamento.");
+      return;
+    }
     if (
       !description ||
       !date ||
-      !Number.isFinite(accountId) ||
-      accountId <= 0 ||
+      !Number.isFinite(effectiveAccountId) ||
+      effectiveAccountId <= 0 ||
       !Number.isFinite(amountAbs) ||
       amountAbs <= 0
     ) {
-      setTxMsg("Preencha data, descrição, valor (> 0) e selecione uma conta válida.");
+      setTxMsg("Preencha data, descrição, valor (> 0), categoria e conta válida.");
+      return;
+    }
+    if (!txMethodOptions.includes(method)) {
+      setTxMsg("Método inválido para o tipo da categoria selecionada.");
       return;
     }
     if (txIsTransfer && (!Number.isFinite(sourceAccountId) || sourceAccountId <= 0)) {
@@ -637,14 +722,6 @@ export default function App() {
         setTxMsg("Para despesa no Crédito, selecione um cartão.");
         return;
       }
-      if (method === "Debito" && txCardId && (!Number.isFinite(selectedCardId) || selectedCardId <= 0)) {
-        setTxMsg("Cartão de débito inválido.");
-        return;
-      }
-      if (method === "PIX" && txCardId) {
-        setTxMsg("PIX não usa cartão.");
-        return;
-      }
     }
 
     try {
@@ -652,12 +729,12 @@ export default function App() {
         date,
         description,
         amount: Math.abs(amountAbs),
-        account_id: accountId,
+        account_id: effectiveAccountId,
         category_id: categoryId,
         kind: effectiveKind,
         source_account_id: txIsTransfer ? sourceAccountId : null,
         card_id:
-          txIsExpense && !txIsTransfer && ["Credito", "Debito"].includes(method) && Number.isFinite(selectedCardId)
+          txIsExpense && !txIsTransfer && method === "Credito" && Number.isFinite(selectedCardId)
             ? selectedCardId
             : null,
         method: method || null,
@@ -665,7 +742,6 @@ export default function App() {
       });
       formEl.reset();
       setTxCategoryId("");
-      setTxKind("Receita");
       setTxMethod("PIX");
       setTxSourceAccountId("");
       setTxCardId("");
@@ -677,6 +753,7 @@ export default function App() {
         setTxMsg("Lançamento salvo.");
       }
       await reloadTransactions();
+      await reloadCardsData();
       const dash = await getKpis();
       setKpis(dash);
       await reloadDashboard();
@@ -1111,12 +1188,15 @@ export default function App() {
     setCardDueDay(String(cur.due_day || 10));
   }
 
-  async function onPayInvoice(invoice) {
+  async function onPayInvoice(invoice, sourceAccountId = null) {
     setCardMsg("");
     const invoiceId = Number(invoice?.id);
     const paymentDate = String(invoice?.due_date || "").trim() || new Date().toISOString().slice(0, 10);
     try {
-      await payCardInvoice(invoiceId, { payment_date: paymentDate });
+      await payCardInvoice(invoiceId, {
+        payment_date: paymentDate,
+        source_account_id: sourceAccountId ? Number(sourceAccountId) : null,
+      });
       setCardMsg("Fatura paga.");
       await reloadCardsData();
       await reloadAllData();
@@ -1126,6 +1206,27 @@ export default function App() {
     } catch (err) {
       setCardMsg(String(err.message || err));
     }
+  }
+
+  function openPayInvoiceModal(invoice) {
+    if (!invoice) return;
+    const defaultBank =
+      bankAccountsOnly.find((a) => String(a.name || "") === String(invoice.source_account || "")) || bankAccountsOnly[0];
+    setPayInvoiceTarget(invoice);
+    setPayAccountId(defaultBank ? String(defaultBank.id) : "");
+    setPayModalOpen(true);
+  }
+
+  async function confirmPayInvoiceModal() {
+    if (!payInvoiceTarget) return;
+    if (!payAccountId) {
+      setCardMsg("Selecione a conta banco para pagar a fatura.");
+      return;
+    }
+    await onPayInvoice(payInvoiceTarget, Number(payAccountId));
+    setPayModalOpen(false);
+    setPayInvoiceTarget(null);
+    setPayAccountId("");
   }
 
   function onLogout() {
@@ -1141,6 +1242,7 @@ export default function App() {
       date_from: dashDateFrom,
       date_to: dashDateTo,
       account: dashAccount,
+      view: dashView,
     });
   }
 
@@ -1362,6 +1464,10 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+                <select value={dashView} onChange={(e) => setDashView(e.target.value)}>
+                  <option value="caixa">Visão Caixa</option>
+                  <option value="competencia">Visão Competência</option>
+                </select>
                 <button type="submit">Aplicar filtros</button>
               </form>
               {dashMsg ? <p>{dashMsg}</p> : null}
@@ -1490,8 +1596,15 @@ export default function App() {
                 )}
                 <div className="dash-cards-meta">
                   <h3>Cartões e faturas</h3>
-                  <p className="dash-small">Abertas: {cardInvoices.length} | Cartões crédito: {creditCards.length}</p>
-                  <strong className="dash-hero-value">{brl.format(openInvoiceTotal)}</strong>
+                  <p className="dash-small">
+                    Vencimento: {activeCardCurrentInvoice?.due_date || "-"} | Cartões crédito: {creditCards.length}
+                  </p>
+                  <strong className="dash-hero-value">{brl.format(activeCardCurrentInvoiceAmount)}</strong>
+                  {activeCardCurrentInvoice ? (
+                    <button type="button" className="mini-tab active" onClick={() => openPayInvoiceModal(activeCardCurrentInvoice)}>
+                      Pagar fatura
+                    </button>
+                  ) : null}
                 </div>
               </article>
 
@@ -1682,7 +1795,7 @@ export default function App() {
                         <td>{i.status}</td>
                         <td>
                           {i.status === "OPEN" ? (
-                            <button onClick={() => onPayInvoice(i)}>Pagar fatura</button>
+                            <button onClick={() => openPayInvoiceModal(i)}>Pagar fatura</button>
                           ) : (
                             "-"
                           )}
@@ -1796,6 +1909,22 @@ export default function App() {
           <>
             <section className="card">
               <h3>Novo lançamento</h3>
+              <div className="invest-tabs" style={{ marginBottom: 12 }}>
+                <button
+                  type="button"
+                  className={`mini-tab ${txView === "caixa" ? "active" : ""}`}
+                  onClick={() => setTxView("caixa")}
+                >
+                  Caixa
+                </button>
+                <button
+                  type="button"
+                  className={`mini-tab ${txView === "competencia" ? "active" : ""}`}
+                  onClick={() => setTxView("competencia")}
+                >
+                  Competência
+                </button>
+              </div>
               <form className="tx-form" onSubmit={onCreateTransaction}>
                 {txIsTransfer ? (
                   <div className="transfer-hint">
@@ -1817,36 +1946,45 @@ export default function App() {
                 <input name="description" type="text" placeholder="Descrição" required />
                 <input name="amount" type="number" step="0.01" min="0.01" placeholder="Valor" required />
                 <select
-                  name="account_id"
-                  required
-                  value={txAccountId}
-                  onChange={(e) => setTxAccountId(e.target.value)}
-                >
-                  <option value="" disabled>Conta</option>
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-                <select
                   name="category_id"
+                  required
                   value={txCategoryId}
                   onChange={(e) => setTxCategoryId(e.target.value)}
                 >
-                  <option value="">(sem categoria)</option>
+                  <option value="">Categoria</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>{c.name} ({c.kind})</option>
                   ))}
                 </select>
-                {txIsTransfer ? (
-                  <select name="kind" value="Transferencia" disabled>
-                    <option value="Transferencia">Transferência</option>
+                <select
+                  name="method"
+                  value={txMethod}
+                  onChange={(e) => setTxMethod(e.target.value)}
+                  required
+                  disabled={!txMethodOptions.length}
+                >
+                  {!txMethodOptions.length ? (
+                    <option value="">Selecione a categoria</option>
+                  ) : null}
+                  {txMethodOptions.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                {!txIsExpenseCredit ? (
+                  <select
+                    name="account_id"
+                    required
+                    value={txAccountId}
+                    onChange={(e) => setTxAccountId(e.target.value)}
+                  >
+                    <option value="" disabled>
+                      {txIsIncome ? "Conta (entrada da receita)" : txIsExpense ? "Conta (saída da despesa)" : "Conta"}
+                    </option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
                   </select>
-                ) : (
-                  <select name="kind" value={txKind} onChange={(e) => setTxKind(e.target.value)}>
-                    <option value="Receita">Receita (+)</option>
-                    <option value="Despesa">Despesa (-)</option>
-                  </select>
-                )}
+                ) : null}
                 {txIsTransfer ? (
                   <select
                     name="source_account_id"
@@ -1862,29 +2000,27 @@ export default function App() {
                       ))}
                   </select>
                 ) : null}
-                <select name="method" value={txMethod} onChange={(e) => setTxMethod(e.target.value)}>
-                  <option value="PIX">PIX</option>
-                  <option value="Debito">Debito</option>
-                  <option value="Credito">Credito</option>
-                  <option value="TED">TED</option>
-                  <option value="Dinheiro">Dinheiro</option>
-                </select>
-                {txIsExpense && !txIsTransfer && ["Credito", "Debito"].includes(txMethod) ? (
+                {txIsExpense && !txIsTransfer && txMethod === "Credito" ? (
                   <select
                     name="card_id"
                     value={txCardId}
                     onChange={(e) => setTxCardId(e.target.value)}
-                    required={txMethod === "Credito"}
+                    required
                   >
-                    <option value="">
-                      {txMethod === "Credito" ? "Cartão de crédito (obrigatório)" : "Cartão de débito (opcional)"}
-                    </option>
+                    <option value="">Cartão de crédito (obrigatório)</option>
                     {cardsForTxMethod.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name} - {c.brand || "Visa"} ({c.linked_account})
                       </option>
                     ))}
                   </select>
+                ) : null}
+                {txIsExpenseCredit ? (
+                  <input
+                    type="text"
+                    value={selectedTxCard ? `Conta vinculada: ${selectedTxCard.linked_account}` : "Conta vinculada: -"}
+                    disabled
+                  />
                 ) : null}
                 <input name="notes" type="text" placeholder="Obs (opcional)" />
                 <button type="submit">Salvar lançamento</button>
@@ -1903,6 +2039,7 @@ export default function App() {
                       <th>Descrição</th>
                       <th>Conta</th>
                       <th>Categoria</th>
+                      <th>Status</th>
                       <th>Valor</th>
                       <th>Ação</th>
                     </tr>
@@ -1915,9 +2052,14 @@ export default function App() {
                         <td>{t.description}</td>
                         <td>{t.account || "-"}</td>
                         <td>{t.category || "-"}</td>
+                        <td>{t.charge_status || "-"}</td>
                         <td>{Number(t.amount_brl || 0).toFixed(2)}</td>
                         <td>
-                          <button onClick={() => onDeleteTransaction(t.id)}>Excluir</button>
+                          {String(t.source_type || "") === "credit_charge" ? (
+                            "-"
+                          ) : (
+                            <button onClick={() => onDeleteTransaction(t.id)}>Excluir</button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -2384,6 +2526,37 @@ export default function App() {
               {investMsg ? <p>{investMsg}</p> : null}
             </section>
           </>
+        ) : null}
+
+        {payModalOpen ? (
+          <div className="modal-backdrop" onClick={() => setPayModalOpen(false)}>
+            <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+              <h3>Pagar fatura</h3>
+              <p>
+                Cartão: <b>{payInvoiceTarget?.card_name || "-"}</b><br />
+                Período: <b>{payInvoiceTarget?.invoice_period || "-"}</b><br />
+                Vencimento: <b>{payInvoiceTarget?.due_date || "-"}</b><br />
+                Valor: <b>
+                  {brl.format(
+                    Math.max(
+                      0,
+                      Number(payInvoiceTarget?.total_amount || 0) - Number(payInvoiceTarget?.paid_amount || 0)
+                    )
+                  )}
+                </b>
+              </p>
+              <select value={payAccountId} onChange={(e) => setPayAccountId(e.target.value)}>
+                <option value="">Selecione conta banco para débito</option>
+                {bankAccountsOnly.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+              <div className="modal-actions">
+                <button type="button" className="danger" onClick={() => setPayModalOpen(false)}>Cancelar</button>
+                <button type="button" onClick={confirmPayInvoiceModal}>Confirmar pagamento</button>
+              </div>
+            </div>
+          </div>
         ) : null}
       </main>
     </div>

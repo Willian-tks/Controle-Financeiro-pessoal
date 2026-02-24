@@ -209,13 +209,16 @@ def _sqlite_schema(cur):
         card_id INTEGER NOT NULL,
         purchase_date TEXT NOT NULL,
         amount REAL NOT NULL,
+        category_id INTEGER,
+        description TEXT,
         invoice_period TEXT NOT NULL,
         due_date TEXT NOT NULL,
         paid INTEGER NOT NULL DEFAULT 0,
         note TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         user_id INTEGER,
-        FOREIGN KEY(card_id) REFERENCES credit_cards(id)
+        FOREIGN KEY(card_id) REFERENCES credit_cards(id),
+        FOREIGN KEY(category_id) REFERENCES categories(id)
     );
     """)
 
@@ -406,13 +409,16 @@ def _postgres_schema(cur):
         card_id BIGINT NOT NULL,
         purchase_date TEXT NOT NULL,
         amount DOUBLE PRECISION NOT NULL,
+        category_id BIGINT,
+        description TEXT,
         invoice_period TEXT NOT NULL,
         due_date TEXT NOT NULL,
         paid BOOLEAN NOT NULL DEFAULT FALSE,
         note TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         user_id BIGINT,
-        CONSTRAINT fk_cc_chg_card FOREIGN KEY (card_id) REFERENCES credit_cards(id)
+        CONSTRAINT fk_cc_chg_card FOREIGN KEY (card_id) REFERENCES credit_cards(id),
+        CONSTRAINT fk_cc_chg_category FOREIGN KEY (category_id) REFERENCES categories(id)
     );
     """)
 
@@ -520,6 +526,8 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS card_type TEXT NOT NULL DEFAULT 'Credito'")
     cur.execute("ALTER TABLE credit_card_invoices ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS category_id BIGINT")
+    cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS description TEXT")
 
     cur.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_name_key")
     cur.execute("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key")
@@ -580,6 +588,8 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "credit_cards", "card_type TEXT NOT NULL DEFAULT 'Credito'")
     _add_column_sqlite(cur, "credit_card_invoices", "user_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "user_id INTEGER")
+    _add_column_sqlite(cur, "credit_card_charges", "category_id INTEGER")
+    _add_column_sqlite(cur, "credit_card_charges", "description TEXT")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")

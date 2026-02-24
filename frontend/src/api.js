@@ -152,8 +152,8 @@ export function getDashboardAccountBalance(params = {}) {
   return req(`/dashboard/account-balance${qs(params)}`);
 }
 
-export function getTransactions() {
-  return req("/transactions?limit=200");
+export function getTransactions(params = {}) {
+  return req(`/transactions${qs({ limit: 200, ...params })}`);
 }
 
 export function createTransaction(payload) {

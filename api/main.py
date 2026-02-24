@@ -375,16 +375,20 @@ def delete_category(
 def list_transactions(
     date_from: str | None = None,
     date_to: str | None = None,
+    view: str = Query(default="caixa"),
     limit: int = Query(default=100, ge=1, le=1000),
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid)
+    mode = (view or "caixa").strip().lower()
+    if mode not in {"caixa", "competencia"}:
+        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if df.empty:
         return []
-    view = df.sort_values("date", ascending=False).head(int(limit)).copy()
-    view["date"] = view["date"].dt.strftime("%Y-%m-%d")
-    return view.to_dict(orient="records")
+    rows_view = df.sort_values("date", ascending=False).head(int(limit)).copy()
+    rows_view["date"] = rows_view["date"].dt.strftime("%Y-%m-%d")
+    return rows_view.fillna("").to_dict(orient="records")
 
 
 @app.post("/transactions")
@@ -495,6 +499,8 @@ def create_transaction(
                 card_id=int(card_cfg["id"]),
                 purchase_date=body.date,
                 amount=amount_abs,
+                category_id=int(category_id) if category_id is not None else None,
+                description=desc,
                 note=notes,
                 user_id=uid,
             )
@@ -668,7 +674,12 @@ def pay_card_invoice(
 ) -> dict:
     uid = int(user["id"])
     try:
-        out = repo.pay_credit_card_invoice(int(invoice_id), payment_date=body.payment_date, user_id=uid)
+        out = repo.pay_credit_card_invoice(
+            int(invoice_id),
+            payment_date=body.payment_date,
+            source_account_id=body.source_account_id,
+            user_id=uid,
+        )
         return out
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -689,10 +700,14 @@ def dashboard_kpis(
     date_from: str | None = None,
     date_to: str | None = None,
     account: str | None = None,
+    view: str = Query(default="caixa"),
     user: dict = Depends(_current_user),
 ) -> dict:
     uid = int(user["id"])
-    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid)
+    mode = (view or "caixa").strip().lower()
+    if mode not in {"caixa", "competencia"}:
+        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if account and not df.empty:
         df = df[df["account"] == account]
     return reports.kpis(df)
@@ -703,10 +718,14 @@ def dashboard_monthly(
     date_from: str | None = None,
     date_to: str | None = None,
     account: str | None = None,
+    view: str = Query(default="caixa"),
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid)
+    mode = (view or "caixa").strip().lower()
+    if mode not in {"caixa", "competencia"}:
+        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if account and not df.empty:
         df = df[df["account"] == account]
     out = reports.monthly_summary(df)
@@ -720,10 +739,14 @@ def dashboard_expenses_by_category(
     date_from: str | None = None,
     date_to: str | None = None,
     account: str | None = None,
+    view: str = Query(default="caixa"),
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid)
+    mode = (view or "caixa").strip().lower()
+    if mode not in {"caixa", "competencia"}:
+        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if account and not df.empty:
         df = df[df["account"] == account]
     out = reports.category_expenses(df)
@@ -737,10 +760,14 @@ def dashboard_account_balance(
     date_from: str | None = None,
     date_to: str | None = None,
     account: str | None = None,
+    view: str = Query(default="caixa"),
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid)
+    mode = (view or "caixa").strip().lower()
+    if mode not in {"caixa", "competencia"}:
+        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if account and not df.empty:
         df = df[df["account"] == account]
     out = reports.account_balance(df)

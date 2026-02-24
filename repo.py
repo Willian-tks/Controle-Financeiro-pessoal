@@ -484,6 +484,8 @@ def register_credit_charge(
     card_id: int,
     purchase_date: str,
     amount: float,
+    category_id: int | None = None,
+    description: str | None = None,
     note: str | None = None,
     user_id: int | None = None,
 ):
@@ -501,24 +503,42 @@ def register_credit_charge(
     value = abs(float(amount))
     conn.execute(
         """
-        INSERT INTO credit_card_charges(card_id, purchase_date, amount, invoice_period, due_date, paid, note, user_id)
-        VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+        INSERT INTO credit_card_charges(
+            card_id, purchase_date, amount, category_id, description, invoice_period, due_date, paid, note, user_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         """,
-        (int(card_id), purchase_date, value, invoice_period, due_date, note, uid),
+        (
+            int(card_id),
+            purchase_date,
+            value,
+            int(category_id) if category_id is not None else None,
+            (description or "").strip() or None,
+            invoice_period,
+            due_date,
+            note,
+            uid,
+        ),
     )
 
     existing = conn.execute(
         """
-        SELECT id, total_amount
+        SELECT id, total_amount, paid_amount, status
         FROM credit_card_invoices
         WHERE user_id = ? AND card_id = ? AND invoice_period = ?
         """,
         (uid, int(card_id), invoice_period),
     ).fetchone()
     if existing:
+        new_total = float(existing["total_amount"] or 0.0) + value
         conn.execute(
-            "UPDATE credit_card_invoices SET total_amount = ? WHERE id = ? AND user_id = ?",
-            (float(existing["total_amount"] or 0.0) + value, int(existing["id"]), uid),
+            """
+            UPDATE credit_card_invoices
+            SET total_amount = ?, due_date = ?,
+                status = CASE WHEN ? > COALESCE(paid_amount, 0) THEN 'OPEN' ELSE status END
+            WHERE id = ? AND user_id = ?
+            """,
+            (new_total, due_date, new_total, int(existing["id"]), uid),
         )
     else:
         conn.execute(
@@ -532,13 +552,59 @@ def register_credit_charge(
     conn.close()
 
 
+def fetch_credit_charges_competencia(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
+    conn = get_conn()
+    q = """
+        SELECT
+            ('cc-' || CAST(ch.id AS TEXT)) AS id,
+            ch.purchase_date AS date,
+            COALESCE(ch.description, ('COMPRA CARTAO ' || cc.name)) AS description,
+            -ABS(ch.amount) AS amount_brl,
+            ca.name AS account,
+            c.name AS category,
+            'Despesa' AS category_kind,
+            'Credito' AS method,
+            ch.note AS notes,
+            'credit_charge' AS source_type,
+            CASE WHEN ch.paid IN (1, TRUE, '1', 'true', 'TRUE') THEN 'Pago' ELSE 'Pendente' END AS charge_status,
+            ch.invoice_period,
+            ch.due_date,
+            cc.name AS card_name
+        FROM credit_card_charges ch
+        JOIN credit_cards cc ON cc.id = ch.card_id AND cc.user_id = ch.user_id
+        JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
+        LEFT JOIN categories c ON c.id = ch.category_id AND c.user_id = ch.user_id
+        WHERE ch.user_id = ?
+    """
+    params: list = [uid]
+    if date_from:
+        q += " AND ch.purchase_date >= ?"
+        params.append(date_from)
+    if date_to:
+        q += " AND ch.purchase_date <= ?"
+        params.append(date_to)
+    q += " ORDER BY ch.purchase_date ASC, ch.id ASC"
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return rows
+
+
 def list_credit_card_invoices(user_id: int | None = None, status: str | None = None, card_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
     q = """
         SELECT
             i.id, i.card_id, cc.name AS card_name, ca.name AS linked_account, sa.name AS source_account,
-            i.invoice_period, i.due_date, i.total_amount, i.paid_amount, i.status
+            i.invoice_period, i.due_date, i.total_amount, i.paid_amount,
+            CASE
+                WHEN COALESCE(i.total_amount, 0) > COALESCE(i.paid_amount, 0) THEN 'OPEN'
+                ELSE 'PAID'
+            END AS status
         FROM credit_card_invoices i
         JOIN credit_cards cc ON cc.id = i.card_id AND cc.user_id = i.user_id
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
@@ -547,8 +613,10 @@ def list_credit_card_invoices(user_id: int | None = None, status: str | None = N
     """
     params: list = [uid]
     if status:
-        q += " AND i.status = ?"
-        params.append(status)
+        if str(status).upper() == "OPEN":
+            q += " AND COALESCE(i.total_amount, 0) > COALESCE(i.paid_amount, 0)"
+        elif str(status).upper() == "PAID":
+            q += " AND COALESCE(i.total_amount, 0) <= COALESCE(i.paid_amount, 0)"
     if card_id is not None:
         q += " AND i.card_id = ?"
         params.append(int(card_id))
@@ -558,7 +626,12 @@ def list_credit_card_invoices(user_id: int | None = None, status: str | None = N
     return rows
 
 
-def pay_credit_card_invoice(invoice_id: int, payment_date: str, user_id: int | None = None) -> dict:
+def pay_credit_card_invoice(
+    invoice_id: int,
+    payment_date: str,
+    source_account_id: int | None = None,
+    user_id: int | None = None,
+) -> dict:
     uid = _uid(user_id)
     conn = get_conn()
     inv = conn.execute(
@@ -579,9 +652,25 @@ def pay_credit_card_invoice(invoice_id: int, payment_date: str, user_id: int | N
         raise ValueError("Fatura não encontrada.")
 
     remaining = float(inv["total_amount"] or 0.0) - float(inv["paid_amount"] or 0.0)
-    if remaining <= 0 or str(inv["status"]).upper() == "PAID":
+    if remaining <= 0:
         conn.close()
         raise ValueError("Fatura já está paga.")
+
+    pay_account_id = int(inv["source_account_id"])
+    pay_account_name = str(inv["source_account_name"])
+    if source_account_id is not None:
+        row_acc = conn.execute(
+            "SELECT id, name, type FROM accounts WHERE id = ? AND user_id = ?",
+            (int(source_account_id), uid),
+        ).fetchone()
+        if not row_acc:
+            conn.close()
+            raise ValueError("Conta banco para pagamento não encontrada.")
+        if str(row_acc["type"]) != "Banco":
+            conn.close()
+            raise ValueError("Conta de pagamento da fatura deve ser do tipo Banco.")
+        pay_account_id = int(row_acc["id"])
+        pay_account_name = str(row_acc["name"])
 
     cat_id = ensure_category("Fatura Cartão", "Despesa", user_id=uid)
     linked_name = str(inv["linked_account_name"])
@@ -596,10 +685,10 @@ def pay_credit_card_invoice(invoice_id: int, payment_date: str, user_id: int | N
             payment_date,
             f"PGTO FATURA {inv['card_name']} ({period})",
             -abs(remaining),
-            int(inv["source_account_id"]),
+            int(pay_account_id),
             int(cat_id),
             "Credito",
-            f"Pagamento de fatura do cartão {inv['card_name']} (vinculado a {linked_name})",
+            f"Pagamento de fatura do cartão {inv['card_name']} (vinculado a {linked_name}) via {pay_account_name}",
             uid,
         ),
     )

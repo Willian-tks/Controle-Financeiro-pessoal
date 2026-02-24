@@ -1,6 +1,7 @@
 import pandas as pd
 
 from db import get_conn
+import repo
 from tenant import get_current_user_id
 
 
@@ -8,7 +9,7 @@ def _uid(user_id: int | None = None) -> int:
     return int(user_id) if user_id is not None else int(get_current_user_id())
 
 
-def df_transactions(date_from: str | None = None, date_to: str | None = None, user_id: int | None = None):
+def _df_transactions_cash(date_from: str | None = None, date_to: str | None = None, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
     q = """
@@ -42,7 +43,49 @@ def df_transactions(date_from: str | None = None, date_to: str | None = None, us
     df = pd.DataFrame([dict(r) for r in rows])
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
+        df["source_type"] = "transaction"
+        df["charge_status"] = None
+        df["invoice_period"] = None
+        df["due_date"] = None
+        df["card_name"] = None
     return df
+
+
+def df_transactions(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user_id: int | None = None,
+    view: str = "caixa",
+):
+    mode = str(view or "caixa").strip().lower()
+    if mode not in {"caixa", "competencia"}:
+        mode = "caixa"
+
+    cash_df = _df_transactions_cash(date_from=date_from, date_to=date_to, user_id=user_id)
+    if mode == "caixa":
+        return cash_df
+
+    if not cash_df.empty:
+        keep_mask = ~(
+            cash_df["description"].fillna("").str.startswith("PGTO FATURA ")
+            | (cash_df["category"].fillna("") == "Fatura Cartão")
+        )
+        cash_df = cash_df.loc[keep_mask].copy()
+
+    cc_rows = repo.fetch_credit_charges_competencia(date_from=date_from, date_to=date_to, user_id=user_id) or []
+    cc_df = pd.DataFrame([dict(r) for r in cc_rows])
+    if not cc_df.empty:
+        cc_df["date"] = pd.to_datetime(cc_df["date"])
+
+    if cash_df.empty and cc_df.empty:
+        return pd.DataFrame()
+    if cash_df.empty:
+        return cc_df.sort_values(["date", "id"]).reset_index(drop=True)
+    if cc_df.empty:
+        return cash_df.sort_values(["date", "id"]).reset_index(drop=True)
+
+    union = pd.concat([cash_df, cc_df], ignore_index=True, sort=False)
+    return union.sort_values(["date", "id"]).reset_index(drop=True)
 
 
 def kpis(df: pd.DataFrame) -> dict:

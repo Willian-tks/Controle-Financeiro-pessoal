@@ -899,6 +899,9 @@ body {
   display: block;
   margin-top: 6px;
 }
+.dash-cards-meta .mini-tab.active {
+  margin-top: 10px;
+}
 
 .dash-invest-card {
   grid-area: invest;
@@ -975,6 +978,58 @@ body {
   color: #ffe17f;
   font-style: normal;
   font-weight: 700;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 8, 23, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 120;
+}
+
+.modal-card {
+  width: min(92vw, 420px);
+  border-radius: 14px;
+  border: 1px solid #cfd8e9;
+  background: #f6f8fc;
+  color: #12243a;
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.modal-card p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.modal-card select {
+  border-radius: 10px;
+  border: 1px solid #cfd8e9;
+  padding: 10px;
+}
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.modal-actions button {
+  border-radius: 10px;
+  border: 1px solid #1f8cea;
+  background: #1f8cea;
+  color: #fff;
+  padding: 10px;
+  font-weight: 700;
+}
+
+.modal-actions .danger {
+  background: #fee2e2;
+  color: #8f1b1b;
+  border-color: #fecaca;
 }
 
 @media (max-width: 1200px) {
