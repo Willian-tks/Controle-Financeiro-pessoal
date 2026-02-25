@@ -3,9 +3,16 @@ __pycache__/
 *.pyc
 
 data/finance.db
+data/finance.backup_*.db
 
 .streamlit/
 .vscode/
 
 Thumbs.db
 desktop.ini
+
+# segredos locais
+.env
+.secrets/
+secrets/
+BRAPI_TOKEN.txt

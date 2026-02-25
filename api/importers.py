@@ -10,6 +10,58 @@ import repo
 import reports
 
 
+def _norm_trade_side(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    raw = (
+        raw.replace("Ã", "A")
+        .replace("Á", "A")
+        .replace("À", "A")
+        .replace("Â", "A")
+        .replace("É", "E")
+        .replace("Ê", "E")
+        .replace("Í", "I")
+        .replace("Ó", "O")
+        .replace("Ô", "O")
+        .replace("Õ", "O")
+        .replace("Ú", "U")
+        .replace("Ç", "C")
+    )
+    mapping = {
+        "BUY": "BUY",
+        "SELL": "SELL",
+        "COMPRA": "BUY",
+        "VENDA": "SELL",
+        "APLICACAO": "BUY",
+        "RESGATE": "SELL",
+        "C": "BUY",
+        "V": "SELL",
+    }
+    return mapping.get(raw, "")
+
+
+def _norm_asset_class(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    raw = (
+        raw.replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+    return "_".join(raw.split())
+
+
+def _is_us_stock_asset(asset: dict) -> bool:
+    return _norm_asset_class(asset.get("asset_class")) in {"stock_us", "stocks_us"}
+
+
 def _read_csv_flexible(raw_bytes: bytes) -> pd.DataFrame:
     text = raw_bytes.decode("utf-8-sig", errors="ignore")
     try:
@@ -102,6 +154,10 @@ def _normalize_trades_df(df: pd.DataFrame) -> pd.DataFrame:
         "qtd": "quantity",
         "preco": "price",
         "preço": "price",
+        "cotacao": "exchange_rate",
+        "cotação": "exchange_rate",
+        "usd_brl": "exchange_rate",
+        "fx": "exchange_rate",
         "taxa": "fees",
         "taxas": "fees",
         "imposto": "taxes",
@@ -125,23 +181,12 @@ def _normalize_trades_df(df: pd.DataFrame) -> pd.DataFrame:
         out["taxes"] = 0
     if "note" not in out.columns:
         out["note"] = None
+    if "exchange_rate" not in out.columns:
+        out["exchange_rate"] = None
 
     out["date"] = pd.to_datetime(out["date"], errors="coerce", dayfirst=True).dt.strftime("%Y-%m-%d")
     out["symbol"] = out["symbol"].astype(str).str.strip().str.upper()
-    out["side"] = (
-        out["side"]
-        .astype(str)
-        .str.strip()
-        .str.upper()
-        .replace(
-            {
-                "COMPRA": "BUY",
-                "VENDA": "SELL",
-                "C": "BUY",
-                "V": "SELL",
-            }
-        )
-    )
+    out["side"] = out["side"].map(_norm_trade_side)
 
     def _to_num_mixed(series: pd.Series) -> pd.Series:
         raw = series.astype(str).str.strip()
@@ -155,6 +200,7 @@ def _normalize_trades_df(df: pd.DataFrame) -> pd.DataFrame:
 
     out["quantity"] = _to_num_mixed(out["quantity"])
     out["price"] = _to_num_mixed(out["price"])
+    out["exchange_rate"] = _to_num_mixed(out["exchange_rate"])
     out["fees"] = _to_num_mixed(out["fees"]).fillna(0.0)
     out["taxes"] = _to_num_mixed(out["taxes"]).fillna(0.0)
     out["note"] = out["note"].astype(str).replace({"nan": None}).where(out["note"].notna(), None)
@@ -167,7 +213,7 @@ def _normalize_trades_df(df: pd.DataFrame) -> pd.DataFrame:
         & (out["fees"] >= 0)
         & (out["taxes"] >= 0)
     ]
-    return out[["date", "symbol", "side", "quantity", "price", "fees", "taxes", "note"]]
+    return out[["date", "symbol", "side", "quantity", "price", "exchange_rate", "fees", "taxes", "note"]]
 
 
 def import_transactions_csv(raw_bytes: bytes, user_id: int, preview_only: bool = False) -> dict[str, Any]:
@@ -321,12 +367,22 @@ def import_trades_csv(raw_bytes: bytes, user_id: int, preview_only: bool = False
         side = str(row["side"]).upper()
         qty = float(row["quantity"])
         price = float(row["price"])
+        exchange_rate = float(row["exchange_rate"] or 0.0)
         fees = float(row["fees"] or 0.0)
         taxes = float(row["taxes"] or 0.0)
         note = (str(row["note"]).strip() if row["note"] is not None and str(row["note"]).strip() else None)
 
-        gross = qty * price
-        total_cost = gross + fees + taxes
+        is_us_stock = _is_us_stock_asset(asset)
+        if is_us_stock and exchange_rate <= 0:
+            skipped += 1
+            errors.append(f"{symbol}: cotação USD/BRL obrigatória para Stocks US.")
+            continue
+        fx = exchange_rate if is_us_stock else 1.0
+
+        gross = qty * price * fx
+        fees_brl = fees * fx if is_us_stock else fees
+        taxes_brl = taxes * fx if is_us_stock else taxes
+        total_cost = gross + fees_brl + taxes_brl
         broker_cash = reports.account_balance_by_id(int(broker_acc_id), user_id=user_id)
         if side == "BUY" and broker_cash < total_cost:
             skipped += 1
@@ -339,7 +395,7 @@ def import_trades_csv(raw_bytes: bytes, user_id: int, preview_only: bool = False
             cash = -total_cost
             desc = f"INV BUY {symbol}"
         else:
-            cash = +(gross - fees - taxes)
+            cash = +(gross - fees_brl - taxes_brl)
             desc = f"INV SELL {symbol}"
 
         repo.insert_transaction(
@@ -358,6 +414,7 @@ def import_trades_csv(raw_bytes: bytes, user_id: int, preview_only: bool = False
             side=side,
             quantity=qty,
             price=price,
+            exchange_rate=fx,
             fees=fees,
             taxes=taxes,
             note=note,

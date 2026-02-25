@@ -27,11 +27,13 @@ class TransactionCreateRequest(BaseModel):
 class AccountCreateRequest(BaseModel):
     name: str
     type: str
+    currency: str = "BRL"
 
 
 class AccountUpdateRequest(BaseModel):
     name: str
     type: str
+    currency: str = "BRL"
 
 
 class CategoryCreateRequest(BaseModel):
@@ -71,6 +73,7 @@ class TradeCreateRequest(BaseModel):
     side: str
     quantity: float
     price: float
+    exchange_rate: float | None = None
     fees: float = 0.0
     taxes: float = 0.0
     note: str | None = None

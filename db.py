@@ -138,6 +138,7 @@ def _sqlite_schema(cur):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         type TEXT NOT NULL DEFAULT 'Banco',
+        currency TEXT NOT NULL DEFAULT 'BRL',
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     """)
@@ -269,6 +270,7 @@ def _sqlite_schema(cur):
         side TEXT NOT NULL,
         quantity REAL NOT NULL,
         price REAL NOT NULL,
+        exchange_rate REAL NOT NULL DEFAULT 1,
         fees REAL NOT NULL DEFAULT 0,
         taxes REAL NOT NULL DEFAULT 0,
         note TEXT,
@@ -338,6 +340,7 @@ def _postgres_schema(cur):
         id BIGSERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         type TEXT NOT NULL DEFAULT 'Banco',
+        currency TEXT NOT NULL DEFAULT 'BRL',
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     """)
@@ -469,6 +472,7 @@ def _postgres_schema(cur):
         side TEXT NOT NULL,
         quantity DOUBLE PRECISION NOT NULL,
         price DOUBLE PRECISION NOT NULL,
+        exchange_rate DOUBLE PRECISION NOT NULL DEFAULT 1,
         fees DOUBLE PRECISION NOT NULL DEFAULT 0,
         taxes DOUBLE PRECISION NOT NULL DEFAULT 0,
         note TEXT,
@@ -512,11 +516,13 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
 
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'BRL'")
     cur.execute("ALTER TABLE categories ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS sector TEXT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS exchange_rate DOUBLE PRECISION NOT NULL DEFAULT 1")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE asset_prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
@@ -574,11 +580,13 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "users", "is_active INTEGER NOT NULL DEFAULT 1")
 
     _add_column_sqlite(cur, "accounts", "user_id INTEGER")
+    _add_column_sqlite(cur, "accounts", "currency TEXT NOT NULL DEFAULT 'BRL'")
     _add_column_sqlite(cur, "categories", "user_id INTEGER")
     _add_column_sqlite(cur, "transactions", "user_id INTEGER")
     _add_column_sqlite(cur, "assets", "user_id INTEGER")
     _add_column_sqlite(cur, "assets", "sector TEXT")
     _add_column_sqlite(cur, "trades", "user_id INTEGER")
+    _add_column_sqlite(cur, "trades", "exchange_rate REAL NOT NULL DEFAULT 1")
     _add_column_sqlite(cur, "income_events", "user_id INTEGER")
     _add_column_sqlite(cur, "prices", "user_id INTEGER")
     _add_column_sqlite(cur, "asset_prices", "user_id INTEGER")
@@ -647,13 +655,14 @@ def _rebuild_sqlite_unique_tables(cur):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             type TEXT NOT NULL DEFAULT 'Banco',
+            currency TEXT NOT NULL DEFAULT 'BRL',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             user_id INTEGER
         );
         """)
         cur.execute("""
-        INSERT INTO accounts_new(id, name, type, created_at, user_id)
-        SELECT id, name, type, created_at, user_id
+        INSERT INTO accounts_new(id, name, type, currency, created_at, user_id)
+        SELECT id, name, type, COALESCE(currency, 'BRL'), created_at, user_id
         FROM accounts
         """)
         cur.execute("DROP TABLE accounts")

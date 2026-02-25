@@ -119,6 +119,7 @@ def insert_trade(
     side: str,
     quantity: float,
     price: float,
+    exchange_rate: float = 1.0,
     fees: float = 0.0,
     taxes: float = 0.0,
     note: str | None = None,
@@ -128,10 +129,21 @@ def insert_trade(
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO trades(asset_id, date, side, quantity, price, fees, taxes, note, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, note, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (int(asset_id), date, side, float(quantity), float(price), float(fees), float(taxes), note, uid),
+        (
+            int(asset_id),
+            date,
+            side,
+            float(quantity),
+            float(price),
+            float(exchange_rate or 1.0),
+            float(fees),
+            float(taxes),
+            note,
+            uid,
+        ),
     )
     conn.commit()
     conn.close()
@@ -178,8 +190,8 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
         trade = conn.execute(
             """
             SELECT
-                t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.fees, t.taxes, t.note,
-                a.symbol, a.broker_account_id
+                t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.exchange_rate, t.fees, t.taxes, t.note,
+                a.symbol, a.broker_account_id, a.currency
             FROM trades t
             JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
             WHERE t.id = ? AND t.user_id = ?
@@ -196,20 +208,25 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
 
         qty = float(trade["quantity"] or 0.0)
         price = float(trade["price"] or 0.0)
+        exchange_rate = float(trade["exchange_rate"] or 1.0)
         fees = float(trade["fees"] or 0.0)
         taxes = float(trade["taxes"] or 0.0)
         side = str(trade["side"] or "").upper()
+        is_usd = str(trade["currency"] or "").strip().upper() == "USD"
         symbol = str(trade["symbol"] or "").strip().upper()
         note = (str(trade["note"]).strip() if trade["note"] is not None else "")
 
-        gross = qty * price
+        fx = exchange_rate if is_usd and exchange_rate > 0 else 1.0
+        gross = qty * price * fx
+        fees_brl = fees * fx if is_usd else fees
+        taxes_brl = taxes * fx if is_usd else taxes
         if side == "BUY":
-            target_amount = -(gross + fees + taxes)
-            target_amount_alt = -(gross + fees)
+            target_amount = -(gross + fees_brl + taxes_brl)
+            target_amount_alt = -(gross + fees_brl)
             desc = f"INV BUY {symbol}"
         else:
-            target_amount = +(gross - fees - taxes)
-            target_amount_alt = +(gross - fees)
+            target_amount = +(gross - fees_brl - taxes_brl)
+            target_amount_alt = +(gross - fees_brl)
             desc = f"INV SELL {symbol}"
 
         tx_rows = conn.execute(

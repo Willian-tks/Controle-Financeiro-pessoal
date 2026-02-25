@@ -19,7 +19,16 @@ async function req(path, options = {}) {
     ...(options.headers || {}),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch (err) {
+    const msg = String(err?.message || err || "");
+    if (msg.toLowerCase().includes("failed to fetch")) {
+      throw new Error(`Falha de conexão com a API (${API_BASE}). Verifique se o backend está ativo.`);
+    }
+    throw err;
+  }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.detail || `HTTP ${res.status}`);

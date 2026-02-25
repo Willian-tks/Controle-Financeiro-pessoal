@@ -31,8 +31,8 @@ def df_assets(user_id: int | None = None):
 def df_trades(date_from=None, date_to=None, user_id: int | None = None):
     uid = _uid(user_id)
     q = """
-        SELECT t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.fees, t.taxes,
-               a.symbol, a.asset_class
+        SELECT t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.exchange_rate, t.fees, t.taxes,
+               a.symbol, a.asset_class, a.currency
         FROM trades t
         JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
         WHERE t.user_id = ?
@@ -109,21 +109,28 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         price = float(r["price"])
         fees = float(r["fees"] or 0.0)
         taxes = float(r["taxes"] or 0.0)
+        exchange_rate = float(r.get("exchange_rate") or 1.0)
+        is_usd = str(r.get("currency") or "").strip().upper() == "USD"
+        fx = exchange_rate if is_usd and exchange_rate > 0 else 1.0
+        gross_brl = qty * price * fx
+        fees_brl = fees * fx if is_usd else fees
+        taxes_brl = taxes * fx if is_usd else taxes
 
         if aid not in state:
-            state[aid] = dict(symbol=sym, asset_class=cls, qty=0.0, cost_basis=0.0, realized_pnl=0.0)
+            state[aid] = dict(symbol=sym, asset_class=cls, qty=0.0, cost_basis=0.0, realized_pnl=0.0, last_fx=1.0)
 
         s = state[aid]
+        s["last_fx"] = fx
         if side == "BUY":
             s["qty"] += qty
-            s["cost_basis"] += qty * price + fees
+            s["cost_basis"] += gross_brl + fees_brl + taxes_brl
         else:
             if s["qty"] <= 0:
                 avg_cost = 0.0
             else:
                 avg_cost = s["cost_basis"] / s["qty"] if s["qty"] != 0 else 0.0
 
-            proceeds = qty * price - fees - taxes
+            proceeds = gross_brl - fees_brl - taxes_brl
             cost_removed = avg_cost * qty
             s["realized_pnl"] += proceeds - cost_removed
             s["qty"] -= qty
@@ -143,6 +150,7 @@ def positions_avg_cost(trades_df: pd.DataFrame):
                 "avg_cost": avg_cost,
                 "cost_basis": s["cost_basis"],
                 "realized_pnl": s["realized_pnl"],
+                "last_fx": s["last_fx"],
             }
         )
 
@@ -178,7 +186,10 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
         if "currency" not in pos.columns:
             pos["currency"] = None
 
-    pos["market_value"] = pos["qty"] * pos["price"]
+    fx = pd.to_numeric(pos.get("last_fx", 1.0), errors="coerce").fillna(1.0)
+    is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
+    fx_factor = fx.where(is_usd_asset, 1.0)
+    pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
 
     inc = df_income(date_from, date_to, user_id=uid)

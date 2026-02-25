@@ -54,6 +54,8 @@ def _cors_origins() -> list[str]:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
+    # Tolerate local dev variations (localhost/127.0.0.1 with any port, optional trailing slash).
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?/?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -95,6 +97,72 @@ def _norm_account_type(value: Any) -> str:
     if raw == "dinheiro":
         return "Dinheiro"
     return str(value or "").strip()
+
+
+def _norm_currency(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    return raw if raw in {"BRL", "USD"} else ""
+
+
+def _norm_trade_side(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    raw = (
+        raw.replace("Ã", "A")
+        .replace("Á", "A")
+        .replace("À", "A")
+        .replace("Â", "A")
+        .replace("É", "E")
+        .replace("Ê", "E")
+        .replace("Í", "I")
+        .replace("Ó", "O")
+        .replace("Ô", "O")
+        .replace("Õ", "O")
+        .replace("Ú", "U")
+        .replace("Ç", "C")
+    )
+    mapping = {
+        "BUY": "BUY",
+        "SELL": "SELL",
+        "COMPRA": "BUY",
+        "VENDA": "SELL",
+        "APLICACAO": "BUY",
+        "RESGATE": "SELL",
+        "C": "BUY",
+        "V": "SELL",
+    }
+    return mapping.get(raw, "")
+
+
+def _norm_asset_class(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    raw = (
+        raw.replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+    return "_".join(raw.split())
+
+
+def _is_us_stock_asset(asset: dict) -> bool:
+    cls_raw = None
+    if isinstance(asset, dict):
+        cls_raw = asset.get("asset_class")
+    else:
+        try:
+            cls_raw = asset["asset_class"]
+        except Exception:
+            cls_raw = None
+    cls = _norm_asset_class(cls_raw)
+    return cls in {"stock_us", "stocks_us"}
 
 
 def _norm_card_brand(value: Any) -> str:
@@ -267,11 +335,14 @@ def create_account(
     uid = int(user["id"])
     name = (body.name or "").strip()
     acc_type = _norm_account_type(body.type)
+    currency = _norm_currency(body.currency)
     if not name:
         raise HTTPException(status_code=400, detail="Nome da conta é obrigatório")
     if acc_type not in {"Banco", "Cartao", "Dinheiro", "Corretora"}:
         raise HTTPException(status_code=400, detail="Tipo de conta inválido")
-    repo.create_account(name, acc_type, user_id=uid)
+    if currency not in {"BRL", "USD"}:
+        raise HTTPException(status_code=400, detail="Moeda da conta inválida")
+    repo.create_account(name, acc_type, currency=currency, user_id=uid)
     return {"ok": True}
 
 
@@ -284,11 +355,14 @@ def update_account(
     uid = int(user["id"])
     name = (body.name or "").strip()
     acc_type = _norm_account_type(body.type)
+    currency = _norm_currency(body.currency)
     if not name:
         raise HTTPException(status_code=400, detail="Nome da conta é obrigatório")
     if acc_type not in {"Banco", "Cartao", "Dinheiro", "Corretora"}:
         raise HTTPException(status_code=400, detail="Tipo de conta inválido")
-    repo.update_account(account_id=account_id, name=name, acc_type=acc_type, user_id=uid)
+    if currency not in {"BRL", "USD"}:
+        raise HTTPException(status_code=400, detail="Moeda da conta inválida")
+    repo.update_account(account_id=account_id, name=name, acc_type=acc_type, currency=currency, user_id=uid)
     return {"ok": True}
 
 
@@ -893,7 +967,7 @@ def invest_create_trade(
     user: dict = Depends(_current_user),
 ) -> dict:
     uid = int(user["id"])
-    side = (body.side or "").strip().upper()
+    side = _norm_trade_side(body.side)
     if side not in {"BUY", "SELL"}:
         raise HTTPException(status_code=400, detail="Tipo da operação inválido")
     if float(body.quantity) <= 0 or float(body.price) <= 0:
@@ -912,8 +986,16 @@ def invest_create_trade(
 
     qty = float(body.quantity)
     price = float(body.price)
-    gross = qty * price
-    total_cost = gross + fees + taxes
+    is_us_stock = _is_us_stock_asset(asset)
+    exchange_rate = float(body.exchange_rate or 0.0)
+    if is_us_stock and exchange_rate <= 0:
+        raise HTTPException(status_code=400, detail="Cotação USD/BRL é obrigatória para Stocks US")
+    fx = exchange_rate if is_us_stock else 1.0
+
+    gross = qty * price * fx
+    fees_brl = fees * fx if is_us_stock else fees
+    taxes_brl = taxes * fx if is_us_stock else taxes
+    total_cost = gross + fees_brl + taxes_brl
     broker_cash = reports.account_balance_by_id(int(broker_acc_id), user_id=uid)
     if side == "BUY" and broker_cash < total_cost:
         raise HTTPException(
@@ -926,7 +1008,7 @@ def invest_create_trade(
         cash = -total_cost
         desc = f"INV BUY {symbol}"
     else:
-        cash = +(gross - fees - taxes)
+        cash = +(gross - fees_brl - taxes_brl)
         desc = f"INV SELL {symbol}"
 
     cat_id = repo.ensure_category("Investimentos", "Transferencia", user_id=uid)
@@ -946,6 +1028,7 @@ def invest_create_trade(
         side=side,
         quantity=qty,
         price=price,
+        exchange_rate=fx,
         fees=fees,
         taxes=taxes,
         note=(body.note or "").strip() or None,

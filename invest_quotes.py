@@ -11,6 +11,35 @@ from typing import Any, Callable, Optional, Tuple
 import yfinance as yf
 import pandas as pd
 import requests
+import certifi
+
+
+def _read_token_from_env_file(path: str) -> Optional[str]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                ln = line.strip()
+                if not ln or ln.startswith("#") or "=" not in ln:
+                    continue
+                k, v = ln.split("=", 1)
+                if k.strip() == "BRAPI_TOKEN":
+                    return v.strip().strip('"').strip("'")
+    except Exception:
+        return None
+    return None
+
+
+def _read_token_from_plain_file(path: str) -> Optional[str]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            tok = f.read().strip()
+            return tok or None
+    except Exception:
+        return None
 
 
 def _call_with_timeout(fn, timeout_s: float, *args, **kwargs):
@@ -82,7 +111,11 @@ def fetch_last_price_yf(symbol: str) -> Tuple[Optional[float], Optional[str], Op
     Retorna (price, px_date, src) ou (None, None, None)
     """
     try:
-        sym = _normalize_b3(symbol)  # para B3; se já vier BTC-USD etc, isso ainda funciona se você não chamar aqui
+        # Não normaliza aqui para não quebrar ativos fora da B3 (ex.: AAPL, SPY, BTC-USD).
+        # Para B3, o chamador já passa PETR4.SA quando necessário.
+        sym = (symbol or "").strip().upper().replace(" ", "")
+        if not sym:
+            return None, None, None
         t = yf.Ticker(sym)
 
         hist = t.history(period="5d")
@@ -114,6 +147,21 @@ def _get_brapi_token() -> Optional[str]:
             return str(token).strip()
     except Exception:
         pass
+
+    # 3) tenta .env local
+    token = _read_token_from_env_file(".env")
+    if token:
+        return token.strip()
+
+    # 4) tenta arquivos locais de segredo
+    for p in [
+        ".secrets/BRAPI_TOKEN.txt",
+        "secrets/BRAPI_TOKEN.txt",
+        "BRAPI_TOKEN.txt",
+    ]:
+        token = _read_token_from_plain_file(p)
+        if token:
+            return token.strip()
 
     return None
 
@@ -171,6 +219,77 @@ def fetch_last_price_brapi(symbol: str) -> Tuple[Optional[float], Optional[str],
         return None, None, None, f"BRAPI erro: {e}"
 
 
+def fetch_last_price_yahoo_http(symbol: str) -> Tuple[Optional[float], Optional[str], Optional[str], Optional[str]]:
+    """
+    Fallback usando endpoint HTTP do Yahoo (sem dependência do curl-cffi do yfinance).
+    Retorna (price, px_date, src, err).
+    """
+    sym = (symbol or "").strip().upper().replace(" ", "")
+    if not sym:
+        return None, None, None, "Símbolo vazio."
+
+    url = "https://query1.finance.yahoo.com/v7/finance/quote"
+    headers = {"User-Agent": "finance_app/1.0"}
+    params = {"symbols": sym}
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=8, verify=certifi.where())
+        if r.status_code != 200:
+            return None, None, None, f"Yahoo HTTP {r.status_code}"
+        data = r.json() or {}
+        rows = (((data.get("quoteResponse") or {}).get("result")) or [])
+        if not rows:
+            return None, None, None, "Yahoo sem resultados."
+        row = rows[0]
+        px = row.get("regularMarketPrice")
+        if px is None:
+            return None, None, None, "Yahoo sem regularMarketPrice."
+        ts = row.get("regularMarketTime")
+        if ts:
+            try:
+                import datetime as _dt
+                px_date = _dt.datetime.fromtimestamp(int(ts)).date().isoformat()
+            except Exception:
+                px_date = today_str()
+        else:
+            px_date = today_str()
+        return float(px), str(px_date), "yahoo_http", None
+    except Exception as e:
+        return None, None, None, f"Yahoo HTTP erro: {e}"
+
+
+def fetch_last_price_stooq_us(symbol: str) -> Tuple[Optional[float], Optional[str], Optional[str], Optional[str]]:
+    """
+    Fallback para stocks US via stooq (preço diário).
+    Retorna (price, px_date, src, err).
+    """
+    sym = (symbol or "").strip().upper().replace(" ", "")
+    if not sym:
+        return None, None, None, "Símbolo vazio."
+    stooq_sym = f"{sym}.US"
+    url = "https://stooq.com/q/l/"
+    params = {"s": stooq_sym, "i": "d"}
+    headers = {"User-Agent": "finance_app/1.0"}
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=8, verify=certifi.where())
+        if r.status_code != 200:
+            return None, None, None, f"Stooq HTTP {r.status_code}"
+        txt = (r.text or "").strip()
+        lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+        if len(lines) < 1:
+            return None, None, None, "Stooq sem dados."
+        cols = [c.strip().strip('"') for c in lines[0].split(",")]
+        # Symbol,Date,Time,Open,High,Low,Close,Volume...
+        if len(cols) < 7:
+            return None, None, None, "Stooq formato inesperado."
+        px_date = cols[1]
+        close = cols[6]
+        if not close or close.upper() == "N/D" or px_date.upper() == "N/D":
+            return None, None, None, "Stooq sem fechamento."
+        return float(close), px_date, "stooq", None
+    except Exception as e:
+        return None, None, None, f"Stooq erro: {e}"
+
+
 def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
     """
     Estratégia:
@@ -207,6 +326,12 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
         if px is not None:
             return px, px_date, src, None
 
+        px, px_date, src, err_http = fetch_last_price_yahoo_http(_normalize_b3(sym))
+        if px is not None:
+            return px, px_date, src, None
+        if err_http:
+            err = err or err_http
+
         return None, None, None, err or "Sem cotação para ativo BR (BRAPI/Yahoo)."
     else:
         # 2) Não-BR: Yahoo
@@ -214,7 +339,19 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
         if px is not None:
             return px, px_date, src, None
 
-    return None, None, None, "Yahoo não retornou dados agora."
+        px, px_date, src, err = fetch_last_price_yahoo_http(sym)
+        if px is not None:
+            return px, px_date, src, None
+
+        # 3) Stocks US: fallback stooq
+        if ("stock" in cls and "us" in cls) or cur == "USD":
+            px, px_date, src, err_stooq = fetch_last_price_stooq_us(sym)
+            if px is not None:
+                return px, px_date, src, None
+            if err_stooq:
+                err = err or err_stooq
+
+    return None, None, None, err or "Yahoo não retornou dados agora."
 
 
 def _resolve_quote_limits(

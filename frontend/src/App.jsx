@@ -99,6 +99,16 @@ const PAGE_ICONS = {
   "Importar CSV": icImportarCsv,
 };
 
+function getCurrentMonthRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const from = new Date(year, month, 1);
+  const to = new Date(year, month + 1, 0);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return { from: fmt(from), to: fmt(to) };
+}
+
 function normalizeAccountType(value) {
   const raw = String(value || "")
     .trim()
@@ -175,7 +185,33 @@ function getCardBgClass(brand) {
   return "brand-visa";
 }
 
+function isFixedIncomeClass(assetClass) {
+  const raw = String(assetClass || "").trim();
+  const cls = normalizeText(raw).replace(/\s+/g, "_");
+  return (
+    cls === "renda_fixa" ||
+    cls === "tesouro_direto" ||
+    cls === "coe" ||
+    cls === "fundos"
+  );
+}
+
+function formatTradeSideLabel(side, assetClass) {
+  const s = String(side || "").trim().toUpperCase();
+  if (isFixedIncomeClass(assetClass)) {
+    if (s === "BUY") return "APLICAÇÃO";
+    if (s === "SELL") return "RESGATE";
+  }
+  return s || "-";
+}
+
+function isUsStockClass(assetClass) {
+  const cls = normalizeText(assetClass).replace(/\s+/g, "_");
+  return cls === "stocks_us" || cls === "stock_us";
+}
+
 export default function App() {
+  const defaultMonthRange = getCurrentMonthRange();
   const [authError, setAuthError] = useState("");
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("Dashboard");
@@ -189,8 +225,8 @@ export default function App() {
   const [dashMonthly, setDashMonthly] = useState([]);
   const [dashExpenses, setDashExpenses] = useState([]);
   const [dashAccountBalance, setDashAccountBalance] = useState([]);
-  const [dashDateFrom, setDashDateFrom] = useState("");
-  const [dashDateTo, setDashDateTo] = useState("");
+  const [dashDateFrom, setDashDateFrom] = useState(defaultMonthRange.from);
+  const [dashDateTo, setDashDateTo] = useState(defaultMonthRange.to);
   const [dashAccount, setDashAccount] = useState("");
   const [dashView, setDashView] = useState("caixa");
   const [dashMsg, setDashMsg] = useState("");
@@ -235,6 +271,9 @@ export default function App() {
   });
   const [quoteTimeout, setQuoteTimeout] = useState("25");
   const [quoteWorkers, setQuoteWorkers] = useState("4");
+  const [tradeAssetId, setTradeAssetId] = useState("");
+  const [tradeSide, setTradeSide] = useState("BUY");
+  const [tradeExchangeRate, setTradeExchangeRate] = useState("");
   const [assetEditId, setAssetEditId] = useState("");
   const [assetEditSymbol, setAssetEditSymbol] = useState("");
   const [assetEditName, setAssetEditName] = useState("");
@@ -247,6 +286,7 @@ export default function App() {
   const [accEditId, setAccEditId] = useState("");
   const [accEditName, setAccEditName] = useState("");
   const [accEditType, setAccEditType] = useState("Banco");
+  const [accEditCurrency, setAccEditCurrency] = useState("BRL");
   const [catEditId, setCatEditId] = useState("");
   const [catEditName, setCatEditName] = useState("");
   const [catEditKind, setCatEditKind] = useState("Despesa");
@@ -256,6 +296,7 @@ export default function App() {
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [payInvoiceTarget, setPayInvoiceTarget] = useState(null);
   const [payAccountId, setPayAccountId] = useState("");
+  const [payDate, setPayDate] = useState("");
   const userMenuRef = useRef(null);
 
   useEffect(() => {
@@ -278,8 +319,8 @@ export default function App() {
         await reloadAllData();
         await reloadCardsData();
         await reloadDashboard({
-          date_from: "",
-          date_to: "",
+          date_from: defaultMonthRange.from,
+          date_to: defaultMonthRange.to,
           account: "",
           view: dashView,
         });
@@ -307,12 +348,14 @@ export default function App() {
       setAccEditId("");
       setAccEditName("");
       setAccEditType("Banco");
+      setAccEditCurrency("BRL");
       return;
     }
     const cur = accounts.find((a) => String(a.id) === String(accEditId)) || accounts[0];
     setAccEditId(String(cur.id));
     setAccEditName(cur.name);
     setAccEditType(cur.type);
+    setAccEditCurrency((cur.currency || "BRL").toUpperCase());
   }, [accounts]);
 
   useEffect(() => {
@@ -564,6 +607,33 @@ export default function App() {
     () => investmentByClass.reduce((acc, r) => acc + Number(r.value || 0), 0),
     [investmentByClass]
   );
+  const selectedTradeAsset = useMemo(
+    () => investAssets.find((a) => String(a.id) === String(tradeAssetId)) || null,
+    [investAssets, tradeAssetId]
+  );
+  const tradeAssetIsFixedIncome = useMemo(
+    () => isFixedIncomeClass(selectedTradeAsset?.asset_class),
+    [selectedTradeAsset]
+  );
+  const tradeAssetIsUsStock = useMemo(
+    () =>
+      isUsStockClass(selectedTradeAsset?.asset_class) ||
+      String(selectedTradeAsset?.currency || "").toUpperCase() === "USD",
+    [selectedTradeAsset]
+  );
+  const tradeSideOptions = useMemo(
+    () =>
+      tradeAssetIsFixedIncome
+        ? [
+            { value: "BUY", label: "APLICAÇÃO" },
+            { value: "SELL", label: "RESGATE" },
+          ]
+        : [
+            { value: "BUY", label: "BUY" },
+            { value: "SELL", label: "SELL" },
+          ],
+    [tradeAssetIsFixedIncome]
+  );
   const donutStyle = useMemo(() => {
     if (!investmentByClass.length || investmentTotal <= 0) {
       return { background: "conic-gradient(#2f3f63 0deg 360deg)" };
@@ -615,9 +685,12 @@ export default function App() {
   }
 
   async function reloadDashboard(params = {}) {
+    const monthRange = getCurrentMonthRange();
+    const rawFrom = params.date_from ?? dashDateFrom;
+    const rawTo = params.date_to ?? dashDateTo;
     const filters = {
-      date_from: params.date_from ?? dashDateFrom,
-      date_to: params.date_to ?? dashDateTo,
+      date_from: String(rawFrom || "").trim() || monthRange.from,
+      date_to: String(rawTo || "").trim() || monthRange.to,
       account: params.account ?? dashAccount,
       view: params.view ?? dashView,
     };
@@ -844,16 +917,21 @@ export default function App() {
     setInvestMsg("");
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
-    const assetId = Number(form.get("asset_id"));
+    const assetId = Number(tradeAssetId || form.get("asset_id"));
     const date = String(form.get("date") || "");
-    const side = String(form.get("side") || "BUY");
+    const side = String(tradeSide || form.get("side") || "BUY").toUpperCase();
     const quantity = Number(String(form.get("quantity") || "0").replace(",", "."));
     const price = Number(String(form.get("price") || "0").replace(",", "."));
+    const exchangeRate = Number(String(tradeExchangeRate || form.get("exchange_rate") || "0").replace(",", "."));
     const fees = Number(String(form.get("fees") || "0").replace(",", "."));
     const taxes = Number(String(form.get("taxes") || "0").replace(",", "."));
     const note = String(form.get("note") || "").trim();
     if (!assetId || !date || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
       setInvestMsg("Preencha ativo, data, quantidade e preço.");
+      return;
+    }
+    if (tradeAssetIsUsStock && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) {
+      setInvestMsg("Para Stocks US, informe a cotação USD/BRL.");
       return;
     }
     try {
@@ -863,11 +941,15 @@ export default function App() {
         side,
         quantity,
         price,
+        exchange_rate: tradeAssetIsUsStock ? exchangeRate : null,
         fees: Number.isFinite(fees) ? fees : 0,
         taxes: Number.isFinite(taxes) ? taxes : 0,
         note: note || null,
       });
       formEl.reset();
+      setTradeAssetId("");
+      setTradeSide("BUY");
+      setTradeExchangeRate("");
       setInvestMsg("Operação salva.");
       await reloadInvestData();
       const dash = await getKpis();
@@ -988,12 +1070,13 @@ export default function App() {
     const form = new FormData(e.currentTarget);
     const name = String(form.get("name") || "").trim();
     const type = String(form.get("type") || "Banco");
+    const currency = String(form.get("currency") || "BRL").toUpperCase();
     if (!name) {
       setManageMsg("Informe o nome da conta.");
       return;
     }
     try {
-      await createAccount({ name, type });
+      await createAccount({ name, type, currency });
       formEl.reset();
       setManageMsg("Conta salva.");
       await reloadAllData();
@@ -1009,7 +1092,11 @@ export default function App() {
       return;
     }
     try {
-      await updateAccount(Number(accEditId), { name: accEditName.trim(), type: accEditType });
+      await updateAccount(Number(accEditId), {
+        name: accEditName.trim(),
+        type: accEditType,
+        currency: (accEditCurrency || "BRL").toUpperCase(),
+      });
       setManageMsg("Conta atualizada.");
       await reloadAllData();
       await reloadCardsData();
@@ -1188,10 +1275,10 @@ export default function App() {
     setCardDueDay(String(cur.due_day || 10));
   }
 
-  async function onPayInvoice(invoice, sourceAccountId = null) {
+  async function onPayInvoice(invoice, sourceAccountId = null, paymentDateValue = "") {
     setCardMsg("");
     const invoiceId = Number(invoice?.id);
-    const paymentDate = String(invoice?.due_date || "").trim() || new Date().toISOString().slice(0, 10);
+    const paymentDate = String(paymentDateValue || "").trim() || new Date().toISOString().slice(0, 10);
     try {
       await payCardInvoice(invoiceId, {
         payment_date: paymentDate,
@@ -1214,6 +1301,7 @@ export default function App() {
       bankAccountsOnly.find((a) => String(a.name || "") === String(invoice.source_account || "")) || bankAccountsOnly[0];
     setPayInvoiceTarget(invoice);
     setPayAccountId(defaultBank ? String(defaultBank.id) : "");
+    setPayDate(new Date().toISOString().slice(0, 10));
     setPayModalOpen(true);
   }
 
@@ -1223,10 +1311,15 @@ export default function App() {
       setCardMsg("Selecione a conta banco para pagar a fatura.");
       return;
     }
-    await onPayInvoice(payInvoiceTarget, Number(payAccountId));
+    if (!payDate) {
+      setCardMsg("Selecione a data real do pagamento.");
+      return;
+    }
+    await onPayInvoice(payInvoiceTarget, Number(payAccountId), payDate);
     setPayModalOpen(false);
     setPayInvoiceTarget(null);
     setPayAccountId("");
+    setPayDate("");
   }
 
   function onLogout() {
@@ -1826,6 +1919,10 @@ export default function App() {
                   <option value="Dinheiro">Dinheiro</option>
                   <option value="Corretora">Corretora</option>
                 </select>
+                <select name="currency" defaultValue="BRL">
+                  <option value="BRL">BRL</option>
+                  <option value="USD">USD</option>
+                </select>
                 <button type="submit">Salvar conta</button>
               </form>
             </section>
@@ -1842,11 +1939,12 @@ export default function App() {
                     if (cur) {
                       setAccEditName(cur.name);
                       setAccEditType(cur.type);
+                      setAccEditCurrency((cur.currency || "BRL").toUpperCase());
                     }
                   }}
                 >
                   {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>{a.id} - {a.name} ({a.type})</option>
+                    <option key={a.id} value={a.id}>{a.id} - {a.name} ({a.type}, {a.currency || "BRL"})</option>
                   ))}
                 </select>
                 <input value={accEditName} onChange={(e) => setAccEditName(e.target.value)} placeholder="Nome" />
@@ -1854,6 +1952,10 @@ export default function App() {
                   <option value="Banco">Banco</option>
                   <option value="Dinheiro">Dinheiro</option>
                   <option value="Corretora">Corretora</option>
+                </select>
+                <select value={accEditCurrency} onChange={(e) => setAccEditCurrency(e.target.value)}>
+                  <option value="BRL">BRL</option>
+                  <option value="USD">USD</option>
                 </select>
                 <button onClick={onUpdateAccount}>Atualizar conta</button>
                 <button className="danger" onClick={onDeleteAccount}>Excluir conta</button>
@@ -2318,21 +2420,66 @@ export default function App() {
                 <section className="card">
                   <h3>Nova operação</h3>
                   <form className="tx-form" onSubmit={onCreateInvestTrade}>
-                    <select name="asset_id" defaultValue="">
+                    <select
+                      name="asset_id"
+                      value={tradeAssetId}
+                      onChange={(e) => setTradeAssetId(e.target.value)}
+                    >
                       <option value="" disabled>Ativo</option>
                       {investAssets.map((a) => (
                         <option key={a.id} value={a.id}>{a.symbol}</option>
                       ))}
                     </select>
                     <input name="date" type="date" required />
-                    <select name="side" defaultValue="BUY">
-                      <option value="BUY">BUY</option>
-                      <option value="SELL">SELL</option>
+                    <select name="side" value={tradeSide} onChange={(e) => setTradeSide(e.target.value)}>
+                      {tradeSideOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
                     </select>
-                    <input name="quantity" type="number" step="0.00000001" min="0.00000001" placeholder="Quantidade" required />
-                    <input name="price" type="number" step="0.0001" min="0.0001" placeholder="Preço" required />
-                    <input name="fees" type="number" step="0.01" min="0" placeholder="Taxas" defaultValue="0" />
-                    <input name="taxes" type="number" step="0.01" min="0" placeholder="Impostos" defaultValue="0" />
+                    <input
+                      name="quantity"
+                      type="number"
+                      step="0.00000001"
+                      min="0.00000001"
+                      placeholder={tradeAssetIsUsStock ? "Quantidade (aceita fracionado)" : "Quantidade"}
+                      required
+                    />
+                    <input
+                      name="price"
+                      type="number"
+                      step="0.0001"
+                      min="0.0001"
+                      placeholder={tradeAssetIsUsStock ? "Preço (USD)" : "Preço"}
+                      required
+                    />
+                    {tradeAssetIsUsStock ? (
+                      <input
+                        name="exchange_rate"
+                        type="number"
+                        step="0.0001"
+                        min="0.0001"
+                        placeholder="Cotação USD/BRL"
+                        value={tradeExchangeRate}
+                        onChange={(e) => setTradeExchangeRate(e.target.value)}
+                        required
+                      />
+                    ) : null}
+                    <input
+                      name="fees"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="Taxas (opcional, padrão 0)"
+                      aria-label="Taxas"
+                    />
+                    <input
+                      name="taxes"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="Impostos (opcional, padrão 0)"
+                      aria-label="Impostos"
+                    />
                     <input name="note" type="text" placeholder="Obs (opcional)" />
                     <button type="submit">Salvar operação</button>
                   </form>
@@ -2350,6 +2497,7 @@ export default function App() {
                           <th>Tipo</th>
                           <th>Qtd</th>
                           <th>Preço</th>
+                          <th>Cotação</th>
                           <th>Taxas</th>
                           <th>Ação</th>
                         </tr>
@@ -2360,9 +2508,14 @@ export default function App() {
                             <td>{t.id}</td>
                             <td>{t.date}</td>
                             <td>{t.symbol}</td>
-                            <td>{t.side}</td>
+                            <td>{formatTradeSideLabel(t.side, t.asset_class)}</td>
                             <td>{Number(t.quantity || 0).toFixed(8)}</td>
                             <td>{Number(t.price || 0).toFixed(4)}</td>
+                            <td>
+                              {Number(t.exchange_rate || 0) > 0 && Number(t.exchange_rate || 1) !== 1
+                                ? Number(t.exchange_rate).toFixed(4)
+                                : "-"}
+                            </td>
                             <td>{Number(t.fees || 0).toFixed(2)}</td>
                             <td>
                               <button onClick={() => onDeleteInvestTrade(t.id)}>Excluir</button>
@@ -2529,7 +2682,13 @@ export default function App() {
         ) : null}
 
         {payModalOpen ? (
-          <div className="modal-backdrop" onClick={() => setPayModalOpen(false)}>
+          <div
+            className="modal-backdrop"
+            onClick={() => {
+              setPayModalOpen(false);
+              setPayDate("");
+            }}
+          >
             <div className="modal-card" onClick={(e) => e.stopPropagation()}>
               <h3>Pagar fatura</h3>
               <p>
@@ -2551,8 +2710,23 @@ export default function App() {
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
+              <input
+                type="date"
+                value={payDate}
+                onChange={(e) => setPayDate(e.target.value)}
+                aria-label="Data do pagamento"
+              />
               <div className="modal-actions">
-                <button type="button" className="danger" onClick={() => setPayModalOpen(false)}>Cancelar</button>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    setPayModalOpen(false);
+                    setPayDate("");
+                  }}
+                >
+                  Cancelar
+                </button>
                 <button type="button" onClick={confirmPayInvoiceModal}>Confirmar pagamento</button>
               </div>
             </div>

@@ -12,18 +12,19 @@ def list_accounts(user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, name, type FROM accounts WHERE user_id = ? ORDER BY name",
+        "SELECT id, name, type, COALESCE(currency, 'BRL') AS currency FROM accounts WHERE user_id = ? ORDER BY name",
         (uid,),
     ).fetchall()
     conn.close()
     return rows
 
 
-def create_account(name: str, acc_type: str, user_id: int | None = None):
+def create_account(name: str, acc_type: str, currency: str = "BRL", user_id: int | None = None):
     uid = _uid(user_id)
     nm = name.strip()
     if not nm:
         return
+    curr = (currency or "BRL").strip().upper()
     conn = get_conn()
     exists = conn.execute(
         "SELECT id FROM accounts WHERE user_id = ? AND name = ?",
@@ -31,8 +32,8 @@ def create_account(name: str, acc_type: str, user_id: int | None = None):
     ).fetchone()
     if not exists:
         conn.execute(
-            "INSERT INTO accounts(name, type, user_id) VALUES (?, ?, ?)",
-            (nm, acc_type, uid),
+            "INSERT INTO accounts(name, type, currency, user_id) VALUES (?, ?, ?, ?)",
+            (nm, acc_type, curr, uid),
         )
     conn.commit()
     conn.close()
@@ -236,12 +237,12 @@ def delete_transactions_by_description_exact(desc: str, user_id: int | None = No
     return deleted
 
 
-def update_account(account_id: int, name: str, acc_type: str, user_id: int | None = None):
+def update_account(account_id: int, name: str, acc_type: str, currency: str = "BRL", user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
     conn.execute(
-        "UPDATE accounts SET name = ?, type = ? WHERE id = ? AND user_id = ?",
-        (name.strip(), acc_type, int(account_id), uid),
+        "UPDATE accounts SET name = ?, type = ?, currency = ? WHERE id = ? AND user_id = ?",
+        (name.strip(), acc_type, (currency or "BRL").strip().upper(), int(account_id), uid),
     )
     conn.commit()
     conn.close()
@@ -672,26 +673,67 @@ def pay_credit_card_invoice(
         pay_account_id = int(row_acc["id"])
         pay_account_name = str(row_acc["name"])
 
-    cat_id = ensure_category("Fatura Cartão", "Despesa", user_id=uid)
+    fallback_cat_id = int(ensure_category("Fatura Cartão", "Despesa", user_id=uid))
     linked_name = str(inv["linked_account_name"])
     period = str(inv["invoice_period"])
 
-    conn.execute(
+    grouped = conn.execute(
         """
-        INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        SELECT
+            ch.category_id,
+            COALESCE(c.name, 'Fatura Cartão') AS category_name,
+            SUM(ch.amount) AS total_amount
+        FROM credit_card_charges ch
+        LEFT JOIN categories c ON c.id = ch.category_id AND c.user_id = ch.user_id
+        WHERE ch.user_id = ?
+          AND ch.card_id = ?
+          AND ch.invoice_period = ?
+          AND COALESCE(ch.paid, FALSE) = FALSE
+        GROUP BY ch.category_id, COALESCE(c.name, 'Fatura Cartão')
+        ORDER BY total_amount DESC
         """,
-        (
-            payment_date,
-            f"PGTO FATURA {inv['card_name']} ({period})",
-            -abs(remaining),
-            int(pay_account_id),
-            int(cat_id),
-            "Credito",
-            f"Pagamento de fatura do cartão {inv['card_name']} (vinculado a {linked_name}) via {pay_account_name}",
-            uid,
-        ),
-    )
+        (uid, int(inv["card_id"]), str(inv["invoice_period"])),
+    ).fetchall()
+
+    base_desc = f"PGTO FATURA {inv['card_name']} ({period})"
+    rows_to_post: list[tuple[int, str, float]] = []
+    if grouped:
+        grouped_total = float(sum(float(r["total_amount"] or 0.0) for r in grouped))
+        if grouped_total > 0:
+            scale = remaining / grouped_total
+            posted = 0.0
+            for idx, row in enumerate(grouped):
+                cat_id = int(row["category_id"]) if row["category_id"] is not None else fallback_cat_id
+                cat_name = str(row["category_name"] or "Fatura Cartão")
+                raw_value = float(row["total_amount"] or 0.0) * scale
+                if idx == len(grouped) - 1:
+                    value = max(0.0, remaining - posted)
+                else:
+                    value = max(0.0, raw_value)
+                    posted += value
+                rows_to_post.append((cat_id, cat_name, value))
+
+    if not rows_to_post:
+        rows_to_post = [(fallback_cat_id, "Fatura Cartão", remaining)]
+
+    for cat_id, cat_name, amount_value in rows_to_post:
+        desc = base_desc if len(rows_to_post) == 1 else f"{base_desc} - {cat_name}"
+        conn.execute(
+            """
+            INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payment_date,
+                desc,
+                -abs(amount_value),
+                int(pay_account_id),
+                int(cat_id),
+                "Credito",
+                f"Pagamento de fatura do cartão {inv['card_name']} (vinculado a {linked_name}) via {pay_account_name}",
+                uid,
+            ),
+        )
     conn.execute(
         "UPDATE credit_card_invoices SET paid_amount = total_amount, status = 'PAID' WHERE id = ? AND user_id = ?",
         (int(invoice_id), uid),
