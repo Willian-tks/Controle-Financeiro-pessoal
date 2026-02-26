@@ -43,6 +43,25 @@ def _uid(user_id: int | None = None) -> int:
     return int(user_id) if user_id is not None else int(get_current_user_id())
 
 
+def _norm_asset_class(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    raw = (
+        raw.replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+    return "_".join(raw.split())
+
+
 def list_assets(user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
@@ -191,7 +210,7 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
             """
             SELECT
                 t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.exchange_rate, t.fees, t.taxes, t.note,
-                a.symbol, a.broker_account_id, a.currency
+                a.symbol, a.broker_account_id, a.currency, a.asset_class
             FROM trades t
             JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
             WHERE t.id = ? AND t.user_id = ?
@@ -220,8 +239,11 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
         gross = qty * price * fx
         fees_brl = fees * fx if is_usd else fees
         taxes_brl = taxes * fx if is_usd else taxes
+        is_fixed_income = _norm_asset_class(str(trade["asset_class"] or "")) in {"renda_fixa", "tesouro_direto", "coe", "fundos"}
         if side == "BUY":
-            target_amount = -(gross + fees_brl + taxes_brl)
+            target_amount = -((gross + fees_brl - taxes_brl) if is_fixed_income else (gross + fees_brl + taxes_brl))
+            if target_amount > 0:
+                target_amount = 0.0
             target_amount_alt = -(gross + fees_brl)
             desc = f"INV BUY {symbol}"
         else:

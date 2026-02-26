@@ -115,6 +115,23 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         gross_brl = qty * price * fx
         fees_brl = fees * fx if is_usd else fees
         taxes_brl = taxes * fx if is_usd else taxes
+        cls_norm = str(cls or "").strip().lower()
+        cls_norm = (
+            cls_norm.replace("ã", "a")
+            .replace("á", "a")
+            .replace("à", "a")
+            .replace("â", "a")
+            .replace("é", "e")
+            .replace("ê", "e")
+            .replace("í", "i")
+            .replace("ó", "o")
+            .replace("ô", "o")
+            .replace("õ", "o")
+            .replace("ú", "u")
+            .replace("ç", "c")
+        )
+        cls_norm = "_".join(cls_norm.split())
+        is_fixed_income = cls_norm in {"renda_fixa", "tesouro_direto", "coe", "fundos"}
 
         if aid not in state:
             state[aid] = dict(symbol=sym, asset_class=cls, qty=0.0, cost_basis=0.0, realized_pnl=0.0, last_fx=1.0)
@@ -123,7 +140,8 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         s["last_fx"] = fx
         if side == "BUY":
             s["qty"] += qty
-            s["cost_basis"] += gross_brl + fees_brl + taxes_brl
+            buy_cost = (gross_brl + fees_brl - taxes_brl) if is_fixed_income else (gross_brl + fees_brl + taxes_brl)
+            s["cost_basis"] += max(0.0, buy_cost)
         else:
             if s["qty"] <= 0:
                 avg_cost = 0.0

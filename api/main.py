@@ -165,6 +165,19 @@ def _is_us_stock_asset(asset: dict) -> bool:
     return cls in {"stock_us", "stocks_us"}
 
 
+def _is_fixed_income_asset(asset: dict) -> bool:
+    cls_raw = None
+    if isinstance(asset, dict):
+        cls_raw = asset.get("asset_class")
+    else:
+        try:
+            cls_raw = asset["asset_class"]
+        except Exception:
+            cls_raw = None
+    cls = _norm_asset_class(cls_raw)
+    return cls in {"renda_fixa", "tesouro_direto", "coe", "fundos"}
+
+
 def _quote_group_for_asset(asset: dict) -> str:
     cls = _norm_asset_class((asset or {}).get("asset_class"))
     if cls == "fii":
@@ -1000,6 +1013,7 @@ def invest_create_trade(
     qty = float(body.quantity)
     price = float(body.price)
     is_us_stock = _is_us_stock_asset(asset)
+    is_fixed_income = _is_fixed_income_asset(asset)
     exchange_rate = float(body.exchange_rate or 0.0)
     if is_us_stock and exchange_rate <= 0:
         raise HTTPException(status_code=400, detail="Cotação USD/BRL é obrigatória para Stocks US")
@@ -1008,9 +1022,12 @@ def invest_create_trade(
     gross = qty * price * fx
     fees_brl = fees * fx if is_us_stock else fees
     taxes_brl = taxes * fx if is_us_stock else taxes
-    total_cost = gross + fees_brl + taxes_brl
+    total_cost = (gross + fees_brl - taxes_brl) if is_fixed_income else (gross + fees_brl + taxes_brl)
+    if total_cost < 0:
+        total_cost = 0.0
     broker_cash = reports.account_balance_by_id(int(broker_acc_id), user_id=uid)
-    if side == "BUY" and broker_cash < total_cost:
+    # Tolerância para evitar falso "saldo insuficiente" por ruído de float.
+    if side == "BUY" and (broker_cash + 0.005) < total_cost:
         raise HTTPException(
             status_code=400,
             detail=f"Saldo insuficiente na corretora. Disponível: {broker_cash:.2f}; Necessário: {total_cost:.2f}",

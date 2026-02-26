@@ -211,6 +211,11 @@ function isUsStockClass(assetClass) {
   return cls === "stocks_us" || cls === "stock_us";
 }
 
+function isCryptoClass(assetClass) {
+  const cls = normalizeText(assetClass).replace(/\s+/g, "_");
+  return cls === "crypto" || cls === "cripto";
+}
+
 function classKey(assetClass) {
   return normalizeText(assetClass).replace(/\s+/g, "_");
 }
@@ -645,16 +650,33 @@ export default function App() {
       setTradeAssetId("");
     }
   }, [tradeAssetOptions, tradeAssetId]);
+  const tradeEffectiveClass = useMemo(
+    () => selectedTradeAsset?.asset_class || tradeAssetClassFilter || "",
+    [selectedTradeAsset, tradeAssetClassFilter]
+  );
   const tradeAssetIsFixedIncome = useMemo(
-    () => isFixedIncomeClass(selectedTradeAsset?.asset_class),
-    [selectedTradeAsset]
+    () => isFixedIncomeClass(tradeEffectiveClass),
+    [tradeEffectiveClass]
   );
   const tradeAssetIsUsStock = useMemo(
     () =>
-      isUsStockClass(selectedTradeAsset?.asset_class) ||
+      isUsStockClass(tradeEffectiveClass) ||
       String(selectedTradeAsset?.currency || "").toUpperCase() === "USD",
-    [selectedTradeAsset]
+    [selectedTradeAsset, tradeEffectiveClass]
   );
+  const tradeAssetIsCrypto = useMemo(
+    () => isCryptoClass(tradeEffectiveClass),
+    [tradeEffectiveClass]
+  );
+  const tradeQuantityMustBeInteger = useMemo(() => {
+    const cls = classKey(tradeEffectiveClass);
+    return cls === "acao_br" || cls === "acoes_br" || cls === "fii" || cls === "bdr";
+  }, [tradeEffectiveClass]);
+  const tradeQuantityStep = tradeQuantityMustBeInteger ? "1" : "0.00000001";
+  const tradeQuantityMin = tradeQuantityMustBeInteger ? "1" : "0.00000001";
+  const tradeQuantityPlaceholder = tradeQuantityMustBeInteger
+    ? "Quantidade (inteiro)"
+    : "Quantidade (aceita fracionado)";
   const tradeSideOptions = useMemo(
     () =>
       tradeAssetIsFixedIncome
@@ -954,15 +976,39 @@ export default function App() {
     const assetId = Number(tradeAssetId || form.get("asset_id"));
     const date = String(form.get("date") || "");
     const side = String(tradeSide || form.get("side") || "BUY").toUpperCase();
-    const quantity = Number(String(form.get("quantity") || "0").replace(",", "."));
-    const price = Number(String(form.get("price") || "0").replace(",", "."));
+    const quantityRaw = Number(String(form.get("quantity") || "0").replace(",", "."));
+    const priceRaw = Number(String(form.get("price") || "0").replace(",", "."));
+    const appliedValue = Number(String(form.get("applied_value") || "0").replace(",", "."));
+    const irIofPct = Number(String(form.get("ir_iof") || "0").replace(",", "."));
     const exchangeRate = Number(String(tradeExchangeRate || form.get("exchange_rate") || "0").replace(",", "."));
     const fees = Number(String(form.get("fees") || "0").replace(",", "."));
-    const taxes = Number(String(form.get("taxes") || "0").replace(",", "."));
+    const taxesRaw = Number(String(form.get("taxes") || "0").replace(",", "."));
     const note = String(form.get("note") || "").trim();
-    if (!assetId || !date || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
-      setInvestMsg("Preencha ativo, data, quantidade e preço.");
-      return;
+    let quantity = quantityRaw;
+    let price = priceRaw;
+    let taxes = Number.isFinite(taxesRaw) ? taxesRaw : 0;
+    if (tradeAssetIsFixedIncome) {
+      if (!assetId || !date || !Number.isFinite(appliedValue) || appliedValue <= 0) {
+        setInvestMsg("Preencha ativo, data e valor aplicado.");
+        return;
+      }
+      if (!Number.isFinite(irIofPct) || irIofPct < 0 || irIofPct > 100) {
+        setInvestMsg("IR/IOF (%) deve estar entre 0 e 100.");
+        return;
+      }
+      const irIofAmount = appliedValue * (irIofPct / 100);
+      quantity = 1;
+      price = appliedValue;
+      taxes = taxes + irIofAmount;
+    } else {
+      if (!assetId || !date || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+        setInvestMsg("Preencha ativo, data, quantidade e preço.");
+        return;
+      }
+      if (tradeQuantityMustBeInteger && !Number.isInteger(quantity)) {
+        setInvestMsg("Para esta classe, a quantidade deve ser inteira.");
+        return;
+      }
     }
     if (tradeAssetIsUsStock && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) {
       setInvestMsg("Para Stocks US, informe a cotação USD/BRL.");
@@ -977,7 +1023,7 @@ export default function App() {
         price,
         exchange_rate: tradeAssetIsUsStock ? exchangeRate : null,
         fees: Number.isFinite(fees) ? fees : 0,
-        taxes: Number.isFinite(taxes) ? taxes : 0,
+        taxes: taxes,
         note: note || null,
       });
       formEl.reset();
@@ -2499,10 +2545,11 @@ export default function App() {
                     <input
                       name="quantity"
                       type="number"
-                      step="0.00000001"
-                      min="0.00000001"
-                      placeholder={tradeAssetIsUsStock ? "Quantidade (aceita fracionado)" : "Quantidade"}
+                      step={tradeQuantityStep}
+                      min={tradeQuantityMin}
+                      placeholder={tradeQuantityPlaceholder}
                       required
+                      disabled={tradeAssetIsFixedIncome}
                     />
                     <input
                       name="price"
@@ -2511,7 +2558,28 @@ export default function App() {
                       min="0.0001"
                       placeholder={tradeAssetIsUsStock ? "Preço (USD)" : "Preço"}
                       required
+                      disabled={tradeAssetIsFixedIncome}
                     />
+                    {tradeAssetIsFixedIncome ? (
+                      <>
+                        <input
+                          name="applied_value"
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          placeholder="Valor (aplicado)"
+                          required
+                        />
+                        <input
+                          name="ir_iof"
+                          type="number"
+                          step="0.0001"
+                          min="0"
+                          max="100"
+                          placeholder="IR/IOF (%)"
+                        />
+                      </>
+                    ) : null}
                     {tradeAssetIsUsStock ? (
                       <input
                         name="exchange_rate"
