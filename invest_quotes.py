@@ -24,7 +24,8 @@ def _read_token_from_env_file(path: str) -> Optional[str]:
                 if not ln or ln.startswith("#") or "=" not in ln:
                     continue
                 k, v = ln.split("=", 1)
-                if k.strip() == "BRAPI_TOKEN":
+                key = k.strip().lstrip("\ufeff")
+                if key == "BRAPI_TOKEN":
                     return v.strip().strip('"').strip("'")
     except Exception:
         return None
@@ -148,10 +149,26 @@ def _get_brapi_token() -> Optional[str]:
     except Exception:
         pass
 
-    # 3) tenta .env local
-    token = _read_token_from_env_file(".env")
-    if token:
-        return token.strip()
+    # 3) tenta .env em locais comuns (cwd e diretório do projeto)
+    env_candidates = [".env"]
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        env_candidates.append(os.path.join(here, ".env"))
+        env_candidates.append(os.path.join(here, "Controle-Financeiro-pessoal", ".env"))
+        env_candidates.append(os.path.join(here, "..", ".env"))
+    except Exception:
+        pass
+    seen: set[str] = set()
+    for p in env_candidates:
+        if not p:
+            continue
+        norm = os.path.normpath(p)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        token = _read_token_from_env_file(norm)
+        if token:
+            return token.strip()
 
     # 4) tenta arquivos locais de segredo
     for p in [
@@ -310,9 +327,16 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
         and "-" not in sym
     )
     is_b3 = is_b3_by_class or (cur == "BRL" and is_b3_like_symbol)
+    is_us_like_symbol = sym.isalpha() and (1 <= len(sym) <= 6) and ("." not in sym) and ("-" not in sym)
+    is_crypto_by_class = ("cripto" in cls) or ("crypto" in cls)
 
     # 1) Para BR, prioriza BRAPI (mais estável para B3 e sem depender de ".SA")
     if is_b3:
+        brapi_token = _get_brapi_token()
+        if not brapi_token:
+            # Sem token, evita fallback lento/instável e falha rápido com erro claro.
+            return None, None, None, "BRAPI_TOKEN não configurado (env ou secrets.toml)."
+
         px, px_date, src, err = fetch_last_price_brapi(sym)
         if px is not None:
             return px, px_date, src, None
@@ -334,22 +358,37 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
 
         return None, None, None, err or "Sem cotação para ativo BR (BRAPI/Yahoo)."
     else:
-        # 2) Não-BR: Yahoo
-        px, px_date, src = fetch_last_price_yf(sym)
-        if px is not None:
-            return px, px_date, src, None
+        is_us_stock = ("stock" in cls and "us" in cls) or cur == "USD" or is_us_like_symbol
+        if is_crypto_by_class:
+            # Cripto no Yahoo costuma ser BASE-USD/BASE-BRL
+            sym_crypto = _normalize_crypto(sym, cur)
+            px, px_date, src, err = fetch_last_price_yahoo_http(sym_crypto)
+            if px is not None:
+                return px, px_date, src, None
+            px, px_date, src = fetch_last_price_yf(sym_crypto)
+            if px is not None:
+                return px, px_date, src, None
 
-        px, px_date, src, err = fetch_last_price_yahoo_http(sym)
-        if px is not None:
-            return px, px_date, src, None
+        if is_us_stock:
+            # Evita travas do yfinance neste ambiente: prioriza HTTP e stooq para US.
+            px, px_date, src, err = fetch_last_price_yahoo_http(sym)
+            if px is not None:
+                return px, px_date, src, None
 
-        # 3) Stocks US: fallback stooq
-        if ("stock" in cls and "us" in cls) or cur == "USD":
             px, px_date, src, err_stooq = fetch_last_price_stooq_us(sym)
             if px is not None:
                 return px, px_date, src, None
             if err_stooq:
                 err = err or err_stooq
+        else:
+            # Não-BR (exceto stock US): mantém tentativa padrão via yfinance + HTTP.
+            px, px_date, src = fetch_last_price_yf(sym)
+            if px is not None:
+                return px, px_date, src, None
+
+            px, px_date, src, err = fetch_last_price_yahoo_http(sym)
+            if px is not None:
+                return px, px_date, src, None
 
     return None, None, None, err or "Yahoo não retornou dados agora."
 

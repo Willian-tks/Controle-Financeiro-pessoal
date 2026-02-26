@@ -97,6 +97,7 @@ class PriceUpsertRequest(BaseModel):
 class QuoteUpdateAllRequest(BaseModel):
     timeout_s: float | None = None
     max_workers: int | None = None
+    include_groups: list[str] | None = None
 
 
 class CreditCardCreateRequest(BaseModel):

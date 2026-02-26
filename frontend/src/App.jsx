@@ -88,6 +88,7 @@ const PAGE_SUBTITLES = {
 };
 
 const INVEST_TABS = ["Resumo", "Ativos", "Operações", "Proventos", "Cotações"];
+const QUOTE_GROUP_OPTIONS = ["Ações BR", "FIIs", "Stocks", "Cripto"];
 const DONUT_COLORS = ["#f4c84b", "#4e7ff3", "#73d39f", "#ef6f5c", "#9a7df9"];
 const CARD_MODELS = ["Black", "Gold", "Platinum", "Orange", "Violeta", "Vermelho"];
 const PAGE_ICONS = {
@@ -210,6 +211,10 @@ function isUsStockClass(assetClass) {
   return cls === "stocks_us" || cls === "stock_us";
 }
 
+function classKey(assetClass) {
+  return normalizeText(assetClass).replace(/\s+/g, "_");
+}
+
 export default function App() {
   const defaultMonthRange = getCurrentMonthRange();
   const [authError, setAuthError] = useState("");
@@ -252,6 +257,8 @@ export default function App() {
   const [assetCsvFile, setAssetCsvFile] = useState(null);
   const [tradeCsvFile, setTradeCsvFile] = useState(null);
   const [investMsg, setInvestMsg] = useState("");
+  const [investPriceUpdateReport, setInvestPriceUpdateReport] = useState([]);
+  const [investPriceUpdateRunning, setInvestPriceUpdateRunning] = useState(false);
   const [investMeta, setInvestMeta] = useState({ asset_classes: [], asset_sectors: [], income_types: [] });
   const [investAssets, setInvestAssets] = useState([]);
   const [investTrades, setInvestTrades] = useState([]);
@@ -271,6 +278,8 @@ export default function App() {
   });
   const [quoteTimeout, setQuoteTimeout] = useState("25");
   const [quoteWorkers, setQuoteWorkers] = useState("4");
+  const [quoteGroups, setQuoteGroups] = useState(QUOTE_GROUP_OPTIONS);
+  const [tradeAssetClassFilter, setTradeAssetClassFilter] = useState("");
   const [tradeAssetId, setTradeAssetId] = useState("");
   const [tradeSide, setTradeSide] = useState("BUY");
   const [tradeExchangeRate, setTradeExchangeRate] = useState("");
@@ -611,6 +620,31 @@ export default function App() {
     () => investAssets.find((a) => String(a.id) === String(tradeAssetId)) || null,
     [investAssets, tradeAssetId]
   );
+  const tradeAssetClassOptions = useMemo(() => {
+    const labels = [];
+    const seen = new Set();
+    for (const a of investAssets) {
+      const label = String(a.asset_class || "").trim();
+      if (!label) continue;
+      const key = classKey(label);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      labels.push(label);
+    }
+    return labels;
+  }, [investAssets]);
+  const tradeAssetOptions = useMemo(() => {
+    if (!tradeAssetClassFilter) return [];
+    const selectedKey = classKey(tradeAssetClassFilter);
+    return investAssets.filter((a) => classKey(a.asset_class) === selectedKey);
+  }, [investAssets, tradeAssetClassFilter]);
+  useEffect(() => {
+    if (!tradeAssetId) return;
+    const stillValid = tradeAssetOptions.some((a) => String(a.id) === String(tradeAssetId));
+    if (!stillValid) {
+      setTradeAssetId("");
+    }
+  }, [tradeAssetOptions, tradeAssetId]);
   const tradeAssetIsFixedIncome = useMemo(
     () => isFixedIncomeClass(selectedTradeAsset?.asset_class),
     [selectedTradeAsset]
@@ -1049,17 +1083,30 @@ export default function App() {
 
   async function onUpdateAllInvestPrices() {
     setInvestMsg("");
+    setInvestPriceUpdateReport([]);
+    setInvestPriceUpdateRunning(true);
     const timeout = Number(String(quoteTimeout || "25").replace(",", "."));
     const workers = Number(String(quoteWorkers || "4").replace(",", "."));
+    if (!quoteGroups.length) {
+      setInvestMsg("Selecione ao menos um grupo de cotação.");
+      setInvestPriceUpdateRunning(false);
+      return;
+    }
     try {
       const out = await updateAllInvestPrices({
         timeout_s: Number.isFinite(timeout) ? timeout : 25,
         max_workers: Number.isFinite(workers) ? workers : 4,
+        include_groups: quoteGroups,
       });
-      setInvestMsg(`Cotações salvas: ${out.saved}/${out.total}`);
+      const report = Array.isArray(out.report) ? out.report : [];
+      const failed = report.filter((row) => !row?.ok).length;
+      setInvestPriceUpdateReport(report);
+      setInvestMsg(`Cotações salvas: ${out.saved}/${out.total}${failed ? ` | Falhas: ${failed}` : ""}`);
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
+    } finally {
+      setInvestPriceUpdateRunning(false);
     }
   }
 
@@ -2421,12 +2468,25 @@ export default function App() {
                   <h3>Nova operação</h3>
                   <form className="tx-form" onSubmit={onCreateInvestTrade}>
                     <select
+                      name="asset_class_filter"
+                      value={tradeAssetClassFilter}
+                      onChange={(e) => setTradeAssetClassFilter(e.target.value)}
+                    >
+                      <option value="" disabled>Classe do ativo</option>
+                      {tradeAssetClassOptions.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                    <select
                       name="asset_id"
                       value={tradeAssetId}
                       onChange={(e) => setTradeAssetId(e.target.value)}
+                      disabled={!tradeAssetClassFilter}
                     >
-                      <option value="" disabled>Ativo</option>
-                      {investAssets.map((a) => (
+                      <option value="" disabled>
+                        {!tradeAssetClassFilter ? "Selecione a classe primeiro" : "Ativo"}
+                      </option>
+                      {tradeAssetOptions.map((a) => (
                         <option key={a.id} value={a.id}>{a.symbol}</option>
                       ))}
                     </select>
@@ -2607,8 +2667,51 @@ export default function App() {
                     onChange={(e) => setQuoteWorkers(e.target.value)}
                     placeholder="Paralelismo"
                   />
-                  <button onClick={onUpdateAllInvestPrices}>Atualizar cotações automáticas</button>
+                  <select
+                    multiple
+                    value={quoteGroups}
+                    onChange={(e) => {
+                      const vals = Array.from(e.target.selectedOptions || []).map((o) => o.value);
+                      setQuoteGroups(vals);
+                    }}
+                    title="Selecione os grupos para atualização"
+                  >
+                    {QUOTE_GROUP_OPTIONS.map((g) => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                  <button onClick={onUpdateAllInvestPrices} disabled={investPriceUpdateRunning}>
+                    {investPriceUpdateRunning ? "Atualizando..." : "Atualizar cotações automáticas"}
+                  </button>
                 </div>
+                {investPriceUpdateReport.length ? (
+                  <div className="tx-table-wrap">
+                    <table className="tx-table">
+                      <thead>
+                        <tr>
+                          <th>Ativo</th>
+                          <th>Status</th>
+                          <th>Preço</th>
+                          <th>Fonte</th>
+                          <th>Tempo (s)</th>
+                          <th>Detalhe</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {investPriceUpdateReport.map((row, idx) => (
+                          <tr key={`${row?.symbol || "sem-symbol"}-${idx}`}>
+                            <td>{row?.symbol || "-"}</td>
+                            <td>{row?.ok ? "OK" : "Erro"}</td>
+                            <td>{Number(row?.price || 0) > 0 ? Number(row.price).toFixed(4) : "-"}</td>
+                            <td>{row?.src || "-"}</td>
+                            <td>{Number.isFinite(Number(row?.elapsed_s)) ? Number(row.elapsed_s).toFixed(2) : "-"}</td>
+                            <td>{row?.error || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
                 <form className="tx-form" onSubmit={onUpsertInvestPrice}>
                   <select name="asset_id" defaultValue="">
                     <option value="" disabled>Ativo</option>

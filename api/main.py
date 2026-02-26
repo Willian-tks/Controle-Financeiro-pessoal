@@ -165,6 +165,19 @@ def _is_us_stock_asset(asset: dict) -> bool:
     return cls in {"stock_us", "stocks_us"}
 
 
+def _quote_group_for_asset(asset: dict) -> str:
+    cls = _norm_asset_class((asset or {}).get("asset_class"))
+    if cls == "fii":
+        return "FIIs"
+    if cls in {"acao_br", "acoes_br", "etf_br", "bdr"}:
+        return "Ações BR"
+    if cls in {"stock_us", "stocks_us", "etf_us"}:
+        return "Stocks"
+    if cls in {"crypto", "cripto"}:
+        return "Cripto"
+    return "Outros"
+
+
 def _norm_card_brand(value: Any) -> str:
     raw = str(value or "").strip().lower()
     raw = (
@@ -1226,6 +1239,13 @@ def invest_update_all_prices(
 ) -> dict:
     uid = int(user["id"])
     assets = invest_repo.list_assets(user_id=uid) or []
+    include_groups = {
+        str(g or "").strip()
+        for g in (body.include_groups or [])
+        if str(g or "").strip()
+    }
+    if include_groups:
+        assets = [a for a in assets if _quote_group_for_asset(dict(a)) in include_groups]
     if not assets:
         return {"ok": True, "saved": 0, "total": 0, "report": []}
     report = invest_quotes.update_all_prices(
