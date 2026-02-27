@@ -223,7 +223,7 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
 
         broker_account_id = trade["broker_account_id"]
         if not broker_account_id:
-            return False, "Ativo sem conta corretora vinculada."
+            return False, "Ativo sem conta corretora vinculada. Não é possível reverter o caixa da operação."
 
         qty = float(trade["quantity"] or 0.0)
         price = float(trade["price"] or 0.0)
@@ -241,10 +241,15 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
         taxes_brl = taxes * fx if is_usd else taxes
         is_fixed_income = _norm_asset_class(str(trade["asset_class"] or "")) in {"renda_fixa", "tesouro_direto", "coe", "fundos"}
         if side == "BUY":
-            target_amount = -((gross + fees_brl - taxes_brl) if is_fixed_income else (gross + fees_brl + taxes_brl))
+            if is_fixed_income:
+                target_amount = -(gross + fees_brl)
+                # Compatibilidade com lançamentos antigos que subtraíam imposto na aplicação.
+                target_amount_alt = -(gross + fees_brl - taxes_brl)
+            else:
+                target_amount = -(gross + fees_brl + taxes_brl)
+                target_amount_alt = target_amount
             if target_amount > 0:
                 target_amount = 0.0
-            target_amount_alt = -(gross + fees_brl)
             desc = f"INV BUY {symbol}"
         else:
             target_amount = +(gross - fees_brl - taxes_brl)
@@ -281,7 +286,24 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
                     break
 
         if chosen_tx_id is None:
-            return False, "Não foi possível localizar o lançamento financeiro da operação."
+            reverse_amount = -target_amount
+            conn.execute(
+                """
+                INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
+                VALUES (?, ?, ?, ?, NULL, 'INV', ?, ?)
+                """,
+                (
+                    str(trade["date"]),
+                    f"INV REVERSAL {symbol}",
+                    float(reverse_amount),
+                    int(broker_account_id),
+                    f"Reversão automática da operação {int(trade_id)} (lançamento original não encontrado).",
+                    uid,
+                ),
+            )
+            conn.execute("DELETE FROM trades WHERE id = ? AND user_id = ?", (int(trade_id), uid))
+            conn.commit()
+            return True, "Operação excluída e saldo da corretora ajustado por lançamento compensatório."
 
         conn.execute("DELETE FROM transactions WHERE id = ? AND user_id = ?", (chosen_tx_id, uid))
         conn.execute("DELETE FROM trades WHERE id = ? AND user_id = ?", (int(trade_id), uid))

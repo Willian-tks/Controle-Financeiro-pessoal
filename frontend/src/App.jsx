@@ -463,6 +463,10 @@ export default function App() {
     if (txIsTransfer) return ["PIX", "TED", "Dinheiro"];
     return [];
   }, [txIsIncome, txIsExpense, txIsTransfer]);
+  const transferAccounts = useMemo(
+    () => accounts.filter((a) => ["Banco", "Corretora"].includes(normalizeAccountType(a.type))),
+    [accounts]
+  );
   const bankAccountsOnly = useMemo(
     () => accounts.filter((a) => normalizeAccountType(a.type) === "Banco"),
     [accounts]
@@ -499,6 +503,22 @@ export default function App() {
       setTxMethod(txMethodOptions[0]);
     }
   }, [txMethodOptions, txMethod]);
+
+  useEffect(() => {
+    if (!txIsTransfer) return;
+    if (!transferAccounts.length) {
+      setTxAccountId("");
+      setTxSourceAccountId("");
+      return;
+    }
+    if (!txAccountId || !transferAccounts.some((a) => String(a.id) === String(txAccountId))) {
+      setTxAccountId(String(transferAccounts[0].id));
+    }
+    if (!txSourceAccountId || !transferAccounts.some((a) => String(a.id) === String(txSourceAccountId))) {
+      const fallback = transferAccounts.find((a) => String(a.id) !== String(txAccountId));
+      setTxSourceAccountId(fallback ? String(fallback.id) : "");
+    }
+  }, [txIsTransfer, transferAccounts, txAccountId, txSourceAccountId]);
 
   useEffect(() => {
     if (!user) return;
@@ -615,7 +635,7 @@ export default function App() {
     }
     const list = [...map.entries()].map(([name, value]) => ({ name, value }));
     list.sort((a, b) => b.value - a.value);
-    return list.slice(0, 5);
+    return list;
   }, [investPortfolio]);
   const investmentTotal = useMemo(
     () => investmentByClass.reduce((acc, r) => acc + Number(r.value || 0), 0),
@@ -875,7 +895,7 @@ export default function App() {
       setTxSourceAccountId("");
       setTxCardId("");
       if (out?.mode === "transfer") {
-        setTxMsg("Transferência registrada (origem debitada e corretora creditada).");
+        setTxMsg("Transferência registrada (débito na origem e crédito no destino).");
       } else if (out?.mode === "credit_card_charge") {
         setTxMsg("Compra no crédito registrada. A despesa será lançada no pagamento da fatura.");
       } else {
@@ -996,10 +1016,15 @@ export default function App() {
         setInvestMsg("IR/IOF (%) deve estar entre 0 e 100.");
         return;
       }
-      const irIofAmount = appliedValue * (irIofPct / 100);
       quantity = 1;
       price = appliedValue;
-      taxes = taxes + irIofAmount;
+      if (side === "SELL") {
+        const irIofAmount = appliedValue * (irIofPct / 100);
+        taxes = taxes + irIofAmount;
+      } else if (irIofPct > 0) {
+        setInvestMsg("IR/IOF (%) deve ser informado apenas em RESGATE para renda fixa.");
+        return;
+      }
     } else {
       if (!assetId || !date || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
         setInvestMsg("Preencha ativo, data, quantidade e preço.");
@@ -2125,7 +2150,8 @@ export default function App() {
                   <div className="transfer-hint">
                     <strong className="transfer-badge">Transferência</strong>
                     <span>
-                      Fluxo em duas pernas: débito na <b>conta origem</b> e crédito na <b>conta destino (Corretora)</b>.
+                      Fluxo em duas pernas: débito na <b>conta origem</b> e crédito na <b>conta destino</b> (Banco
+                      {" <-> "}Corretora).
                     </span>
                   </div>
                 ) : null}
@@ -2175,7 +2201,7 @@ export default function App() {
                     <option value="" disabled>
                       {txIsIncome ? "Conta (entrada da receita)" : txIsExpense ? "Conta (saída da despesa)" : "Conta"}
                     </option>
-                    {accounts.map((a) => (
+                    {(txIsTransfer ? transferAccounts : accounts).map((a) => (
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                   </select>
@@ -2188,8 +2214,8 @@ export default function App() {
                     required
                   >
                     <option value="">Conta origem (Transferência)</option>
-                    {accounts
-                      .filter((a) => a.type !== "Corretora" && String(a.id) !== String(txAccountId))
+                    {transferAccounts
+                      .filter((a) => String(a.id) !== String(txAccountId))
                       .map((a) => (
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
@@ -2646,7 +2672,7 @@ export default function App() {
                             </td>
                             <td>{Number(t.fees || 0).toFixed(2)}</td>
                             <td>
-                              <button onClick={() => onDeleteInvestTrade(t.id)}>Excluir</button>
+                              <button type="button" onClick={() => onDeleteInvestTrade(t.id)}>Excluir</button>
                             </td>
                           </tr>
                         ))}

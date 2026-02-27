@@ -180,7 +180,7 @@ def _is_fixed_income_asset(asset: dict) -> bool:
 
 def _quote_group_for_asset(asset: dict) -> str:
     cls = _norm_asset_class((asset or {}).get("asset_class"))
-    if cls == "fii":
+    if cls in {"fii", "fiis", "stock_fii"}:
         return "FIIs"
     if cls in {"acao_br", "acoes_br", "etf_br", "bdr"}:
         return "Ações BR"
@@ -553,10 +553,19 @@ def create_transaction(
 
         source = account_map[source_id]
         destination = account_map[destination_id]
-        if _norm_account_type(destination.get("type")) != "Corretora":
-            raise HTTPException(status_code=400, detail="Para Transferência, a conta destino deve ser Corretora")
-        if _norm_account_type(source.get("type")) == "Corretora":
-            raise HTTPException(status_code=400, detail="Para Transferência, a conta origem não pode ser Corretora")
+        src_type = _norm_account_type(source.get("type"))
+        dst_type = _norm_account_type(destination.get("type"))
+        allowed_types = {"Banco", "Corretora"}
+        if src_type not in allowed_types or dst_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail="Para Transferência, use apenas contas do tipo Banco ou Corretora",
+            )
+        if src_type == dst_type:
+            raise HTTPException(
+                status_code=400,
+                detail="Para Transferência, origem e destino devem ser de tipos diferentes (Banco <-> Corretora)",
+            )
 
         src_name = str(source.get("name") or "Origem")
         dst_name = str(destination.get("name") or "Destino")
@@ -1022,7 +1031,8 @@ def invest_create_trade(
     gross = qty * price * fx
     fees_brl = fees * fx if is_us_stock else fees
     taxes_brl = taxes * fx if is_us_stock else taxes
-    total_cost = (gross + fees_brl - taxes_brl) if is_fixed_income else (gross + fees_brl + taxes_brl)
+    # Em renda fixa, impostos de IR/IOF devem incidir no resgate, não na aplicação.
+    total_cost = (gross + fees_brl) if is_fixed_income else (gross + fees_brl + taxes_brl)
     if total_cost < 0:
         total_cost = 0.0
     broker_cash = reports.account_balance_by_id(int(broker_acc_id), user_id=uid)

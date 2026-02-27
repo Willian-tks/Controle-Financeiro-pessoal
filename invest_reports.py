@@ -3,6 +3,8 @@ import pandas as pd
 from db import get_conn
 from tenant import get_current_user_id
 
+_FIXED_INCOME_CLASSES = {"renda_fixa", "tesouro_direto", "coe", "fundos"}
+
 
 def _uid(user_id: int | None = None) -> int:
     return int(user_id) if user_id is not None else int(get_current_user_id())
@@ -13,6 +15,25 @@ def _query_df(query: str, params: list | tuple | None = None) -> pd.DataFrame:
     rows = conn.execute(query, params or ()).fetchall()
     conn.close()
     return pd.DataFrame([dict(r) for r in rows])
+
+
+def _norm_asset_class(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    raw = (
+        raw.replace("ã", "a")
+        .replace("á", "a")
+        .replace("à", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+    return "_".join(raw.split())
 
 
 def df_assets(user_id: int | None = None):
@@ -115,23 +136,8 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         gross_brl = qty * price * fx
         fees_brl = fees * fx if is_usd else fees
         taxes_brl = taxes * fx if is_usd else taxes
-        cls_norm = str(cls or "").strip().lower()
-        cls_norm = (
-            cls_norm.replace("ã", "a")
-            .replace("á", "a")
-            .replace("à", "a")
-            .replace("â", "a")
-            .replace("é", "e")
-            .replace("ê", "e")
-            .replace("í", "i")
-            .replace("ó", "o")
-            .replace("ô", "o")
-            .replace("õ", "o")
-            .replace("ú", "u")
-            .replace("ç", "c")
-        )
-        cls_norm = "_".join(cls_norm.split())
-        is_fixed_income = cls_norm in {"renda_fixa", "tesouro_direto", "coe", "fundos"}
+        cls_norm = _norm_asset_class(cls)
+        is_fixed_income = cls_norm in _FIXED_INCOME_CLASSES
 
         if aid not in state:
             state[aid] = dict(symbol=sym, asset_class=cls, qty=0.0, cost_basis=0.0, realized_pnl=0.0, last_fx=1.0)
@@ -140,7 +146,7 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         s["last_fx"] = fx
         if side == "BUY":
             s["qty"] += qty
-            buy_cost = (gross_brl + fees_brl - taxes_brl) if is_fixed_income else (gross_brl + fees_brl + taxes_brl)
+            buy_cost = (gross_brl + fees_brl) if is_fixed_income else (gross_brl + fees_brl + taxes_brl)
             s["cost_basis"] += max(0.0, buy_cost)
         else:
             if s["qty"] <= 0:
@@ -188,6 +194,13 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
         pos["price_date"] = None
 
     pos["price"] = pd.to_numeric(pos.get("price", 0.0), errors="coerce").fillna(0.0)
+    cls_norm = pos.get("asset_class", "").astype(str).map(_norm_asset_class)
+    fixed_income_mask = cls_norm.isin(_FIXED_INCOME_CLASSES)
+    missing_price_mask = pos["price"] <= 0
+    # Renda fixa sem cotação diária usa custo médio como proxy de valor de mercado.
+    pos.loc[fixed_income_mask & missing_price_mask, "price"] = pd.to_numeric(
+        pos.get("avg_cost", 0.0), errors="coerce"
+    ).fillna(0.0)
 
     assets = df_assets(user_id=uid)
     if not assets.empty and not pos.empty:
@@ -268,6 +281,12 @@ def investments_value_timeseries(date_from: str, date_to: str, user_id: int | No
             pos["price"] = 0.0
 
         pos["price"] = pd.to_numeric(pos["price"], errors="coerce").fillna(0.0)
+        cls_norm = pos.get("asset_class", "").astype(str).map(_norm_asset_class)
+        fixed_income_mask = cls_norm.isin(_FIXED_INCOME_CLASSES)
+        missing_price_mask = pos["price"] <= 0
+        pos.loc[fixed_income_mask & missing_price_mask, "price"] = pd.to_numeric(
+            pos.get("avg_cost", 0.0), errors="coerce"
+        ).fillna(0.0)
         pos["market_value"] = pos["qty"] * pos["price"]
         out.append({"date": d, "invest_market_value": float(pos["market_value"].sum())})
 
