@@ -32,6 +32,7 @@ import {
   deleteCard,
   deleteAccount,
   deleteCategory,
+  deleteCreditCommitment,
   deleteInvestAsset,
   deleteInvestIncome,
   deleteInvestTrade,
@@ -247,6 +248,7 @@ export default function App() {
   const [txAccountId, setTxAccountId] = useState("");
   const [txCategoryId, setTxCategoryId] = useState("");
   const [txMethod, setTxMethod] = useState("PIX");
+  const [txFuturePaymentMethod, setTxFuturePaymentMethod] = useState("PIX");
   const [txView, setTxView] = useState("caixa");
   const [txSourceAccountId, setTxSourceAccountId] = useState("");
   const [txCardId, setTxCardId] = useState("");
@@ -259,6 +261,7 @@ export default function App() {
   const [cardAccountId, setCardAccountId] = useState("");
   const [cardSourceAccountId, setCardSourceAccountId] = useState("");
   const [cardDueDay, setCardDueDay] = useState("10");
+  const [cardCloseDay, setCardCloseDay] = useState("5");
   const [cardEditId, setCardEditId] = useState("");
   const [importMsg, setImportMsg] = useState("");
   const [importPreview, setImportPreview] = useState([]);
@@ -424,6 +427,7 @@ export default function App() {
       setCardModel("Black");
       setCardType("Credito");
       setCardDueDay("10");
+      setCardCloseDay("5");
       return;
     }
     const cur = cards.find((c) => String(c.id) === String(cardEditId)) || cards[0];
@@ -435,6 +439,7 @@ export default function App() {
     setCardAccountId(String(cur.card_account_id || ""));
     setCardSourceAccountId(String(cur.source_account_id || ""));
     setCardDueDay(String(cur.due_day || 10));
+    setCardCloseDay(String(cur.close_day || Math.max(1, Number(cur.due_day || 10) - 5)));
   }, [cards, cardEditId]);
 
   useEffect(() => {
@@ -470,6 +475,7 @@ export default function App() {
   const txIsIncome = txEffectiveKind === "Receita";
   const txMethodEffective = txIsFutureTab ? "Futuro" : txMethod;
   const txIsExpenseCredit = txIsExpense && !txIsTransfer && txMethodEffective === "Credito";
+  const txIsFutureCredit = txIsFutureTab && txFuturePaymentMethod === "Credito";
   const txMethodOptions = useMemo(() => {
     if (txIsFutureTab) return ["Futuro"];
     if (txIsIncome) return ["PIX", "TED", "Dinheiro"];
@@ -486,16 +492,17 @@ export default function App() {
     [accounts]
   );
   const cardsForTxMethod = useMemo(() => {
+    if (txIsFutureCredit) return (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito");
     if (!txIsExpense || txIsTransfer) return [];
     if (txMethodEffective === "Credito") return (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito");
     return [];
-  }, [cards, txIsExpense, txIsTransfer, txMethodEffective]);
+  }, [cards, txIsExpense, txIsTransfer, txMethodEffective, txIsFutureCredit]);
   const selectedTxCard = useMemo(
     () => cardsForTxMethod.find((c) => String(c.id) === String(txCardId)) || null,
     [cardsForTxMethod, txCardId]
   );
   useEffect(() => {
-    if (!txIsExpense || txIsTransfer || txMethodEffective !== "Credito") {
+    if ((!txIsExpense || txIsTransfer || txMethodEffective !== "Credito") && !txIsFutureCredit) {
       setTxCardId("");
       return;
     }
@@ -506,7 +513,7 @@ export default function App() {
     if (!txCardId || !cardsForTxMethod.some((c) => String(c.id) === String(txCardId))) {
       setTxCardId(String(cardsForTxMethod[0].id));
     }
-  }, [txIsExpense, txIsTransfer, txMethodEffective, cardsForTxMethod, txCardId]);
+  }, [txIsExpense, txIsTransfer, txMethodEffective, txIsFutureCredit, cardsForTxMethod, txCardId]);
 
   useEffect(() => {
     if (!txMethodOptions.length) {
@@ -517,6 +524,20 @@ export default function App() {
       setTxMethod(txMethodOptions[0]);
     }
   }, [txMethodOptions, txMethod]);
+
+  useEffect(() => {
+    if (!txIsFutureTab) return;
+    if (!["PIX", "Debito", "Boleto", "Credito"].includes(txFuturePaymentMethod)) {
+      setTxFuturePaymentMethod("PIX");
+    }
+  }, [txIsFutureTab, txFuturePaymentMethod]);
+
+  useEffect(() => {
+    if (!txIsFutureCredit || !selectedTxCard) return;
+    if (String(txAccountId) !== String(selectedTxCard.card_account_id || "")) {
+      setTxAccountId(String(selectedTxCard.card_account_id || ""));
+    }
+  }, [txIsFutureCredit, selectedTxCard, txAccountId]);
 
   useEffect(() => {
     if (!txIsFutureTab) return;
@@ -878,6 +899,7 @@ export default function App() {
     const categoryId = categoryIdRaw ? Number(categoryIdRaw) : null;
     const category = categories.find((c) => Number(c.id) === Number(categoryId));
     const method = String(txMethodEffective || "").trim();
+    const futurePaymentMethod = txIsFutureTab ? String(txFuturePaymentMethod || "PIX").trim() : "";
     const notes = String(form.get("notes") || "").trim();
     const dateInput = String(form.get("date") || "");
     const dueDayInput = Number(String(form.get("due_day") || "0").replace(",", "."));
@@ -915,13 +937,19 @@ export default function App() {
       return;
     }
     if (isFutureExpense) {
-      if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) {
-        setTxMsg("Informe um dia de vencimento entre 1 e 31.");
-        return;
-      }
       if (!Number.isInteger(repeatMonths) || repeatMonths < 1 || repeatMonths > 120) {
         setTxMsg("Informe quantos meses replicar (1 a 120).");
         return;
+      }
+      if (futurePaymentMethod === "Credito" && (!Number.isFinite(selectedCardId) || selectedCardId <= 0)) {
+        setTxMsg("Selecione o cartão de crédito para o compromisso.");
+        return;
+      }
+      if (futurePaymentMethod !== "Credito") {
+        if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) {
+          setTxMsg("Informe um dia de vencimento entre 1 e 31.");
+          return;
+        }
       }
     }
     if (txIsTransfer && (!Number.isFinite(sourceAccountId) || sourceAccountId <= 0)) {
@@ -945,23 +973,33 @@ export default function App() {
         kind: effectiveKind,
         source_account_id: txIsTransfer ? sourceAccountId : null,
         card_id:
-          txIsExpense && !txIsTransfer && method === "Credito" && Number.isFinite(selectedCardId)
+          (
+            (txIsExpense && !txIsTransfer && method === "Credito") ||
+            (isFutureExpense && futurePaymentMethod === "Credito")
+          ) &&
+          Number.isFinite(selectedCardId)
             ? selectedCardId
             : null,
         method: method || null,
+        future_payment_method: isFutureExpense ? futurePaymentMethod : null,
         notes: notes || null,
-        due_day: isFutureExpense ? dueDay : null,
+        due_day: isFutureExpense && futurePaymentMethod !== "Credito" ? dueDay : null,
         repeat_months: isFutureExpense ? repeatMonths : null,
       });
       formEl.reset();
       setTxCategoryId("");
       setTxMethod(txIsFutureTab ? "Futuro" : "PIX");
+      setTxFuturePaymentMethod("PIX");
       setTxSourceAccountId("");
       setTxCardId("");
       if (out?.mode === "transfer") {
         setTxMsg("Transferência registrada (débito na origem e crédito no destino).");
       } else if (out?.mode === "credit_card_charge") {
         setTxMsg("Compra no crédito registrada. A despesa será lançada no pagamento da fatura.");
+      } else if (out?.mode === "future_credit_schedule") {
+        setTxMsg(
+          `Compromisso no cartão agendado (${Number(out?.created || 0)}x): ${String(out?.first_date || "-")} até ${String(out?.last_date || "-")}.`
+        );
       } else if (out?.mode === "future_schedule") {
         setTxMsg(
           `Despesa futura agendada (${Number(out?.created || 0)}x): ${String(out?.first_date || "-")} até ${String(out?.last_date || "-")}.`
@@ -982,9 +1020,9 @@ export default function App() {
     }
   }
 
-  async function onDeleteTransaction(id) {
+  async function onDeleteTransaction(id, scope = "single") {
     try {
-      await deleteTransaction(id);
+      await deleteTransaction(id, { scope });
       await reloadTransactions();
       const dash = await getKpis();
       setKpis(dash);
@@ -1014,6 +1052,38 @@ export default function App() {
       amount: Math.abs(Number(tx?.amount_brl || 0)).toFixed(2),
       notes: String(tx?.notes || ""),
     });
+  }
+
+  async function onDeleteCommitment(tx) {
+    const deleteFuture = window.confirm(
+      "Excluir este compromisso e todos os próximos da mesma série?\n\nOK = este e próximos\nCancelar = somente este mês"
+    );
+    const scope = deleteFuture ? "future" : "single";
+    await onDeleteTransaction(tx.id, scope);
+  }
+
+  async function onDeleteCreditCommitment(tx) {
+    const rawId = String(tx?.id || "");
+    const match = rawId.match(/^ccf-(\d+)$/i);
+    if (!match) {
+      setTxMsg("ID inválido para exclusão do compromisso no cartão.");
+      return;
+    }
+    const deleteFuture = window.confirm(
+      "Excluir este compromisso do cartão e os próximos da mesma série?\n\nOK = este e próximos\nCancelar = somente este mês"
+    );
+    const scope = deleteFuture ? "future" : "single";
+    try {
+      await deleteCreditCommitment(Number(match[1]), { scope });
+      await reloadTransactions();
+      await reloadCardsData();
+      await reloadDashboard();
+      const dash = await getKpis();
+      setKpis(dash);
+      setTxMsg("Compromisso no cartão excluído.");
+    } catch (err) {
+      setTxMsg(String(err.message || err));
+    }
   }
 
   async function onConfirmPayCommitment() {
@@ -1417,12 +1487,16 @@ export default function App() {
     const name = String(cardName || "").trim();
     const accId = Number(cardAccountId);
     const due = Number(String(cardDueDay || "0"));
+    const close = Number(String(cardCloseDay || "0"));
     const isCredit = cardType === "Credito";
     if (
       !name ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
-      (isCredit && (!Number.isFinite(due) || due < 1 || due > 31))
+      (
+        isCredit &&
+        (!Number.isFinite(due) || due < 1 || due > 31 || !Number.isFinite(close) || close < 1 || close > 31 || close >= due)
+      )
     ) {
       if (!Number.isFinite(accId) || accId <= 0) {
         setCardMsg("Selecione a conta banco vinculada ao cartão.");
@@ -1430,7 +1504,7 @@ export default function App() {
       }
       setCardMsg(
         isCredit
-          ? "Preencha nome, tipo, conta banco vinculada e vencimento."
+          ? "Preencha nome, tipo, conta banco vinculada, fechamento e vencimento."
           : "Preencha nome, tipo e conta banco vinculada ao cartão."
       );
       return;
@@ -1444,6 +1518,7 @@ export default function App() {
         card_account_id: accId,
         source_account_id: accId,
         due_day: isCredit ? due : null,
+        close_day: isCredit ? close : null,
       });
       setCardMsg("Cartão cadastrado.");
       await reloadCardsData();
@@ -1460,6 +1535,7 @@ export default function App() {
     const name = String(cardName || "").trim();
     const accId = Number(cardAccountId);
     const due = Number(String(cardDueDay || "0"));
+    const close = Number(String(cardCloseDay || "0"));
     const isCredit = cardType === "Credito";
     if (
       !Number.isFinite(id) ||
@@ -1467,7 +1543,10 @@ export default function App() {
       !name ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
-      (isCredit && (!Number.isFinite(due) || due < 1 || due > 31))
+      (
+        isCredit &&
+        (!Number.isFinite(due) || due < 1 || due > 31 || !Number.isFinite(close) || close < 1 || close > 31 || close >= due)
+      )
     ) {
       if (!Number.isFinite(accId) || accId <= 0) {
         setCardMsg("Selecione a conta banco vinculada ao cartão.");
@@ -1485,6 +1564,7 @@ export default function App() {
         card_account_id: accId,
         source_account_id: accId,
         due_day: isCredit ? due : null,
+        close_day: isCredit ? close : null,
       });
       setCardMsg("Cartão atualizado.");
       await reloadCardsData();
@@ -1521,6 +1601,7 @@ export default function App() {
     setCardAccountId(String(cur.card_account_id || ""));
     setCardSourceAccountId(String(cur.source_account_id || ""));
     setCardDueDay(String(cur.due_day || 10));
+    setCardCloseDay(String(cur.close_day || Math.max(1, Number(cur.due_day || 10) - 5)));
   }
 
   async function onPayInvoice(invoice, sourceAccountId = null, paymentDateValue = "") {
@@ -2055,14 +2136,31 @@ export default function App() {
                   <input type="text" value="Sem conta Banco cadastrada." disabled />
                 ) : null}
                 {isCreditCardType ? (
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={cardDueDay}
-                    onChange={(e) => setCardDueDay(e.target.value)}
-                    placeholder="Dia do vencimento (1-31)"
-                  />
+                  <>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <span>Dia de fechamento (1-31)</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={cardCloseDay}
+                        onChange={(e) => setCardCloseDay(e.target.value)}
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <span>Dia do vencimento (1-31)</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={cardDueDay}
+                        onChange={(e) => setCardDueDay(e.target.value)}
+                      />
+                    </label>
+                    <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                      Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
+                    </small>
+                  </>
                 ) : (
                   <input type="text" value="Débito imediato na conta banco" disabled />
                 )}
@@ -2102,13 +2200,31 @@ export default function App() {
                   ))}
                 </select>
                 {isCreditCardType ? (
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={cardDueDay}
-                    onChange={(e) => setCardDueDay(e.target.value)}
-                  />
+                  <>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <span>Dia de fechamento (1-31)</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={cardCloseDay}
+                        onChange={(e) => setCardCloseDay(e.target.value)}
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <span>Dia do vencimento (1-31)</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={cardDueDay}
+                        onChange={(e) => setCardDueDay(e.target.value)}
+                      />
+                    </label>
+                    <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                      Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
+                    </small>
+                  </>
                 ) : (
                   <input type="text" value="Débito imediato na conta banco" disabled />
                 )}
@@ -2308,8 +2424,7 @@ export default function App() {
                   <div className="transfer-hint">
                     <strong className="transfer-badge">Transferência</strong>
                     <span>
-                      Fluxo em duas pernas: débito na <b>conta origem</b> e crédito na <b>conta destino</b> (Banco
-                      {" <-> "}Corretora).
+                      Fluxo em duas pernas: débito na <b>conta origem</b> e crédito na <b>conta destino</b> (Banco e/ou Corretora).
                     </span>
                   </div>
                 ) : null}
@@ -2323,23 +2438,60 @@ export default function App() {
                 ) : null}
                 {txIsFutureTab || (txIsExpense && !txIsTransfer && txMethodEffective === "Futuro") ? (
                   <>
-                    <input
-                      name="due_day"
-                      type="number"
-                      min="1"
-                      max="31"
-                      step="1"
-                      placeholder="Dia de vencimento (1-31)"
-                      required
-                    />
+                    <select
+                      name="future_payment_method"
+                      value={txFuturePaymentMethod}
+                      onChange={(e) => setTxFuturePaymentMethod(e.target.value)}
+                    >
+                      <option value="PIX">PIX</option>
+                      <option value="Debito">Débito</option>
+                      <option value="Boleto">Boleto</option>
+                      <option value="Credito">Cartão de Crédito</option>
+                    </select>
+                    {txFuturePaymentMethod === "Credito" ? (
+                      <>
+                        <select
+                          name="card_id"
+                          value={txCardId}
+                          onChange={(e) => setTxCardId(e.target.value)}
+                          required
+                        >
+                          <option value="">Cartão de crédito</option>
+                          {cardsForTxMethod.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} - {c.brand || "Visa"} ({c.linked_account})
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={
+                            selectedTxCard
+                              ? `Fechamento: dia ${selectedTxCard.close_day || Math.max(1, Number(selectedTxCard.due_day || 1) - 5)} | Vencimento: dia ${selectedTxCard.due_day || "-"}`
+                              : "Fechamento/Vencimento serão usados do cadastro do cartão"
+                          }
+                          disabled
+                        />
+                      </>
+                    ) : null}
+                    {txFuturePaymentMethod !== "Credito" ? (
+                      <input
+                        name="due_day"
+                        type="number"
+                        min="1"
+                        max="31"
+                        step="1"
+                        placeholder="Dia de vencimento (1-31)"
+                        required
+                      />
+                    ) : null}
                     <input
                       name="repeat_months"
                       type="number"
                       min="1"
                       max="120"
                       step="1"
-                      defaultValue="1"
-                      placeholder="Meses para replicar"
+                      placeholder={txFuturePaymentMethod === "Credito" ? "Parcelamento (qtd. de parcelas)" : "Meses para replicar"}
                       required
                     />
                   </>
@@ -2513,6 +2665,8 @@ export default function App() {
                         <td>
                           {String(t.source_type || "") === "credit_charge" ? (
                             "-"
+                          ) : String(t.source_type || "") === "credit_commitment" ? (
+                            <button type="button" className="danger" onClick={() => onDeleteCreditCommitment(t)}>Excluir</button>
                           ) : commitmentEdit?.id === t.id ? (
                             <>
                               <button type="button" className="tx-action-primary" onClick={onConfirmPayCommitment}>Confirmar</button>
@@ -2531,7 +2685,7 @@ export default function App() {
                               <button
                                 type="button"
                                 className="danger"
-                                onClick={() => onDeleteTransaction(t.id)}
+                                onClick={() => onDeleteCommitment(t)}
                                 style={{ marginLeft: 8 }}
                               >
                                 Excluir

@@ -24,6 +24,7 @@ class TransactionCreateRequest(BaseModel):
     notes: str | None = None
     due_day: int | None = None
     repeat_months: int | None = None
+    future_payment_method: str | None = None
 
 
 class CommitmentSettleRequest(BaseModel):
@@ -119,6 +120,7 @@ class CreditCardCreateRequest(BaseModel):
     card_account_id: int
     source_account_id: int | None = None
     due_day: int | None = None
+    close_day: int | None = None
 
 
 class CreditCardUpdateRequest(BaseModel):
@@ -129,6 +131,7 @@ class CreditCardUpdateRequest(BaseModel):
     card_account_id: int
     source_account_id: int | None = None
     due_day: int | None = None
+    close_day: int | None = None
 
 
 class CreditCardPayInvoiceRequest(BaseModel):

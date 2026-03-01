@@ -176,8 +176,14 @@ export function createTransaction(payload) {
   });
 }
 
-export function deleteTransaction(id) {
-  return req(`/transactions/${id}`, {
+export function deleteTransaction(id, params = {}) {
+  return req(`/transactions/${id}${qs(params)}`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteCreditCommitment(id, params = {}) {
+  return req(`/credit-commitments/${id}${qs(params)}`, {
     method: "DELETE",
   });
 }

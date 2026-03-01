@@ -31,10 +31,11 @@ def _apply_future_visibility(df: pd.DataFrame, mode: str) -> pd.DataFrame:
     today = pd.Timestamp.today().normalize()
 
     if mode == "futuro":
-        return d.loc[d["is_future_entry"] & (d["date"] >= today)].copy()
+        # Compromissos: mostra todos (a vencer e vencidos), sem executar automaticamente.
+        return d.loc[d["is_future_entry"]].copy()
 
-    # Caixa/Competência: lançamentos futuros só passam a contar no dia do vencimento.
-    keep = (~d["is_future_entry"]) | (d["date"] <= today)
+    # Caixa/Competência: compromissos não entram até liquidação manual.
+    keep = ~d["is_future_entry"]
     return d.loc[keep].copy()
 
 
@@ -77,6 +78,10 @@ def _df_transactions_cash(date_from: str | None = None, date_to: str | None = No
         df["invoice_period"] = None
         df["due_date"] = None
         df["card_name"] = None
+        m = _future_method_mask(df)
+        today = pd.Timestamp.today().normalize()
+        df.loc[m & (df["date"] < today), "charge_status"] = "Vencido"
+        df.loc[m & (df["date"] >= today), "charge_status"] = "Pendente"
     return df
 
 
@@ -94,7 +99,20 @@ def df_transactions(
     cash_df = _apply_future_visibility(cash_df, mode)
 
     if mode == "futuro":
-        return cash_df.sort_values(["date", "id"]).reset_index(drop=True) if not cash_df.empty else cash_df
+        cc_future_rows = repo.fetch_credit_charges_future(date_from=date_from, date_to=date_to, user_id=user_id) or []
+        cc_future_df = pd.DataFrame([dict(r) for r in cc_future_rows])
+        if not cc_future_df.empty:
+            cc_future_df["date"] = pd.to_datetime(cc_future_df["date"])
+            today = pd.Timestamp.today().normalize()
+            cc_future_df = cc_future_df.loc[cc_future_df["date"] >= today].copy()
+        if cash_df.empty and cc_future_df.empty:
+            return pd.DataFrame()
+        if cash_df.empty:
+            return cc_future_df.sort_values(["date", "id"]).reset_index(drop=True)
+        if cc_future_df.empty:
+            return cash_df.sort_values(["date", "id"]).reset_index(drop=True)
+        union_fut = pd.concat([cash_df, cc_future_df], ignore_index=True, sort=False)
+        return union_fut.sort_values(["date", "id"]).reset_index(drop=True)
 
     if mode == "caixa":
         return cash_df
@@ -187,18 +205,14 @@ def cash_balance_timeseries(date_from=None, date_to=None, user_id: int | None = 
 def account_balance_by_id(account_id: int, user_id: int | None = None) -> float:
     uid = _uid(user_id)
     conn = get_conn()
-    today = pd.Timestamp.today().strftime("%Y-%m-%d")
     row = conn.execute(
         """
         SELECT COALESCE(SUM(amount_brl), 0) AS bal
         FROM transactions
         WHERE account_id = ? AND user_id = ?
-          AND (
-            UPPER(TRIM(COALESCE(method, ''))) NOT IN ('FUTURO', 'AGENDADO')
-            OR date <= ?
-          )
+          AND UPPER(TRIM(COALESCE(method, ''))) NOT IN ('FUTURO', 'AGENDADO')
         """,
-        (account_id, uid, today),
+        (account_id, uid),
     ).fetchone()
     conn.close()
     return float(row["bal"] if row else 0.0)
@@ -247,4 +261,16 @@ def commitments_summary(
     today = pd.Timestamp.today().normalize()
     a_vencer = float(df.loc[df["date"] >= today, "amount_brl"].abs().sum())
     vencidos = float(df.loc[df["date"] < today, "amount_brl"].abs().sum())
+
+    # Compromissos em cartão ainda não faturados (futuros).
+    cc_rows = repo.fetch_credit_charges_future(date_from=date_from, date_to=date_to, user_id=uid) or []
+    if cc_rows:
+        cdf = pd.DataFrame([dict(r) for r in cc_rows])
+        cdf["date"] = pd.to_datetime(cdf["date"], errors="coerce")
+        cdf["amount_brl"] = pd.to_numeric(cdf["amount_brl"], errors="coerce").fillna(0.0)
+        if account:
+            cdf = cdf.loc[cdf["account"].astype(str) == str(account)]
+        cdf = cdf.loc[cdf["date"] >= today]
+        a_vencer += float(cdf["amount_brl"].abs().sum())
+
     return {"a_vencer": a_vencer, "vencidos": vencidos}

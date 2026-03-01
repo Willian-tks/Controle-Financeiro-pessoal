@@ -4,6 +4,7 @@ import os
 import calendar
 from typing import Any
 from datetime import date as _date
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -583,12 +584,72 @@ def create_transaction(
     if method == "Futuro" and kind != "Despesa":
         raise HTTPException(status_code=400, detail="Método Futuro só é permitido para Despesa.")
     if method == "Futuro":
-        due_day = int(body.due_day or 0)
-        if due_day < 1 or due_day > 31:
-            raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31.")
+        future_pay_raw = (body.future_payment_method or "").strip()
+        future_pay_l = future_pay_raw.lower()
+        if future_pay_l in {"credito", "crédito", "cartao", "cartão", "cartao de credito", "cartão de crédito"}:
+            future_pay = "Credito"
+        elif future_pay_l in {"debito", "débito"}:
+            future_pay = "Debito"
+        elif future_pay_l in {"boleto"}:
+            future_pay = "Boleto"
+        else:
+            future_pay = "PIX"
         repeat_months = int(body.repeat_months or 1)
         if repeat_months < 1 or repeat_months > 120:
             raise HTTPException(status_code=400, detail="Meses para replicar deve estar entre 1 e 120.")
+
+        if future_pay == "Credito":
+            if body.card_id is None:
+                raise HTTPException(status_code=400, detail="Selecione um cartão de crédito para compromisso no cartão.")
+            card_cfg = repo.get_credit_card_by_id_and_type(int(body.card_id), "Credito", user_id=uid)
+            if not card_cfg:
+                raise HTTPException(status_code=400, detail="Cartão de crédito inválido ou não encontrado.")
+            cycle_day = int(card_cfg["close_day"]) if card_cfg["close_day"] is not None else max(1, int(card_cfg["due_day"]) - 5)
+            if cycle_day < 1 or cycle_day > 31:
+                raise HTTPException(status_code=400, detail="Dia de fechamento inválido no cartão.")
+
+            today = _date.today()
+            start_y, start_m = int(today.year), int(today.month)
+            if int(today.day) > int(cycle_day):
+                start_y, start_m = _add_months(start_y, start_m, 1)
+
+            # Replica o valor informado em cada mês do parcelamento.
+            recurrence_id = f"FUTCC-{uuid4().hex}"
+            parcels = int(repeat_months)
+            created = 0
+            first_date = None
+            last_date = None
+            for i in range(parcels):
+                yy, mm = _add_months(start_y, start_m, i)
+                purchase_date = _due_date_for_month(yy, mm, cycle_day)
+                if first_date is None:
+                    first_date = purchase_date
+                last_date = purchase_date
+                value_i = round(float(amount_abs), 2)
+                desc_i = f"{desc} ({i + 1}/{parcels})" if parcels > 1 else desc
+                note_i = f"[{recurrence_id}] {notes}" if notes else f"[{recurrence_id}]"
+                repo.register_credit_charge(
+                    card_id=int(card_cfg["id"]),
+                    purchase_date=purchase_date,
+                    amount=float(value_i),
+                    category_id=int(category_id) if category_id is not None else None,
+                    description=desc_i,
+                    note=note_i,
+                    user_id=uid,
+                )
+                created += 1
+            return {
+                "ok": True,
+                "mode": "future_credit_schedule",
+                "created": created,
+                "first_date": first_date,
+                "last_date": last_date,
+                "recurrence_id": recurrence_id,
+            }
+
+        due_day = int(body.due_day or 0)
+        if due_day < 1 or due_day > 31:
+            raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31.")
 
         today = _date.today()
         start_y, start_m = int(today.year), int(today.month)
@@ -596,6 +657,7 @@ def create_transaction(
             start_y, start_m = _add_months(start_y, start_m, 1)
 
         cat_id = int(category_id) if category_id is not None else None
+        recurrence_id = f"FUT-{uuid4().hex}"
         created = 0
         first_date = None
         last_date = None
@@ -611,12 +673,20 @@ def create_transaction(
                 amount=-amount_abs,
                 account_id=destination_id,
                 category_id=cat_id,
+                recurrence_id=recurrence_id,
                 method="Futuro",
-                notes=notes,
+                notes=(f"Forma: {future_pay} | {notes}" if notes else f"Forma: {future_pay}"),
                 user_id=uid,
             )
             created += 1
-        return {"ok": True, "mode": "future_schedule", "created": created, "first_date": first_date, "last_date": last_date}
+        return {
+            "ok": True,
+            "mode": "future_schedule",
+            "created": created,
+            "first_date": first_date,
+            "last_date": last_date,
+            "recurrence_id": recurrence_id,
+        }
 
     if kind == "Transferencia":
         if body.source_account_id is None:
@@ -636,11 +706,6 @@ def create_transaction(
             raise HTTPException(
                 status_code=400,
                 detail="Para Transferência, use apenas contas do tipo Banco ou Corretora",
-            )
-        if src_type == dst_type:
-            raise HTTPException(
-                status_code=400,
-                detail="Para Transferência, origem e destino devem ser de tipos diferentes (Banco <-> Corretora)",
             )
 
         src_name = str(source.get("name") or "Origem")
@@ -760,8 +825,14 @@ def create_card(
         if body.due_day is None or int(body.due_day) < 1 or int(body.due_day) > 31:
             raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31 para cartão Crédito")
         due_day = int(body.due_day)
+        close_day = int(body.close_day) if body.close_day is not None else max(1, due_day - 5)
+        if close_day < 1 or close_day > 31:
+            raise HTTPException(status_code=400, detail="Dia de fechamento deve estar entre 1 e 31 para cartão Crédito")
+        if close_day >= due_day:
+            raise HTTPException(status_code=400, detail="Dia de fechamento deve ser anterior ao vencimento.")
     else:
         due_day = 1
+        close_day = None
 
     try:
         repo.create_credit_card(
@@ -772,6 +843,7 @@ def create_card(
             card_account_id=int(body.card_account_id),
             source_account_id=int(body.card_account_id),
             due_day=due_day,
+            close_day=close_day,
             user_id=uid,
         )
     except Exception as e:
@@ -803,8 +875,14 @@ def update_card(
         if body.due_day is None or int(body.due_day) < 1 or int(body.due_day) > 31:
             raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31 para cartão Crédito")
         due_day = int(body.due_day)
+        close_day = int(body.close_day) if body.close_day is not None else max(1, due_day - 5)
+        if close_day < 1 or close_day > 31:
+            raise HTTPException(status_code=400, detail="Dia de fechamento deve estar entre 1 e 31 para cartão Crédito")
+        if close_day >= due_day:
+            raise HTTPException(status_code=400, detail="Dia de fechamento deve ser anterior ao vencimento.")
     else:
         due_day = 1
+        close_day = None
     try:
         repo.update_credit_card(
             card_id=int(card_id),
@@ -815,6 +893,7 @@ def update_card(
             card_account_id=int(body.card_account_id),
             source_account_id=int(body.card_account_id),
             due_day=due_day,
+            close_day=close_day,
             user_id=uid,
         )
     except Exception as e:
@@ -873,11 +952,29 @@ def pay_card_invoice(
 @app.delete("/transactions/{tx_id}")
 def delete_transaction(
     tx_id: int,
+    scope: str = Query(default="single"),
     user: dict = Depends(_current_user),
 ) -> dict:
     uid = int(user["id"])
-    repo.delete_transaction(int(tx_id), user_id=uid)
-    return {"ok": True}
+    mode = str(scope or "single").strip().lower()
+    if mode not in {"single", "future"}:
+        raise HTTPException(status_code=400, detail="Escopo inválido. Use 'single' ou 'future'.")
+    deleted = repo.delete_transaction_with_scope(int(tx_id), scope=mode, user_id=uid)
+    return {"ok": True, "deleted": int(deleted), "scope": mode}
+
+
+@app.delete("/credit-commitments/{charge_id}")
+def delete_credit_commitment(
+    charge_id: int,
+    scope: str = Query(default="single"),
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    mode = str(scope or "single").strip().lower()
+    if mode not in {"single", "future"}:
+        raise HTTPException(status_code=400, detail="Escopo inválido. Use 'single' ou 'future'.")
+    deleted = repo.delete_credit_commitment_with_scope(int(charge_id), scope=mode, user_id=uid)
+    return {"ok": True, "deleted": int(deleted), "scope": mode}
 
 
 @app.post("/transactions/{tx_id}/settle-commitment")

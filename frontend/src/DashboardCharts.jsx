@@ -1,6 +1,7 @@
 import {
   BarChart,
   Bar,
+  Cell,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -9,6 +10,51 @@ import {
   LineChart,
   Line,
 } from "recharts";
+
+const EXPENSE_CATEGORY_COLORS = {
+  servicos: "#4e79ff",
+  mesada: "#00b8a9",
+  casa: "#ff8a3d",
+  creditos_bancarios: "#9b7bff",
+  seguros: "#f4c84b",
+  agropecuaria: "#24c16d",
+  agua: "#27b4d8",
+  luz: "#ff6b7a",
+};
+
+const EXPENSE_FALLBACK_COLORS = [
+  "#4e79ff",
+  "#00b8a9",
+  "#ff8a3d",
+  "#9b7bff",
+  "#f4c84b",
+  "#24c16d",
+  "#27b4d8",
+  "#ff6b7a",
+];
+
+function normalizeCategory(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_");
+}
+
+function fallbackColor(value) {
+  const key = normalizeCategory(value);
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  return EXPENSE_FALLBACK_COLORS[hash % EXPENSE_FALLBACK_COLORS.length];
+}
+
+function categoryColor(category) {
+  const key = normalizeCategory(category);
+  return EXPENSE_CATEGORY_COLORS[key] || fallbackColor(category);
+}
 
 export default function DashboardCharts({ monthly, expenses }) {
   return (
@@ -42,7 +88,11 @@ export default function DashboardCharts({ monthly, expenses }) {
                 <XAxis dataKey="category" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="valor" fill="#3b82f6" />
+                <Bar dataKey="valor">
+                  {expenses.map((item, idx) => (
+                    <Cell key={`expense-cell-${String(item?.category || idx)}`} fill={categoryColor(item?.category)} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>

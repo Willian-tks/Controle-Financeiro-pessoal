@@ -2,6 +2,7 @@ from db import get_conn
 from tenant import get_current_user_id
 from datetime import date, datetime
 import calendar
+import re
 
 
 def _uid(user_id: int | None = None) -> int:
@@ -100,13 +101,14 @@ def insert_transaction(
     method: str | None,
     notes: str | None,
     user_id: int | None = None,
+    recurrence_id: str | None = None,
 ):
     uid = _uid(user_id)
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO transactions(date, description, amount_brl, account_id, category_id, recurrence_id, method, notes, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             date,
@@ -114,6 +116,7 @@ def insert_transaction(
             float(amount),
             int(account_id),
             int(category_id) if category_id else None,
+            recurrence_id.strip() if recurrence_id else None,
             method.strip() if method else None,
             notes.strip() if notes else None,
             uid,
@@ -132,6 +135,207 @@ def delete_transaction(tx_id: int, user_id: int | None = None):
     )
     conn.commit()
     conn.close()
+
+
+def delete_transaction_with_scope(tx_id: int, scope: str = "single", user_id: int | None = None) -> int:
+    uid = _uid(user_id)
+    mode = str(scope or "single").strip().lower()
+    if mode not in {"single", "future"}:
+        mode = "single"
+
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id, date, description, amount_brl, category_id, account_id, recurrence_id, method, notes
+        FROM transactions
+        WHERE id = ? AND user_id = ?
+        """,
+        (int(tx_id), uid),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return 0
+
+    method = str(row["method"] or "").strip().upper()
+    is_commitment = method in {"FUTURO", "AGENDADO"}
+    if mode != "future" or not is_commitment:
+        cur = conn.execute("DELETE FROM transactions WHERE id = ? AND user_id = ?", (int(tx_id), uid))
+        conn.commit()
+        deleted = cur.rowcount if cur.rowcount is not None else 0
+        conn.close()
+        return int(deleted)
+
+    recurrence_id = str(row["recurrence_id"] or "").strip()
+    if recurrence_id:
+        cur = conn.execute(
+            """
+            DELETE FROM transactions
+            WHERE user_id = ?
+              AND recurrence_id = ?
+              AND date >= ?
+            """,
+            (uid, recurrence_id, str(row["date"])),
+        )
+        conn.commit()
+        deleted = cur.rowcount if cur.rowcount is not None else 0
+        conn.close()
+        return int(deleted)
+
+    # Fallback para séries antigas sem recurrence_id: remove "este e próximos" por assinatura.
+    cur = conn.execute(
+        """
+        DELETE FROM transactions
+        WHERE user_id = ?
+          AND UPPER(TRIM(COALESCE(method, ''))) IN ('FUTURO', 'AGENDADO')
+          AND account_id = ?
+          AND COALESCE(category_id, 0) = COALESCE(?, 0)
+          AND description = ?
+          AND amount_brl = ?
+          AND COALESCE(notes, '') = COALESCE(?, '')
+          AND date >= ?
+        """,
+        (
+            uid,
+            int(row["account_id"]),
+            row["category_id"],
+            str(row["description"] or ""),
+            float(row["amount_brl"] or 0.0),
+            row["notes"],
+            str(row["date"]),
+        ),
+    )
+    conn.commit()
+    deleted = cur.rowcount if cur.rowcount is not None else 0
+    conn.close()
+    return int(deleted)
+
+
+def _extract_future_credit_group(note: str | None) -> str:
+    txt = str(note or "").strip()
+    m = re.search(r"\[(FUTCC-[a-zA-Z0-9]+)\]", txt)
+    return str(m.group(1)) if m else ""
+
+
+def _base_installment_description(description: str | None) -> str:
+    txt = str(description or "").strip()
+    return re.sub(r"\s*\(\d+/\d+\)\s*$", "", txt).strip()
+
+
+def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", user_id: int | None = None) -> int:
+    uid = _uid(user_id)
+    mode = str(scope or "single").strip().lower()
+    if mode not in {"single", "future"}:
+        mode = "single"
+
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id, card_id, invoice_period, amount, purchase_date, paid, note, category_id, description
+        FROM credit_card_charges
+        WHERE id = ? AND user_id = ?
+        """,
+        (int(charge_id), uid),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return 0
+
+    paid_flag = str(row["paid"] if row["paid"] is not None else "0").strip().lower()
+    if paid_flag in {"1", "true"}:
+        conn.close()
+        return 0
+
+    amounts_by_invoice: dict[tuple[int, str], float] = {}
+    ids_to_delete: list[int] = []
+
+    if mode == "future":
+        group_id = _extract_future_credit_group(row["note"])
+        if group_id:
+            rows = conn.execute(
+                """
+                SELECT id, card_id, invoice_period, amount
+                FROM credit_card_charges
+                WHERE user_id = ?
+                  AND paid IN (0, FALSE, '0', 'false', 'FALSE')
+                  AND purchase_date >= ?
+                  AND COALESCE(note, '') LIKE ?
+                """,
+                (uid, str(row["purchase_date"]), f"%[{group_id}]%"),
+            ).fetchall()
+            for r in rows:
+                ids_to_delete.append(int(r["id"]))
+                key = (int(r["card_id"]), str(r["invoice_period"]))
+                amounts_by_invoice[key] = float(amounts_by_invoice.get(key, 0.0)) + abs(float(r["amount"] or 0.0))
+        else:
+            base_desc = _base_installment_description(row["description"])
+            if base_desc:
+                rows = conn.execute(
+                    """
+                    SELECT id, card_id, invoice_period, amount
+                    FROM credit_card_charges
+                    WHERE user_id = ?
+                      AND paid IN (0, FALSE, '0', 'false', 'FALSE')
+                      AND card_id = ?
+                      AND COALESCE(category_id, 0) = COALESCE(?, 0)
+                      AND purchase_date >= ?
+                      AND (
+                            description = ?
+                            OR description LIKE ?
+                          )
+                    """,
+                    (
+                        uid,
+                        int(row["card_id"]),
+                        row["category_id"],
+                        str(row["purchase_date"]),
+                        base_desc,
+                        f"{base_desc} (%",
+                    ),
+                ).fetchall()
+                for r in rows:
+                    ids_to_delete.append(int(r["id"]))
+                    key = (int(r["card_id"]), str(r["invoice_period"]))
+                    amounts_by_invoice[key] = float(amounts_by_invoice.get(key, 0.0)) + abs(float(r["amount"] or 0.0))
+
+    if not ids_to_delete:
+        ids_to_delete = [int(row["id"])]
+        key = (int(row["card_id"]), str(row["invoice_period"]))
+        amounts_by_invoice[key] = abs(float(row["amount"] or 0.0))
+
+    marks = ",".join(["?"] * len(ids_to_delete))
+    conn.execute(
+        f"DELETE FROM credit_card_charges WHERE user_id = ? AND id IN ({marks})",
+        [uid, *ids_to_delete],
+    )
+
+    for (card_id, invoice_period), removed_amount in amounts_by_invoice.items():
+        inv = conn.execute(
+            """
+            SELECT id, total_amount, paid_amount
+            FROM credit_card_invoices
+            WHERE user_id = ? AND card_id = ? AND invoice_period = ?
+            """,
+            (uid, int(card_id), str(invoice_period)),
+        ).fetchone()
+        if not inv:
+            continue
+        total = float(inv["total_amount"] or 0.0) - float(removed_amount or 0.0)
+        if total < 0:
+            total = 0.0
+        paid = float(inv["paid_amount"] or 0.0)
+        status = "OPEN" if total > paid else "PAID"
+        if total <= 0 and paid <= 0:
+            conn.execute("DELETE FROM credit_card_invoices WHERE id = ? AND user_id = ?", (int(inv["id"]), uid))
+        else:
+            conn.execute(
+                "UPDATE credit_card_invoices SET total_amount = ?, status = ? WHERE id = ? AND user_id = ?",
+                (total, status, int(inv["id"]), uid),
+            )
+
+    conn.commit()
+    deleted = len(ids_to_delete)
+    conn.close()
+    return int(deleted)
 
 
 def get_transaction_by_id(tx_id: int, user_id: int | None = None):
@@ -451,7 +655,7 @@ def list_credit_cards(user_id: int | None = None):
         SELECT
             cc.id, cc.name, cc.card_account_id, ca.name AS linked_account, ca.type AS linked_account_type,
             cc.source_account_id, sa.name AS source_account, sa.type AS source_account_type,
-            cc.due_day, COALESCE(cc.brand, 'Visa') AS brand, COALESCE(cc.model, 'Black') AS model, COALESCE(cc.card_type, 'Credito') AS card_type
+            cc.due_day, cc.close_day, COALESCE(cc.brand, 'Visa') AS brand, COALESCE(cc.model, 'Black') AS model, COALESCE(cc.card_type, 'Credito') AS card_type
         FROM credit_cards cc
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
         JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
@@ -472,14 +676,15 @@ def create_credit_card(
     card_account_id: int,
     source_account_id: int | None,
     due_day: int,
+    close_day: int | None = None,
     user_id: int | None = None,
 ):
     uid = _uid(user_id)
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO credit_cards(name, brand, model, card_type, card_account_id, source_account_id, due_day, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO credit_cards(name, brand, model, card_type, card_account_id, source_account_id, due_day, close_day, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name.strip(),
@@ -489,6 +694,7 @@ def create_credit_card(
             int(card_account_id),
             int(source_account_id) if source_account_id is not None else int(card_account_id),
             int(due_day),
+            int(close_day) if close_day is not None else None,
             uid,
         ),
     )
@@ -505,6 +711,7 @@ def update_credit_card(
     card_account_id: int,
     source_account_id: int | None,
     due_day: int,
+    close_day: int | None = None,
     user_id: int | None = None,
 ):
     uid = _uid(user_id)
@@ -512,7 +719,7 @@ def update_credit_card(
     conn.execute(
         """
         UPDATE credit_cards
-        SET name = ?, brand = ?, model = ?, card_type = ?, card_account_id = ?, source_account_id = ?, due_day = ?
+        SET name = ?, brand = ?, model = ?, card_type = ?, card_account_id = ?, source_account_id = ?, due_day = ?, close_day = ?
         WHERE id = ? AND user_id = ?
         """,
         (
@@ -523,6 +730,7 @@ def update_credit_card(
             int(card_account_id),
             int(source_account_id) if source_account_id is not None else int(card_account_id),
             int(due_day),
+            int(close_day) if close_day is not None else None,
             int(card_id),
             uid,
         ),
@@ -556,7 +764,7 @@ def get_credit_card_by_account_and_type(card_account_id: int, card_type: str, us
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day
+        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day, close_day
         FROM credit_cards
         WHERE card_account_id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ?
         """,
@@ -571,7 +779,7 @@ def get_credit_card_by_id_and_type(card_id: int, card_type: str, user_id: int | 
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day
+        SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day, close_day
         FROM credit_cards
         WHERE id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ?
         """,
@@ -581,12 +789,29 @@ def get_credit_card_by_id_and_type(card_id: int, card_type: str, user_id: int | 
     return row
 
 
-def _next_month_due_date(purchase_date: str, due_day: int) -> tuple[str, str]:
+def _due_date_by_cycle(purchase_date: str, due_day: int, close_day: int | None = None) -> tuple[str, str]:
+    """
+    Regra do ciclo:
+    - compra com dia <= fechamento: entra na fatura do mês corrente;
+    - compra com dia > fechamento: entra na próxima fatura.
+    """
     d = datetime.strptime(purchase_date, "%Y-%m-%d").date()
-    y = d.year + (1 if d.month == 12 else 0)
-    m = 1 if d.month == 12 else d.month + 1
+    due_d = int(due_day)
+    close_d = int(close_day) if close_day is not None else 0
+
+    if close_d > 0:
+        if int(d.day) <= close_d:
+            y, m = d.year, d.month
+        else:
+            y = d.year + (1 if d.month == 12 else 0)
+            m = 1 if d.month == 12 else d.month + 1
+    else:
+        # Compatibilidade com cartões antigos sem close_day:
+        y = d.year + (1 if d.month == 12 else 0)
+        m = 1 if d.month == 12 else d.month + 1
+
     last = calendar.monthrange(y, m)[1]
-    day = max(1, min(int(due_day), last))
+    day = max(1, min(due_d, last))
     due = date(y, m, day)
     return due.strftime("%Y-%m"), due.strftime("%Y-%m-%d")
 
@@ -603,14 +828,18 @@ def register_credit_charge(
     uid = _uid(user_id)
     conn = get_conn()
     card = conn.execute(
-        "SELECT id, due_day FROM credit_cards WHERE id = ? AND user_id = ?",
+        "SELECT id, due_day, close_day FROM credit_cards WHERE id = ? AND user_id = ?",
         (int(card_id), uid),
     ).fetchone()
     if not card:
         conn.close()
         raise ValueError("Cartão não encontrado.")
 
-    invoice_period, due_date = _next_month_due_date(purchase_date, int(card["due_day"]))
+    invoice_period, due_date = _due_date_by_cycle(
+        purchase_date,
+        int(card["due_day"]),
+        int(card["close_day"]) if card["close_day"] is not None else None,
+    )
     value = abs(float(amount))
     conn.execute(
         """
@@ -691,6 +920,49 @@ def fetch_credit_charges_competencia(
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
         LEFT JOIN categories c ON c.id = ch.category_id AND c.user_id = ch.user_id
         WHERE ch.user_id = ?
+    """
+    params: list = [uid]
+    if date_from:
+        q += " AND ch.purchase_date >= ?"
+        params.append(date_from)
+    if date_to:
+        q += " AND ch.purchase_date <= ?"
+        params.append(date_to)
+    q += " ORDER BY ch.purchase_date ASC, ch.id ASC"
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return rows
+
+
+def fetch_credit_charges_future(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
+    conn = get_conn()
+    q = """
+        SELECT
+            ('ccf-' || CAST(ch.id AS TEXT)) AS id,
+            ch.purchase_date AS date,
+            COALESCE(ch.description, ('COMPROMISSO CARTAO ' || cc.name)) AS description,
+            -ABS(ch.amount) AS amount_brl,
+            ca.name AS account,
+            c.name AS category,
+            'Despesa' AS category_kind,
+            'Futuro' AS method,
+            ch.note AS notes,
+            'credit_commitment' AS source_type,
+            'Aguardando Fatura' AS charge_status,
+            ch.invoice_period,
+            ch.due_date,
+            cc.name AS card_name
+        FROM credit_card_charges ch
+        JOIN credit_cards cc ON cc.id = ch.card_id AND cc.user_id = ch.user_id
+        JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
+        LEFT JOIN categories c ON c.id = ch.category_id AND c.user_id = ch.user_id
+        WHERE ch.user_id = ?
+          AND ch.paid IN (0, FALSE, '0', 'false', 'FALSE')
     """
     params: list = [uid]
     if date_from:

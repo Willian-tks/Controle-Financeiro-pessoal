@@ -161,6 +161,7 @@ def _sqlite_schema(cur):
         amount_brl REAL NOT NULL,
         category_id INTEGER,
         account_id INTEGER NOT NULL,
+        recurrence_id TEXT,
         method TEXT,
         notes TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -183,6 +184,7 @@ def _sqlite_schema(cur):
         card_account_id INTEGER NOT NULL,
         source_account_id INTEGER NOT NULL,
         due_day INTEGER NOT NULL,
+        close_day INTEGER,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         user_id INTEGER,
         FOREIGN KEY(card_account_id) REFERENCES accounts(id),
@@ -364,6 +366,7 @@ def _postgres_schema(cur):
         amount_brl DOUBLE PRECISION NOT NULL,
         category_id BIGINT,
         account_id BIGINT NOT NULL,
+        recurrence_id TEXT,
         method TEXT,
         notes TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -386,6 +389,7 @@ def _postgres_schema(cur):
         card_account_id BIGINT NOT NULL,
         source_account_id BIGINT NOT NULL,
         due_day INTEGER NOT NULL,
+        close_day INTEGER,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         user_id BIGINT,
         CONSTRAINT fk_cc_card_account FOREIGN KEY (card_account_id) REFERENCES accounts(id),
@@ -522,6 +526,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS show_on_dashboard BOOLEAN NOT NULL DEFAULT FALSE")
     cur.execute("ALTER TABLE categories ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS recurrence_id TEXT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS sector TEXT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id BIGINT")
@@ -533,6 +538,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'Visa'")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT 'Black'")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS card_type TEXT NOT NULL DEFAULT 'Credito'")
+    cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS close_day INTEGER")
     cur.execute("ALTER TABLE credit_card_invoices ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS category_id BIGINT")
@@ -587,6 +593,7 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "accounts", "show_on_dashboard INTEGER NOT NULL DEFAULT 0")
     _add_column_sqlite(cur, "categories", "user_id INTEGER")
     _add_column_sqlite(cur, "transactions", "user_id INTEGER")
+    _add_column_sqlite(cur, "transactions", "recurrence_id TEXT")
     _add_column_sqlite(cur, "assets", "user_id INTEGER")
     _add_column_sqlite(cur, "assets", "sector TEXT")
     _add_column_sqlite(cur, "trades", "user_id INTEGER")
@@ -598,6 +605,7 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "credit_cards", "brand TEXT NOT NULL DEFAULT 'Visa'")
     _add_column_sqlite(cur, "credit_cards", "model TEXT NOT NULL DEFAULT 'Black'")
     _add_column_sqlite(cur, "credit_cards", "card_type TEXT NOT NULL DEFAULT 'Credito'")
+    _add_column_sqlite(cur, "credit_cards", "close_day INTEGER")
     _add_column_sqlite(cur, "credit_card_invoices", "user_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "user_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "category_id INTEGER")
