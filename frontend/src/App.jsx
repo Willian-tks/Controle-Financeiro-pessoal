@@ -41,6 +41,7 @@ import {
   getCards,
   getCategories,
   getDashboardAccountBalance,
+  getDashboardCommitmentsSummary,
   getDashboardExpenses,
   getDashboardKpis,
   getDashboardMonthly,
@@ -59,6 +60,7 @@ import {
   importTransactionsCsv,
   login,
   payCardInvoice,
+  settleCommitmentTransaction,
   setToken,
   updateAllInvestPrices,
   updateInvestAsset,
@@ -234,6 +236,7 @@ export default function App() {
   const [dashKpis, setDashKpis] = useState(null);
   const [dashMonthly, setDashMonthly] = useState([]);
   const [dashExpenses, setDashExpenses] = useState([]);
+  const [dashCommitments, setDashCommitments] = useState({ a_vencer: 0, vencidos: 0 });
   const [dashAccountBalance, setDashAccountBalance] = useState([]);
   const [dashDateFrom, setDashDateFrom] = useState(defaultMonthRange.from);
   const [dashDateTo, setDashDateTo] = useState(defaultMonthRange.to);
@@ -247,6 +250,7 @@ export default function App() {
   const [txView, setTxView] = useState("caixa");
   const [txSourceAccountId, setTxSourceAccountId] = useState("");
   const [txCardId, setTxCardId] = useState("");
+  const [commitmentEdit, setCommitmentEdit] = useState(null);
   const [cardMsg, setCardMsg] = useState("");
   const [cardName, setCardName] = useState("");
   const [cardBrand, setCardBrand] = useState("Visa");
@@ -301,6 +305,7 @@ export default function App() {
   const [accEditName, setAccEditName] = useState("");
   const [accEditType, setAccEditType] = useState("Banco");
   const [accEditCurrency, setAccEditCurrency] = useState("BRL");
+  const [accEditShowOnDashboard, setAccEditShowOnDashboard] = useState(false);
   const [catEditId, setCatEditId] = useState("");
   const [catEditName, setCatEditName] = useState("");
   const [catEditKind, setCatEditKind] = useState("Despesa");
@@ -363,6 +368,7 @@ export default function App() {
       setAccEditName("");
       setAccEditType("Banco");
       setAccEditCurrency("BRL");
+      setAccEditShowOnDashboard(false);
       return;
     }
     const cur = accounts.find((a) => String(a.id) === String(accEditId)) || accounts[0];
@@ -370,6 +376,7 @@ export default function App() {
     setAccEditName(cur.name);
     setAccEditType(cur.type);
     setAccEditCurrency((cur.currency || "BRL").toUpperCase());
+    setAccEditShowOnDashboard(Boolean(cur.show_on_dashboard));
   }, [accounts]);
 
   useEffect(() => {
@@ -452,17 +459,24 @@ export default function App() {
     () => categories.find((c) => String(c.id) === String(txCategoryId)) || null,
     [categories, txCategoryId]
   );
+  const txIsFutureTab = txView === "futuro";
+  const txCategoriesForForm = useMemo(
+    () => (txIsFutureTab ? categories.filter((c) => String(c.kind) === "Despesa") : categories),
+    [categories, txIsFutureTab]
+  );
   const txEffectiveKind = txCategory?.kind || "";
   const txIsTransfer = txEffectiveKind === "Transferencia";
   const txIsExpense = txEffectiveKind === "Despesa";
   const txIsIncome = txEffectiveKind === "Receita";
-  const txIsExpenseCredit = txIsExpense && !txIsTransfer && txMethod === "Credito";
+  const txMethodEffective = txIsFutureTab ? "Futuro" : txMethod;
+  const txIsExpenseCredit = txIsExpense && !txIsTransfer && txMethodEffective === "Credito";
   const txMethodOptions = useMemo(() => {
+    if (txIsFutureTab) return ["Futuro"];
     if (txIsIncome) return ["PIX", "TED", "Dinheiro"];
-    if (txIsExpense) return ["PIX", "Debito", "Credito", "TED", "Dinheiro"];
+    if (txIsExpense) return ["PIX", "Debito", "Credito", "Futuro", "TED", "Dinheiro"];
     if (txIsTransfer) return ["PIX", "TED", "Dinheiro"];
     return [];
-  }, [txIsIncome, txIsExpense, txIsTransfer]);
+  }, [txIsFutureTab, txIsIncome, txIsExpense, txIsTransfer]);
   const transferAccounts = useMemo(
     () => accounts.filter((a) => ["Banco", "Corretora"].includes(normalizeAccountType(a.type))),
     [accounts]
@@ -473,15 +487,15 @@ export default function App() {
   );
   const cardsForTxMethod = useMemo(() => {
     if (!txIsExpense || txIsTransfer) return [];
-    if (txMethod === "Credito") return (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito");
+    if (txMethodEffective === "Credito") return (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito");
     return [];
-  }, [cards, txIsExpense, txIsTransfer, txMethod]);
+  }, [cards, txIsExpense, txIsTransfer, txMethodEffective]);
   const selectedTxCard = useMemo(
     () => cardsForTxMethod.find((c) => String(c.id) === String(txCardId)) || null,
     [cardsForTxMethod, txCardId]
   );
   useEffect(() => {
-    if (!txIsExpense || txIsTransfer || txMethod !== "Credito") {
+    if (!txIsExpense || txIsTransfer || txMethodEffective !== "Credito") {
       setTxCardId("");
       return;
     }
@@ -492,7 +506,7 @@ export default function App() {
     if (!txCardId || !cardsForTxMethod.some((c) => String(c.id) === String(txCardId))) {
       setTxCardId(String(cardsForTxMethod[0].id));
     }
-  }, [txIsExpense, txIsTransfer, txMethod, cardsForTxMethod, txCardId]);
+  }, [txIsExpense, txIsTransfer, txMethodEffective, cardsForTxMethod, txCardId]);
 
   useEffect(() => {
     if (!txMethodOptions.length) {
@@ -503,6 +517,17 @@ export default function App() {
       setTxMethod(txMethodOptions[0]);
     }
   }, [txMethodOptions, txMethod]);
+
+  useEffect(() => {
+    if (!txIsFutureTab) return;
+    if (!txCategoriesForForm.length) {
+      setTxCategoryId("");
+      return;
+    }
+    if (!txCategory || String(txCategory.kind) !== "Despesa") {
+      setTxCategoryId(String(txCategoriesForForm[0].id));
+    }
+  }, [txIsFutureTab, txCategoriesForForm, txCategory]);
 
   useEffect(() => {
     if (!txIsTransfer) return;
@@ -572,19 +597,33 @@ export default function App() {
   const trendDelta = trendEnd - trendStart;
   const trendPct = trendStart !== 0 ? (trendDelta / Math.abs(trendStart)) * 100 : 0;
   const sparkPoints = sparklinePoints(trendValues);
-  const accountsTop = useMemo(
-    () =>
-      [...(dashAccountBalance || [])]
-        .sort((a, b) => Number(b.saldo || 0) - Number(a.saldo || 0))
-        .slice(0, 4),
-    [dashAccountBalance]
+  const normalizeMoneyValue = (v) => (Math.abs(Number(v || 0)) < 0.005 ? 0 : Number(v || 0));
+  const accountsTop = useMemo(() => {
+    const byAccount = new Map(
+      [...(dashAccountBalance || [])].map((r) => [String(r.account || ""), Number(r.saldo || 0)])
+    );
+    return [...(accounts || [])]
+      .map((a) => ({
+        account: String(a.name || ""),
+        saldo: normalizeMoneyValue(byAccount.get(String(a.name || "")) ?? 0),
+        showOnDashboard: Boolean(a.show_on_dashboard),
+        fixedManual:
+          Boolean(a.show_on_dashboard) &&
+          Math.abs(Number(normalizeMoneyValue(byAccount.get(String(a.name || "")) ?? 0) || 0)) < 0.005,
+      }))
+      .filter((a) => Math.abs(Number(a.saldo || 0)) >= 0.005 || a.showOnDashboard)
+      .sort((a, b) => Number(b.saldo || 0) - Number(a.saldo || 0));
+  }, [dashAccountBalance, accounts]);
+  const accountsTotal = useMemo(
+    () => normalizeMoneyValue(accountsTop.reduce((acc, r) => acc + Number(r.saldo || 0), 0)),
+    [accountsTop]
   );
-  const expensesTop = useMemo(
-    () =>
-      [...(dashExpenses || [])]
-        .sort((a, b) => Number(b.valor || 0) - Number(a.valor || 0))
-        .slice(0, 4),
-    [dashExpenses]
+  const commitmentsAging = useMemo(
+    () => ({
+      aVencer: Number(dashCommitments?.a_vencer || 0),
+      vencidos: Number(dashCommitments?.vencidos || 0),
+    }),
+    [dashCommitments]
   );
   const creditCards = useMemo(
     () => (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito"),
@@ -771,16 +810,19 @@ export default function App() {
       view: params.view ?? dashView,
     };
     try {
-      const [k, m, e, ab] = await Promise.all([
+      const [k, m, e, ab, cs] = await Promise.all([
         getDashboardKpis(filters),
         getDashboardMonthly(filters),
         getDashboardExpenses(filters),
-        getDashboardAccountBalance(filters),
+        // Saldo de contas sempre no acumulado real (sem filtros de período/conta/visão).
+        getDashboardAccountBalance({ view: "caixa" }),
+        getDashboardCommitmentsSummary(filters),
       ]);
       setDashKpis(k);
       setDashMonthly(m || []);
       setDashExpenses(e || []);
       setDashAccountBalance(ab || []);
+      setDashCommitments(cs || { a_vencer: 0, vencidos: 0 });
       setDashMsg("");
     } catch (err) {
       setDashMsg(String(err.message || err));
@@ -790,6 +832,7 @@ export default function App() {
   async function reloadTransactions(params = {}) {
     const tx = await getTransactions({ view: params.view ?? txView });
     setTransactions(tx);
+    setCommitmentEdit(null);
   }
 
   async function reloadInvestData() {
@@ -828,39 +871,58 @@ export default function App() {
     setTxMsg("");
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
-    const date = String(form.get("date") || "");
     const description = String(form.get("description") || "").trim();
     const amountAbs = Number(String(form.get("amount") || "0").replace(",", "."));
     const accountId = txAccountId ? Number(txAccountId) : NaN;
     const categoryIdRaw = String(txCategoryId || "");
     const categoryId = categoryIdRaw ? Number(categoryIdRaw) : null;
     const category = categories.find((c) => Number(c.id) === Number(categoryId));
-    const method = String(txMethod || "").trim();
+    const method = String(txMethodEffective || "").trim();
     const notes = String(form.get("notes") || "").trim();
+    const dateInput = String(form.get("date") || "");
+    const dueDayInput = Number(String(form.get("due_day") || "0").replace(",", "."));
+    const repeatMonthsInput = Number(String(form.get("repeat_months") || "1").replace(",", "."));
     const effectiveKind = String(category?.kind || "").trim();
     const sourceAccountId = txSourceAccountId ? Number(txSourceAccountId) : NaN;
     const selectedCardId = txCardId ? Number(txCardId) : NaN;
     const cardLinkedAccountId = selectedTxCard ? Number(selectedTxCard.card_account_id) : NaN;
     const effectiveAccountId = txIsExpenseCredit && Number.isFinite(cardLinkedAccountId) ? cardLinkedAccountId : accountId;
+    const isFutureExpense = txIsExpense && !txIsTransfer && method === "Futuro";
+    const date = isFutureExpense ? new Date().toISOString().slice(0, 10) : dateInput;
+    const dueDay = isFutureExpense ? dueDayInput : null;
+    const repeatMonths = isFutureExpense ? repeatMonthsInput : null;
 
     if (!Number.isFinite(categoryId || NaN) || !category) {
       setTxMsg("Selecione uma categoria para definir o tipo do lançamento.");
       return;
     }
+    if (txIsFutureTab && effectiveKind !== "Despesa") {
+      setTxMsg("Na aba Compromissos, selecione uma categoria de Despesa.");
+      return;
+    }
     if (
-      !description ||
-      !date ||
+      (!isFutureExpense && !date) ||
       !Number.isFinite(effectiveAccountId) ||
       effectiveAccountId <= 0 ||
       !Number.isFinite(amountAbs) ||
       amountAbs <= 0
     ) {
-      setTxMsg("Preencha data, descrição, valor (> 0), categoria e conta válida.");
+      setTxMsg("Preencha data, valor (> 0), categoria e conta válida.");
       return;
     }
     if (!txMethodOptions.includes(method)) {
       setTxMsg("Método inválido para o tipo da categoria selecionada.");
       return;
+    }
+    if (isFutureExpense) {
+      if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) {
+        setTxMsg("Informe um dia de vencimento entre 1 e 31.");
+        return;
+      }
+      if (!Number.isInteger(repeatMonths) || repeatMonths < 1 || repeatMonths > 120) {
+        setTxMsg("Informe quantos meses replicar (1 a 120).");
+        return;
+      }
     }
     if (txIsTransfer && (!Number.isFinite(sourceAccountId) || sourceAccountId <= 0)) {
       setTxMsg("Para Transferência, selecione a conta origem.");
@@ -888,16 +950,24 @@ export default function App() {
             : null,
         method: method || null,
         notes: notes || null,
+        due_day: isFutureExpense ? dueDay : null,
+        repeat_months: isFutureExpense ? repeatMonths : null,
       });
       formEl.reset();
       setTxCategoryId("");
-      setTxMethod("PIX");
+      setTxMethod(txIsFutureTab ? "Futuro" : "PIX");
       setTxSourceAccountId("");
       setTxCardId("");
       if (out?.mode === "transfer") {
         setTxMsg("Transferência registrada (débito na origem e crédito no destino).");
       } else if (out?.mode === "credit_card_charge") {
         setTxMsg("Compra no crédito registrada. A despesa será lançada no pagamento da fatura.");
+      } else if (out?.mode === "future_schedule") {
+        setTxMsg(
+          `Despesa futura agendada (${Number(out?.created || 0)}x): ${String(out?.first_date || "-")} até ${String(out?.last_date || "-")}.`
+        );
+      } else if (method === "Futuro") {
+        setTxMsg("Despesa futura agendada. Ela só impactará o caixa na data informada.");
       } else {
         setTxMsg("Lançamento salvo.");
       }
@@ -922,6 +992,64 @@ export default function App() {
       await reloadInvestData();
     } catch (err) {
       setTxMsg(String(err.message || err));
+    }
+  }
+
+  function isCommitmentTx(tx) {
+    const m = normalizeText(tx?.method || "");
+    return m === "futuro" || m === "agendado";
+  }
+
+  function onStartPayCommitment(tx) {
+    const accountByName = (accounts || []).find((a) => String(a.name || "") === String(tx?.account || ""));
+    const fallback = (accounts || []).find((a) => {
+      const t = normalizeAccountType(a.type);
+      return t === "Banco" || t === "Dinheiro";
+    });
+    const accId = accountByName?.id ?? fallback?.id ?? "";
+    setCommitmentEdit({
+      id: tx?.id,
+      payment_date: String(tx?.date || "").slice(0, 10),
+      account_id: accId ? String(accId) : "",
+      amount: Math.abs(Number(tx?.amount_brl || 0)).toFixed(2),
+      notes: String(tx?.notes || ""),
+    });
+  }
+
+  async function onConfirmPayCommitment() {
+    if (!commitmentEdit?.id) return;
+    const amountVal = Number(String(commitmentEdit.amount || "").replace(",", "."));
+    const accountId = Number(commitmentEdit.account_id || 0);
+    const paymentDate = String(commitmentEdit.payment_date || "").trim();
+    if (!paymentDate) {
+      setTxMsg("Informe a data de pagamento.");
+      return;
+    }
+    if (!Number.isFinite(accountId) || accountId <= 0) {
+      setTxMsg("Selecione a conta de pagamento.");
+      return;
+    }
+    if (!Number.isFinite(amountVal) || amountVal <= 0) {
+      setTxMsg("Informe um valor válido para pagamento.");
+      return;
+    }
+    try {
+      await settleCommitmentTransaction(Number(commitmentEdit.id), {
+        payment_date: paymentDate,
+        account_id: accountId,
+        amount: amountVal,
+        notes: String(commitmentEdit.notes || "").trim() || null,
+      });
+      setCommitmentEdit(null);
+      setTxMsg("Compromisso pago e convertido em lançamento real de caixa.");
+      await reloadTransactions();
+      await reloadCardsData();
+      const dash = await getKpis();
+      setKpis(dash);
+      await reloadDashboard();
+      await reloadInvestData();
+    } catch (err) {
+      setTxMsg(`Erro ao confirmar pagamento: ${String(err.message || err)}`);
     }
   }
 
@@ -1189,12 +1317,13 @@ export default function App() {
     const name = String(form.get("name") || "").trim();
     const type = String(form.get("type") || "Banco");
     const currency = String(form.get("currency") || "BRL").toUpperCase();
+    const showOnDashboard = String(form.get("show_on_dashboard") || "").toLowerCase() === "on";
     if (!name) {
       setManageMsg("Informe o nome da conta.");
       return;
     }
     try {
-      await createAccount({ name, type, currency });
+      await createAccount({ name, type, currency, show_on_dashboard: showOnDashboard });
       formEl.reset();
       setManageMsg("Conta salva.");
       await reloadAllData();
@@ -1214,6 +1343,7 @@ export default function App() {
         name: accEditName.trim(),
         type: accEditType,
         currency: (accEditCurrency || "BRL").toUpperCase(),
+        show_on_dashboard: Boolean(accEditShowOnDashboard),
       });
       setManageMsg("Conta atualizada.");
       await reloadAllData();
@@ -1678,6 +1808,7 @@ export default function App() {
                 <select value={dashView} onChange={(e) => setDashView(e.target.value)}>
                   <option value="caixa">Visão Caixa</option>
                   <option value="competencia">Visão Competência</option>
+                  <option value="futuro">Visão Compromissos</option>
                 </select>
                 <button type="submit">Aplicar filtros</button>
               </form>
@@ -1738,14 +1869,15 @@ export default function App() {
                           <img src={getBankLogo(r.account)} alt="" className="dash-row-icon" />
                         ) : null}
                         {r.account}
+                        {r.fixedManual ? <em className="dash-fixed-badge">fixa</em> : null}
                       </span>
-                      <strong>{brl.format(Number(r.saldo || 0))}</strong>
+                      <strong>{brl.format(normalizeMoneyValue(r.saldo))}</strong>
                     </li>
                   ))}
                 </ul>
                 <div className="dash-list-total">
                   <span>Total</span>
-                  <strong>{brl.format(Number(currentKpi.saldo || 0))}</strong>
+                  <strong>{brl.format(accountsTotal)}</strong>
                 </div>
               </article>
 
@@ -1841,15 +1973,21 @@ export default function App() {
               </article>
 
               <article className="card dash-list-card dash-expenses-card">
-                <h3>Despesas por categoria</h3>
+                <h3>Compromissos do período</h3>
                 <ul className="dash-list">
-                  {expensesTop.map((r) => (
-                    <li key={r.category}>
-                      <span>{r.category}</span>
-                      <strong>{brl.format(Number(r.valor || 0))}</strong>
-                    </li>
-                  ))}
+                  <li>
+                    <span>A vencer</span>
+                    <strong>{brl.format(commitmentsAging.aVencer)}</strong>
+                  </li>
+                  <li>
+                    <span>Vencidos</span>
+                    <strong>{brl.format(commitmentsAging.vencidos)}</strong>
+                  </li>
                 </ul>
+                <div className="dash-list-total">
+                  <span>Total</span>
+                  <strong>{brl.format(commitmentsAging.aVencer + commitmentsAging.vencidos)}</strong>
+                </div>
               </article>
             </section>
 
@@ -2041,6 +2179,10 @@ export default function App() {
                   <option value="BRL">BRL</option>
                   <option value="USD">USD</option>
                 </select>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" name="show_on_dashboard" />
+                  Fixar no Dashboard (saldo 0)
+                </label>
                 <button type="submit">Salvar conta</button>
               </form>
             </section>
@@ -2058,6 +2200,7 @@ export default function App() {
                       setAccEditName(cur.name);
                       setAccEditType(cur.type);
                       setAccEditCurrency((cur.currency || "BRL").toUpperCase());
+                      setAccEditShowOnDashboard(Boolean(cur.show_on_dashboard));
                     }
                   }}
                 >
@@ -2075,6 +2218,14 @@ export default function App() {
                   <option value="BRL">BRL</option>
                   <option value="USD">USD</option>
                 </select>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(accEditShowOnDashboard)}
+                    onChange={(e) => setAccEditShowOnDashboard(e.target.checked)}
+                  />
+                  Fixar no Dashboard (saldo 0)
+                </label>
                 <button onClick={onUpdateAccount}>Atualizar conta</button>
                 <button className="danger" onClick={onDeleteAccount}>Excluir conta</button>
               </div>
@@ -2144,6 +2295,13 @@ export default function App() {
                 >
                   Competência
                 </button>
+                <button
+                  type="button"
+                  className={`mini-tab ${txView === "futuro" ? "active" : ""}`}
+                  onClick={() => setTxView("futuro")}
+                >
+                  Compromissos
+                </button>
               </div>
               <form className="tx-form" onSubmit={onCreateTransaction}>
                 {txIsTransfer ? (
@@ -2159,12 +2317,36 @@ export default function App() {
                   <div className="transfer-hint">
                     <strong className="transfer-badge">Despesa</strong>
                     <span>
-                      Crédito registra na fatura e só vira despesa no pagamento. Débito com cartão debita na hora a conta banco vinculada.
+                      Use método Compromissos para contas a vencer: se hoje ainda não passou do dia informado, a 1ª parcela entra neste mês; depois replica pelos próximos meses.
                     </span>
                   </div>
                 ) : null}
-                <input name="date" type="date" required />
-                <input name="description" type="text" placeholder="Descrição" required />
+                {txIsFutureTab || (txIsExpense && !txIsTransfer && txMethodEffective === "Futuro") ? (
+                  <>
+                    <input
+                      name="due_day"
+                      type="number"
+                      min="1"
+                      max="31"
+                      step="1"
+                      placeholder="Dia de vencimento (1-31)"
+                      required
+                    />
+                    <input
+                      name="repeat_months"
+                      type="number"
+                      min="1"
+                      max="120"
+                      step="1"
+                      defaultValue="1"
+                      placeholder="Meses para replicar"
+                      required
+                    />
+                  </>
+                ) : (
+                  <input name="date" type="date" required />
+                )}
+                <input name="description" type="text" placeholder="Descrição (opcional)" />
                 <input name="amount" type="number" step="0.01" min="0.01" placeholder="Valor" required />
                 <select
                   name="category_id"
@@ -2173,24 +2355,28 @@ export default function App() {
                   onChange={(e) => setTxCategoryId(e.target.value)}
                 >
                   <option value="">Categoria</option>
-                  {categories.map((c) => (
+                  {txCategoriesForForm.map((c) => (
                     <option key={c.id} value={c.id}>{c.name} ({c.kind})</option>
                   ))}
                 </select>
-                <select
-                  name="method"
-                  value={txMethod}
-                  onChange={(e) => setTxMethod(e.target.value)}
-                  required
-                  disabled={!txMethodOptions.length}
-                >
-                  {!txMethodOptions.length ? (
-                    <option value="">Selecione a categoria</option>
-                  ) : null}
-                  {txMethodOptions.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
+                {txIsFutureTab ? (
+                  <input type="text" value="Compromissos" disabled />
+                ) : (
+                  <select
+                    name="method"
+                    value={txMethod}
+                    onChange={(e) => setTxMethod(e.target.value)}
+                    required
+                    disabled={!txMethodOptions.length}
+                  >
+                    {!txMethodOptions.length ? (
+                      <option value="">Selecione a categoria</option>
+                    ) : null}
+                    {txMethodOptions.map((m) => (
+                      <option key={m} value={m}>{m === "Futuro" ? "Compromissos" : m}</option>
+                    ))}
+                  </select>
+                )}
                 {!txIsExpenseCredit ? (
                   <select
                     name="account_id"
@@ -2221,7 +2407,7 @@ export default function App() {
                       ))}
                   </select>
                 ) : null}
-                {txIsExpense && !txIsTransfer && txMethod === "Credito" ? (
+                {txIsExpense && !txIsTransfer && txMethodEffective === "Credito" ? (
                   <select
                     name="card_id"
                     value={txCardId}
@@ -2269,17 +2455,90 @@ export default function App() {
                     {transactions.map((t) => (
                       <tr key={t.id}>
                         <td>{t.id}</td>
-                        <td>{t.date}</td>
+                        <td>
+                          {commitmentEdit?.id === t.id ? (
+                            <input
+                              type="date"
+                              value={String(commitmentEdit.payment_date || "")}
+                              onChange={(e) =>
+                                setCommitmentEdit((prev) => (prev ? { ...prev, payment_date: e.target.value } : prev))
+                              }
+                            />
+                          ) : (
+                            t.date
+                          )}
+                        </td>
                         <td>{t.description}</td>
-                        <td>{t.account || "-"}</td>
+                        <td>
+                          {commitmentEdit?.id === t.id ? (
+                            <select
+                              value={String(commitmentEdit.account_id || "")}
+                              onChange={(e) =>
+                                setCommitmentEdit((prev) => (prev ? { ...prev, account_id: e.target.value } : prev))
+                              }
+                            >
+                              <option value="">Conta</option>
+                              {(accounts || [])
+                                .filter((a) => {
+                                  const tp = normalizeAccountType(a.type);
+                                  return tp === "Banco" || tp === "Dinheiro";
+                                })
+                                .map((a) => (
+                                  <option key={a.id} value={a.id}>
+                                    {a.name}
+                                  </option>
+                                ))}
+                            </select>
+                          ) : (
+                            t.account || "-"
+                          )}
+                        </td>
                         <td>{t.category || "-"}</td>
                         <td>{t.charge_status || "-"}</td>
-                        <td>{Number(t.amount_brl || 0).toFixed(2)}</td>
+                        <td>
+                          {commitmentEdit?.id === t.id ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              value={String(commitmentEdit.amount || "")}
+                              onChange={(e) =>
+                                setCommitmentEdit((prev) => (prev ? { ...prev, amount: e.target.value } : prev))
+                              }
+                            />
+                          ) : (
+                            Number(t.amount_brl || 0).toFixed(2)
+                          )}
+                        </td>
                         <td>
                           {String(t.source_type || "") === "credit_charge" ? (
                             "-"
+                          ) : commitmentEdit?.id === t.id ? (
+                            <>
+                              <button type="button" className="tx-action-primary" onClick={onConfirmPayCommitment}>Confirmar</button>
+                              <button
+                                type="button"
+                                className="tx-action-neutral"
+                                onClick={() => setCommitmentEdit(null)}
+                                style={{ marginLeft: 8 }}
+                              >
+                                Cancelar
+                              </button>
+                            </>
+                          ) : isCommitmentTx(t) ? (
+                            <>
+                              <button type="button" className="tx-action-pay" onClick={() => onStartPayCommitment(t)}>Pagar</button>
+                              <button
+                                type="button"
+                                className="danger"
+                                onClick={() => onDeleteTransaction(t.id)}
+                                style={{ marginLeft: 8 }}
+                              >
+                                Excluir
+                              </button>
+                            </>
                           ) : (
-                            <button onClick={() => onDeleteTransaction(t.id)}>Excluir</button>
+                            <button type="button" onClick={() => onDeleteTransaction(t.id)}>Excluir</button>
                           )}
                         </td>
                       </tr>

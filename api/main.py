@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import calendar
 from typing import Any
+from datetime import date as _date
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +28,7 @@ from .schemas import (
     CreditCardCreateRequest,
     CreditCardPayInvoiceRequest,
     CreditCardUpdateRequest,
+    CommitmentSettleRequest,
     LoginRequest,
     LoginResponse,
     IncomeCreateRequest,
@@ -38,6 +41,7 @@ from .security import create_token, verify_token
 
 
 app = FastAPI(title="Controle Financeiro API", version="0.1.0")
+VALID_VIEWS = {"caixa", "competencia", "futuro"}
 
 
 def _cors_origins() -> list[str]:
@@ -233,6 +237,24 @@ def _norm_card_type(value: Any) -> str:
     return "Credito"
 
 
+def _norm_view(value: str | None) -> str:
+    mode = (value or "caixa").strip().lower()
+    if mode not in VALID_VIEWS:
+        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa', 'competencia' ou 'futuro'.")
+    return mode
+
+
+def _add_months(year: int, month: int, plus: int) -> tuple[int, int]:
+    total = (int(year) * 12) + (int(month) - 1) + int(plus)
+    return total // 12, (total % 12) + 1
+
+
+def _due_date_for_month(year: int, month: int, due_day: int) -> str:
+    last = calendar.monthrange(int(year), int(month))[1]
+    day = max(1, min(int(due_day), int(last)))
+    return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+
+
 def _norm_card_model(value: Any) -> str:
     allowed = {"Black", "Gold", "Platinum", "Orange", "Violeta", "Vermelho"}
     raw = str(value or "").strip().lower()
@@ -368,7 +390,13 @@ def create_account(
         raise HTTPException(status_code=400, detail="Tipo de conta inválido")
     if currency not in {"BRL", "USD"}:
         raise HTTPException(status_code=400, detail="Moeda da conta inválida")
-    repo.create_account(name, acc_type, currency=currency, user_id=uid)
+    repo.create_account(
+        name,
+        acc_type,
+        currency=currency,
+        show_on_dashboard=bool(body.show_on_dashboard),
+        user_id=uid,
+    )
     return {"ok": True}
 
 
@@ -388,7 +416,14 @@ def update_account(
         raise HTTPException(status_code=400, detail="Tipo de conta inválido")
     if currency not in {"BRL", "USD"}:
         raise HTTPException(status_code=400, detail="Moeda da conta inválida")
-    repo.update_account(account_id=account_id, name=name, acc_type=acc_type, currency=currency, user_id=uid)
+    repo.update_account(
+        account_id=account_id,
+        name=name,
+        acc_type=acc_type,
+        currency=currency,
+        show_on_dashboard=bool(body.show_on_dashboard),
+        user_id=uid,
+    )
     return {"ok": True}
 
 
@@ -480,9 +515,7 @@ def list_transactions(
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    mode = (view or "caixa").strip().lower()
-    if mode not in {"caixa", "competencia"}:
-        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    mode = _norm_view(view)
     df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if df.empty:
         return []
@@ -498,8 +531,6 @@ def create_transaction(
 ) -> dict:
     uid = int(user["id"])
     desc = (body.description or "").strip()
-    if not desc:
-        raise HTTPException(status_code=400, detail="Descrição é obrigatória")
     amount_abs = abs(float(body.amount or 0.0))
     if amount_abs <= 0:
         raise HTTPException(status_code=400, detail="Valor deve ser maior que zero")
@@ -512,6 +543,7 @@ def create_transaction(
 
     categories = [dict(r) for r in (repo.list_categories(user_id=uid) or [])]
     category_kind = None
+    category_name = None
     category_id = None
     if body.category_id is not None:
         category_id = int(body.category_id)
@@ -519,6 +551,10 @@ def create_transaction(
         if category_id not in cat_map:
             raise HTTPException(status_code=400, detail="Categoria inválida")
         category_kind = str(cat_map[category_id]["kind"])
+        category_name = str(cat_map[category_id]["name"] or "").strip() or None
+
+    if not desc:
+        desc = category_name or "Lançamento"
 
     req_kind = (body.kind or "").strip()
     if req_kind and req_kind not in {"Receita", "Despesa", "Transferencia"}:
@@ -538,9 +574,49 @@ def create_transaction(
         method = "Credito"
     elif mlow in {"pix"}:
         method = "PIX"
+    elif mlow in {"futuro", "agendado"}:
+        method = "Futuro"
     else:
         method = raw_method or None
     notes = (body.notes or "").strip() or None
+
+    if method == "Futuro" and kind != "Despesa":
+        raise HTTPException(status_code=400, detail="Método Futuro só é permitido para Despesa.")
+    if method == "Futuro":
+        due_day = int(body.due_day or 0)
+        if due_day < 1 or due_day > 31:
+            raise HTTPException(status_code=400, detail="Dia de vencimento deve estar entre 1 e 31.")
+        repeat_months = int(body.repeat_months or 1)
+        if repeat_months < 1 or repeat_months > 120:
+            raise HTTPException(status_code=400, detail="Meses para replicar deve estar entre 1 e 120.")
+
+        today = _date.today()
+        start_y, start_m = int(today.year), int(today.month)
+        if int(today.day) > int(due_day):
+            start_y, start_m = _add_months(start_y, start_m, 1)
+
+        cat_id = int(category_id) if category_id is not None else None
+        created = 0
+        first_date = None
+        last_date = None
+        for i in range(int(repeat_months)):
+            yy, mm = _add_months(start_y, start_m, i)
+            due_date = _due_date_for_month(yy, mm, due_day)
+            if first_date is None:
+                first_date = due_date
+            last_date = due_date
+            repo.insert_transaction(
+                date=due_date,
+                description=desc,
+                amount=-amount_abs,
+                account_id=destination_id,
+                category_id=cat_id,
+                method="Futuro",
+                notes=notes,
+                user_id=uid,
+            )
+            created += 1
+        return {"ok": True, "mode": "future_schedule", "created": created, "first_date": first_date, "last_date": last_date}
 
     if kind == "Transferencia":
         if body.source_account_id is None:
@@ -638,8 +714,8 @@ def create_transaction(
                 user_id=uid,
             )
             return {"ok": True, "mode": "debit_card_expense", "created": 1}
-        if method in {"PIX"} and body.card_id is not None:
-            raise HTTPException(status_code=400, detail="PIX não usa cartão. Selecione somente a conta de origem.")
+        if method in {"PIX", "Futuro"} and body.card_id is not None:
+            raise HTTPException(status_code=400, detail="Método selecionado não usa cartão.")
 
     signed_amount = amount_abs if kind == "Receita" else -amount_abs
     repo.insert_transaction(
@@ -804,6 +880,43 @@ def delete_transaction(
     return {"ok": True}
 
 
+@app.post("/transactions/{tx_id}/settle-commitment")
+def settle_commitment_transaction(
+    tx_id: int,
+    body: CommitmentSettleRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    try:
+        _date.fromisoformat(str(body.payment_date))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Data de pagamento inválida. Use YYYY-MM-DD.")
+
+    amount_abs = abs(float(body.amount or 0.0))
+    if amount_abs <= 0:
+        raise HTTPException(status_code=400, detail="Valor deve ser maior que zero")
+
+    account_map = {int(a["id"]): dict(a) for a in (repo.list_accounts(user_id=uid) or [])}
+    acc = account_map.get(int(body.account_id))
+    if not acc:
+        raise HTTPException(status_code=400, detail="Conta inválida")
+    if _norm_account_type(acc.get("type")) not in {"Banco", "Dinheiro"}:
+        raise HTTPException(status_code=400, detail="Pagamento deve ser em conta do tipo Banco ou Dinheiro")
+
+    try:
+        repo.settle_commitment_transaction(
+            tx_id=int(tx_id),
+            payment_date=str(body.payment_date),
+            account_id=int(body.account_id),
+            amount=amount_abs,
+            notes=body.notes,
+            user_id=uid,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "mode": "settled_commitment", "id": int(tx_id)}
+
+
 @app.get("/dashboard/kpis")
 def dashboard_kpis(
     date_from: str | None = None,
@@ -813,9 +926,7 @@ def dashboard_kpis(
     user: dict = Depends(_current_user),
 ) -> dict:
     uid = int(user["id"])
-    mode = (view or "caixa").strip().lower()
-    if mode not in {"caixa", "competencia"}:
-        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    mode = _norm_view(view)
     df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if account and not df.empty:
         df = df[df["account"] == account]
@@ -831,9 +942,7 @@ def dashboard_monthly(
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    mode = (view or "caixa").strip().lower()
-    if mode not in {"caixa", "competencia"}:
-        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    mode = _norm_view(view)
     df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if account and not df.empty:
         df = df[df["account"] == account]
@@ -852,9 +961,7 @@ def dashboard_expenses_by_category(
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    mode = (view or "caixa").strip().lower()
-    if mode not in {"caixa", "competencia"}:
-        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    mode = _norm_view(view)
     df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if account and not df.empty:
         df = df[df["account"] == account]
@@ -873,9 +980,7 @@ def dashboard_account_balance(
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    mode = (view or "caixa").strip().lower()
-    if mode not in {"caixa", "competencia"}:
-        raise HTTPException(status_code=400, detail="View inválida. Use 'caixa' ou 'competencia'.")
+    mode = _norm_view(view)
     df = reports.df_transactions(date_from=date_from, date_to=date_to, user_id=uid, view=mode)
     if account and not df.empty:
         df = df[df["account"] == account]
@@ -883,6 +988,22 @@ def dashboard_account_balance(
     if out.empty:
         return []
     return out.to_dict(orient="records")
+
+
+@app.get("/dashboard/commitments-summary")
+def dashboard_commitments_summary(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    account: str | None = None,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    return reports.commitments_summary(
+        date_from=date_from,
+        date_to=date_to,
+        account=account,
+        user_id=uid,
+    )
 
 
 @app.get("/invest/meta")

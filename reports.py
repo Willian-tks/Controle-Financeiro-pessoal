@@ -9,6 +9,35 @@ def _uid(user_id: int | None = None) -> int:
     return int(user_id) if user_id is not None else int(get_current_user_id())
 
 
+def _future_method_mask(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    return (
+        df["method"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin({"futuro", "agendado"})
+    )
+
+
+def _apply_future_visibility(df: pd.DataFrame, mode: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    d = df.copy()
+    d["is_future_entry"] = _future_method_mask(d)
+    today = pd.Timestamp.today().normalize()
+
+    if mode == "futuro":
+        return d.loc[d["is_future_entry"] & (d["date"] >= today)].copy()
+
+    # Caixa/Competência: lançamentos futuros só passam a contar no dia do vencimento.
+    keep = (~d["is_future_entry"]) | (d["date"] <= today)
+    return d.loc[keep].copy()
+
+
 def _df_transactions_cash(date_from: str | None = None, date_to: str | None = None, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
@@ -58,10 +87,15 @@ def df_transactions(
     view: str = "caixa",
 ):
     mode = str(view or "caixa").strip().lower()
-    if mode not in {"caixa", "competencia"}:
+    if mode not in {"caixa", "competencia", "futuro"}:
         mode = "caixa"
 
     cash_df = _df_transactions_cash(date_from=date_from, date_to=date_to, user_id=user_id)
+    cash_df = _apply_future_visibility(cash_df, mode)
+
+    if mode == "futuro":
+        return cash_df.sort_values(["date", "id"]).reset_index(drop=True) if not cash_df.empty else cash_df
+
     if mode == "caixa":
         return cash_df
 
@@ -153,13 +187,64 @@ def cash_balance_timeseries(date_from=None, date_to=None, user_id: int | None = 
 def account_balance_by_id(account_id: int, user_id: int | None = None) -> float:
     uid = _uid(user_id)
     conn = get_conn()
+    today = pd.Timestamp.today().strftime("%Y-%m-%d")
     row = conn.execute(
         """
         SELECT COALESCE(SUM(amount_brl), 0) AS bal
         FROM transactions
         WHERE account_id = ? AND user_id = ?
+          AND (
+            UPPER(TRIM(COALESCE(method, ''))) NOT IN ('FUTURO', 'AGENDADO')
+            OR date <= ?
+          )
         """,
-        (account_id, uid),
+        (account_id, uid, today),
     ).fetchone()
     conn.close()
     return float(row["bal"] if row else 0.0)
+
+
+def commitments_summary(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    account: str | None = None,
+    user_id: int | None = None,
+) -> dict:
+    uid = _uid(user_id)
+    conn = get_conn()
+    q = """
+        SELECT
+            t.date,
+            t.amount_brl,
+            a.name AS account
+        FROM transactions t
+        JOIN accounts a ON a.id = t.account_id AND a.user_id = t.user_id
+        WHERE t.user_id = ?
+          AND UPPER(TRIM(COALESCE(t.method, ''))) IN ('FUTURO', 'AGENDADO')
+    """
+    params: list = [uid]
+    if date_from:
+        q += " AND t.date >= ?"
+        params.append(date_from)
+    if date_to:
+        q += " AND t.date <= ?"
+        params.append(date_to)
+    if account:
+        q += " AND a.name = ?"
+        params.append(account)
+    q += " ORDER BY t.date ASC, t.id ASC"
+
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+
+    if not rows:
+        return {"a_vencer": 0.0, "vencidos": 0.0}
+
+    df = pd.DataFrame([dict(r) for r in rows])
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["amount_brl"] = pd.to_numeric(df["amount_brl"], errors="coerce").fillna(0.0)
+
+    today = pd.Timestamp.today().normalize()
+    a_vencer = float(df.loc[df["date"] >= today, "amount_brl"].abs().sum())
+    vencidos = float(df.loc[df["date"] < today, "amount_brl"].abs().sum())
+    return {"a_vencer": a_vencer, "vencidos": vencidos}

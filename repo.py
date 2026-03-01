@@ -12,14 +12,30 @@ def list_accounts(user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, name, type, COALESCE(currency, 'BRL') AS currency FROM accounts WHERE user_id = ? ORDER BY name",
+        """
+        SELECT
+            id,
+            name,
+            type,
+            COALESCE(currency, 'BRL') AS currency,
+            COALESCE(show_on_dashboard, 0) AS show_on_dashboard
+        FROM accounts
+        WHERE user_id = ?
+        ORDER BY name
+        """,
         (uid,),
     ).fetchall()
     conn.close()
     return rows
 
 
-def create_account(name: str, acc_type: str, currency: str = "BRL", user_id: int | None = None):
+def create_account(
+    name: str,
+    acc_type: str,
+    currency: str = "BRL",
+    show_on_dashboard: bool = False,
+    user_id: int | None = None,
+):
     uid = _uid(user_id)
     nm = name.strip()
     if not nm:
@@ -32,8 +48,8 @@ def create_account(name: str, acc_type: str, currency: str = "BRL", user_id: int
     ).fetchone()
     if not exists:
         conn.execute(
-            "INSERT INTO accounts(name, type, currency, user_id) VALUES (?, ?, ?, ?)",
-            (nm, acc_type, curr, uid),
+            "INSERT INTO accounts(name, type, currency, show_on_dashboard, user_id) VALUES (?, ?, ?, ?, ?)",
+            (nm, acc_type, curr, 1 if bool(show_on_dashboard) else 0, uid),
         )
     conn.commit()
     conn.close()
@@ -113,6 +129,77 @@ def delete_transaction(tx_id: int, user_id: int | None = None):
     conn.execute(
         "DELETE FROM transactions WHERE id = ? AND user_id = ?",
         (int(tx_id), uid),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_transaction_by_id(tx_id: int, user_id: int | None = None):
+    uid = _uid(user_id)
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id, date, description, amount_brl, account_id, category_id, method, notes
+        FROM transactions
+        WHERE id = ? AND user_id = ?
+        """,
+        (int(tx_id), uid),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def settle_commitment_transaction(
+    tx_id: int,
+    payment_date: str,
+    account_id: int,
+    amount: float,
+    notes: str | None = None,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id, method, notes
+        FROM transactions
+        WHERE id = ? AND user_id = ?
+        """,
+        (int(tx_id), uid),
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("Lançamento não encontrado.")
+
+    method_raw = str(row["method"] or "").strip().upper()
+    if method_raw not in {"FUTURO", "AGENDADO"}:
+        conn.close()
+        raise ValueError("Somente compromissos podem ser pagos por este fluxo.")
+
+    val = abs(float(amount or 0.0))
+    if val <= 0:
+        conn.close()
+        raise ValueError("Valor deve ser maior que zero.")
+
+    base_notes = str(row["notes"] or "").strip()
+    extra_notes = str(notes or "").strip()
+    final_notes = extra_notes if extra_notes else base_notes
+
+    conn.execute(
+        """
+        UPDATE transactions
+        SET date = ?, account_id = ?, amount_brl = ?, method = ?, notes = ?
+        WHERE id = ? AND user_id = ?
+        """,
+        (
+            str(payment_date),
+            int(account_id),
+            -val,
+            "PIX",
+            final_notes if final_notes else None,
+            int(tx_id),
+            uid,
+        ),
     )
     conn.commit()
     conn.close()
@@ -237,12 +324,26 @@ def delete_transactions_by_description_exact(desc: str, user_id: int | None = No
     return deleted
 
 
-def update_account(account_id: int, name: str, acc_type: str, currency: str = "BRL", user_id: int | None = None):
+def update_account(
+    account_id: int,
+    name: str,
+    acc_type: str,
+    currency: str = "BRL",
+    show_on_dashboard: bool = False,
+    user_id: int | None = None,
+):
     uid = _uid(user_id)
     conn = get_conn()
     conn.execute(
-        "UPDATE accounts SET name = ?, type = ?, currency = ? WHERE id = ? AND user_id = ?",
-        (name.strip(), acc_type, (currency or "BRL").strip().upper(), int(account_id), uid),
+        "UPDATE accounts SET name = ?, type = ?, currency = ?, show_on_dashboard = ? WHERE id = ? AND user_id = ?",
+        (
+            name.strip(),
+            acc_type,
+            (currency or "BRL").strip().upper(),
+            1 if bool(show_on_dashboard) else 0,
+            int(account_id),
+            uid,
+        ),
     )
     conn.commit()
     conn.close()
@@ -325,9 +426,18 @@ def clear_transactions(user_id: int | None = None):
 def account_balance_value(account_id: int, user_id: int | None = None) -> float:
     uid = _uid(user_id)
     conn = get_conn()
+    today = datetime.now().strftime("%Y-%m-%d")
     row = conn.execute(
-        "SELECT COALESCE(SUM(amount_brl), 0) AS bal FROM transactions WHERE account_id = ? AND user_id = ?",
-        (int(account_id), uid),
+        """
+        SELECT COALESCE(SUM(amount_brl), 0) AS bal
+        FROM transactions
+        WHERE account_id = ? AND user_id = ?
+          AND (
+            UPPER(TRIM(COALESCE(method, ''))) NOT IN ('FUTURO', 'AGENDADO')
+            OR date <= ?
+          )
+        """,
+        (int(account_id), uid, today),
     ).fetchone()
     conn.close()
     return float(row["bal"] if row else 0.0)

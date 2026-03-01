@@ -432,6 +432,24 @@ body {
   padding: 6px 8px;
 }
 
+.tx-table button.tx-action-primary {
+  border: 1px solid #9dd8b0;
+  background: #eaf9ef;
+  color: #1f6b3a;
+}
+
+.tx-table button.tx-action-pay {
+  border: 1px solid #9dd8b0;
+  background: #eaf9ef;
+  color: #1f6b3a;
+}
+
+.tx-table button.tx-action-neutral {
+  border: 1px solid #c8d0df;
+  background: #f2f4f8;
+  color: #4e5f7d;
+}
+
 .tabs-card {
   padding-top: 12px;
   padding-bottom: 12px;
@@ -652,6 +670,17 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.dash-fixed-badge {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+  color: #9cc2ff;
+  border: 1px solid rgba(156, 194, 255, 0.35);
+  border-radius: 999px;
+  padding: 1px 6px;
+  margin-left: 4px;
 }
 
 .dash-row-icon {

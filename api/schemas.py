@@ -22,18 +22,29 @@ class TransactionCreateRequest(BaseModel):
     card_id: int | None = None
     method: str | None = None
     notes: str | None = None
+    due_day: int | None = None
+    repeat_months: int | None = None
+
+
+class CommitmentSettleRequest(BaseModel):
+    payment_date: str
+    account_id: int
+    amount: float
+    notes: str | None = None
 
 
 class AccountCreateRequest(BaseModel):
     name: str
     type: str
     currency: str = "BRL"
+    show_on_dashboard: bool = False
 
 
 class AccountUpdateRequest(BaseModel):
     name: str
     type: str
     currency: str = "BRL"
+    show_on_dashboard: bool = False
 
 
 class CategoryCreateRequest(BaseModel):

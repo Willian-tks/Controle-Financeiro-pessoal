@@ -161,6 +161,10 @@ export function getDashboardAccountBalance(params = {}) {
   return req(`/dashboard/account-balance${qs(params)}`);
 }
 
+export function getDashboardCommitmentsSummary(params = {}) {
+  return req(`/dashboard/commitments-summary${qs(params)}`);
+}
+
 export function getTransactions(params = {}) {
   return req(`/transactions${qs({ limit: 200, ...params })}`);
 }
@@ -175,6 +179,13 @@ export function createTransaction(payload) {
 export function deleteTransaction(id) {
   return req(`/transactions/${id}`, {
     method: "DELETE",
+  });
+}
+
+export function settleCommitmentTransaction(id, payload) {
+  return req(`/transactions/${id}/settle-commitment`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

@@ -139,6 +139,7 @@ def _sqlite_schema(cur):
         name TEXT NOT NULL UNIQUE,
         type TEXT NOT NULL DEFAULT 'Banco',
         currency TEXT NOT NULL DEFAULT 'BRL',
+        show_on_dashboard INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     """)
@@ -341,6 +342,7 @@ def _postgres_schema(cur):
         name TEXT NOT NULL UNIQUE,
         type TEXT NOT NULL DEFAULT 'Banco',
         currency TEXT NOT NULL DEFAULT 'BRL',
+        show_on_dashboard BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     """)
@@ -517,6 +519,7 @@ def _migrate_multitenant_postgres(cur):
 
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'BRL'")
+    cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS show_on_dashboard BOOLEAN NOT NULL DEFAULT FALSE")
     cur.execute("ALTER TABLE categories ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_id BIGINT")
@@ -581,6 +584,7 @@ def _migrate_multitenant_sqlite(cur):
 
     _add_column_sqlite(cur, "accounts", "user_id INTEGER")
     _add_column_sqlite(cur, "accounts", "currency TEXT NOT NULL DEFAULT 'BRL'")
+    _add_column_sqlite(cur, "accounts", "show_on_dashboard INTEGER NOT NULL DEFAULT 0")
     _add_column_sqlite(cur, "categories", "user_id INTEGER")
     _add_column_sqlite(cur, "transactions", "user_id INTEGER")
     _add_column_sqlite(cur, "assets", "user_id INTEGER")
@@ -656,13 +660,14 @@ def _rebuild_sqlite_unique_tables(cur):
             name TEXT NOT NULL,
             type TEXT NOT NULL DEFAULT 'Banco',
             currency TEXT NOT NULL DEFAULT 'BRL',
+            show_on_dashboard INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             user_id INTEGER
         );
         """)
         cur.execute("""
-        INSERT INTO accounts_new(id, name, type, currency, created_at, user_id)
-        SELECT id, name, type, COALESCE(currency, 'BRL'), created_at, user_id
+        INSERT INTO accounts_new(id, name, type, currency, show_on_dashboard, created_at, user_id)
+        SELECT id, name, type, COALESCE(currency, 'BRL'), COALESCE(show_on_dashboard, 0), created_at, user_id
         FROM accounts
         """)
         cur.execute("DROP TABLE accounts")
