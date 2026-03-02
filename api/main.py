@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import auth
 import api.importers as importers
+import invest_index_rates
 import invest_repo
 import invest_reports
 import invest_quotes
@@ -33,6 +34,8 @@ from .schemas import (
     LoginRequest,
     LoginResponse,
     IncomeCreateRequest,
+    IndexRatesSyncRequest,
+    IndexRatesUpsertRequest,
     PriceUpsertRequest,
     QuoteUpdateAllRequest,
     TradeCreateRequest,
@@ -300,6 +303,11 @@ def _current_user(payload: dict = Depends(_auth_payload)) -> dict:
     if not user or not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="Invalid user")
     return user
+
+
+def _require_admin(user: dict) -> None:
+    if str(user.get("role", "")).strip().lower() != "admin":
+        raise HTTPException(status_code=403, detail="Somente admin pode executar esta operação")
 
 
 @app.get("/health")
@@ -1109,7 +1117,79 @@ def invest_meta(user: dict = Depends(_current_user)) -> dict:
         "asset_classes": list(invest_repo.ASSET_CLASSES.keys()),
         "asset_sectors": list(invest_repo.ASSET_SECTORS),
         "income_types": list(invest_repo.INCOME_TYPES.keys()),
+        "index_names": list(invest_index_rates.SUPPORTED_INDEX_NAMES),
     }
+
+
+@app.get("/invest/index-rates")
+def invest_list_index_rates(
+    index_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = Query(default=1000, ge=1, le=10000),
+    user: dict = Depends(_current_user),
+) -> list[dict]:
+    _ = user
+    try:
+        rows = invest_index_rates.list_index_rates(
+            index_name=index_name,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+        return rows
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/invest/index-rates/upsert")
+def invest_upsert_index_rates(
+    body: IndexRatesUpsertRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_admin(user)
+    points = [
+        {
+            "ref_date": (p.ref_date or "").strip(),
+            "value": float(p.value),
+            "source": (p.source or "").strip() or None,
+        }
+        for p in (body.points or [])
+    ]
+    if not points:
+        raise HTTPException(status_code=400, detail="Informe ao menos um ponto para carga.")
+
+    try:
+        result = invest_index_rates.bulk_upsert_index_rates(
+            index_name=body.index_name,
+            points=points,
+            source=(body.source or "").strip() or None,
+            user_id=int(user["id"]),
+        )
+        return {"ok": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/invest/index-rates/sync")
+def invest_sync_index_rates(
+    body: IndexRatesSyncRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_admin(user)
+    try:
+        out = invest_index_rates.sync_from_bcb(
+            index_names=body.index_names,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            timeout_s=float(body.timeout_s) if body.timeout_s is not None else 20.0,
+            user_id=int(user["id"]),
+        )
+        return {"ok": True, **out}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/invest/assets")
@@ -1151,7 +1231,17 @@ def invest_create_asset(
         broker_account_id=body.broker_account_id,
         source_account_id=body.source_account_id,
         issuer=(body.issuer or "").strip() or None,
+        rate_type=(body.rate_type or "").strip() or None,
+        rate_value=body.rate_value,
         maturity_date=(body.maturity_date or "").strip() or None,
+        rentability_type=(body.rentability_type or "").strip() or None,
+        index_name=(body.index_name or "").strip() or None,
+        index_pct=body.index_pct,
+        spread_rate=body.spread_rate,
+        fixed_rate=body.fixed_rate,
+        principal_amount=body.principal_amount,
+        current_value=body.current_value,
+        last_update=(body.last_update or "").strip() or None,
         user_id=uid,
     )
     return {"ok": True, "created": bool(created)}
@@ -1176,6 +1266,23 @@ def invest_update_asset(
     account_ids = {int(r["id"]) for r in (repo.list_accounts(user_id=uid) or [])}
     if body.broker_account_id is not None and int(body.broker_account_id) not in account_ids:
         raise HTTPException(status_code=400, detail="Conta corretora inválida")
+    if body.source_account_id is not None and int(body.source_account_id) not in account_ids:
+        raise HTTPException(status_code=400, detail="Conta origem inválida")
+
+    raw_payload = (
+        body.model_dump(exclude_unset=True)
+        if hasattr(body, "model_dump")
+        else body.dict(exclude_unset=True)
+    )
+    optional_updates: dict[str, Any] = {}
+    for text_field in ["issuer", "rate_type", "maturity_date", "rentability_type", "index_name", "last_update"]:
+        if text_field in raw_payload:
+            optional_updates[text_field] = (raw_payload.get(text_field) or "").strip() or None
+    for numeric_field in ["rate_value", "index_pct", "spread_rate", "fixed_rate", "principal_amount", "current_value"]:
+        if numeric_field in raw_payload:
+            optional_updates[numeric_field] = raw_payload.get(numeric_field)
+    if "source_account_id" in raw_payload:
+        optional_updates["source_account_id"] = raw_payload.get("source_account_id")
 
     invest_repo.update_asset(
         asset_id=asset_id,
@@ -1186,6 +1293,7 @@ def invest_update_asset(
         currency=(body.currency or "BRL").strip().upper(),
         broker_account_id=body.broker_account_id,
         user_id=uid,
+        **optional_updates,
     )
     return {"ok": True}
 

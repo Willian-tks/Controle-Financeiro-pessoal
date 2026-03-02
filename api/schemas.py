@@ -67,7 +67,17 @@ class AssetCreateRequest(BaseModel):
     broker_account_id: int | None = None
     source_account_id: int | None = None
     issuer: str | None = None
+    rate_type: str | None = None
+    rate_value: float | None = None
     maturity_date: str | None = None
+    rentability_type: str | None = None
+    index_name: str | None = None
+    index_pct: float | None = None
+    spread_rate: float | None = None
+    fixed_rate: float | None = None
+    principal_amount: float | None = None
+    current_value: float | None = None
+    last_update: str | None = None
 
 
 class AssetUpdateRequest(BaseModel):
@@ -77,6 +87,19 @@ class AssetUpdateRequest(BaseModel):
     sector: str | None = None
     currency: str = "BRL"
     broker_account_id: int | None = None
+    source_account_id: int | None = None
+    issuer: str | None = None
+    rate_type: str | None = None
+    rate_value: float | None = None
+    maturity_date: str | None = None
+    rentability_type: str | None = None
+    index_name: str | None = None
+    index_pct: float | None = None
+    spread_rate: float | None = None
+    fixed_rate: float | None = None
+    principal_amount: float | None = None
+    current_value: float | None = None
+    last_update: str | None = None
 
 
 class TradeCreateRequest(BaseModel):
@@ -110,6 +133,25 @@ class QuoteUpdateAllRequest(BaseModel):
     timeout_s: float | None = None
     max_workers: int | None = None
     include_groups: list[str] | None = None
+
+
+class IndexRatePointRequest(BaseModel):
+    ref_date: str
+    value: float
+    source: str | None = None
+
+
+class IndexRatesUpsertRequest(BaseModel):
+    index_name: str
+    points: list[IndexRatePointRequest]
+    source: str | None = None
+
+
+class IndexRatesSyncRequest(BaseModel):
+    index_names: list[str] | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    timeout_s: float | None = None
 
 
 class CreditCardCreateRequest(BaseModel):

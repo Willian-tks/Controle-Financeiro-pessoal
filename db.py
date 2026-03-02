@@ -248,8 +248,29 @@ def _sqlite_schema(cur):
         rate_type TEXT,
         rate_value REAL,
         maturity_date TEXT,
+        rentability_type TEXT,
+        index_name TEXT,
+        index_pct REAL,
+        spread_rate REAL,
+        fixed_rate REAL,
+        principal_amount REAL,
+        current_value REAL,
+        last_update TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY(broker_account_id) REFERENCES accounts(id)
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS index_rates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        index_name TEXT NOT NULL,
+        ref_date TEXT NOT NULL,
+        value REAL NOT NULL,
+        source TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        user_id INTEGER
     );
     """)
 
@@ -310,6 +331,8 @@ def _sqlite_schema(cur):
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(date);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date);")
 
 
 def _postgres_schema(cur):
@@ -453,8 +476,29 @@ def _postgres_schema(cur):
         rate_type TEXT,
         rate_value DOUBLE PRECISION,
         maturity_date TEXT,
+        rentability_type TEXT,
+        index_name TEXT,
+        index_pct DOUBLE PRECISION,
+        spread_rate DOUBLE PRECISION,
+        fixed_rate DOUBLE PRECISION,
+        principal_amount DOUBLE PRECISION,
+        current_value DOUBLE PRECISION,
+        last_update TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         CONSTRAINT fk_assets_broker FOREIGN KEY (broker_account_id) REFERENCES accounts(id)
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS index_rates (
+        id BIGSERIAL PRIMARY KEY,
+        index_name TEXT NOT NULL,
+        ref_date TEXT NOT NULL,
+        value DOUBLE PRECISION NOT NULL,
+        source TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_id BIGINT
     );
     """)
 
@@ -515,6 +559,8 @@ def _postgres_schema(cur):
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(date);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date);")
 
 
 def _migrate_multitenant_postgres(cur):
@@ -529,6 +575,19 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS recurrence_id TEXT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS sector TEXT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS source_account_id BIGINT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS issuer TEXT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS rate_type TEXT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS rate_value DOUBLE PRECISION")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS maturity_date TEXT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS rentability_type TEXT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS index_name TEXT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS index_pct DOUBLE PRECISION")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS spread_rate DOUBLE PRECISION")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS fixed_rate DOUBLE PRECISION")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS principal_amount DOUBLE PRECISION")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS current_value DOUBLE PRECISION")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS last_update TEXT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS exchange_rate DOUBLE PRECISION NOT NULL DEFAULT 1")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS user_id BIGINT")
@@ -544,6 +603,19 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS category_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS description TEXT")
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS index_rates (
+        id BIGSERIAL PRIMARY KEY,
+        index_name TEXT NOT NULL,
+        ref_date TEXT NOT NULL,
+        value DOUBLE PRECISION NOT NULL,
+        source TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_id BIGINT
+    );
+    """)
+
     cur.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_name_key")
     cur.execute("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key")
     cur.execute("ALTER TABLE assets DROP CONSTRAINT IF EXISTS assets_symbol_key")
@@ -553,6 +625,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_assets_user_symbol ON assets(user_id, symbol)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_prices_user_asset_date ON prices(user_id, asset_id, date)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_prices_user_asset_date ON asset_prices(user_id, asset_id, px_date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date)")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")
@@ -561,6 +634,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_income_user ON income_events(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_user ON prices(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_cards_user ON credit_cards(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_inv_user ON credit_card_invoices(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id)")
@@ -574,6 +648,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_cards_user_acc_type ON credit_cards(user_id, card_account_id, card_type)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_name_type_acc ON credit_cards(user_id, name, card_type, card_account_id)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_inv_user_period ON credit_card_invoices(user_id, card_id, invoice_period)")
+    _backfill_fixed_income_assets_phase1(cur)
 
 
 def _add_column_sqlite(cur, table: str, column_def: str):
@@ -596,6 +671,19 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "transactions", "recurrence_id TEXT")
     _add_column_sqlite(cur, "assets", "user_id INTEGER")
     _add_column_sqlite(cur, "assets", "sector TEXT")
+    _add_column_sqlite(cur, "assets", "source_account_id INTEGER")
+    _add_column_sqlite(cur, "assets", "issuer TEXT")
+    _add_column_sqlite(cur, "assets", "rate_type TEXT")
+    _add_column_sqlite(cur, "assets", "rate_value REAL")
+    _add_column_sqlite(cur, "assets", "maturity_date TEXT")
+    _add_column_sqlite(cur, "assets", "rentability_type TEXT")
+    _add_column_sqlite(cur, "assets", "index_name TEXT")
+    _add_column_sqlite(cur, "assets", "index_pct REAL")
+    _add_column_sqlite(cur, "assets", "spread_rate REAL")
+    _add_column_sqlite(cur, "assets", "fixed_rate REAL")
+    _add_column_sqlite(cur, "assets", "principal_amount REAL")
+    _add_column_sqlite(cur, "assets", "current_value REAL")
+    _add_column_sqlite(cur, "assets", "last_update TEXT")
     _add_column_sqlite(cur, "trades", "user_id INTEGER")
     _add_column_sqlite(cur, "trades", "exchange_rate REAL NOT NULL DEFAULT 1")
     _add_column_sqlite(cur, "income_events", "user_id INTEGER")
@@ -611,6 +699,19 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "credit_card_charges", "category_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "description TEXT")
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS index_rates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        index_name TEXT NOT NULL,
+        ref_date TEXT NOT NULL,
+        value REAL NOT NULL,
+        source TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        user_id INTEGER
+    );
+    """)
+
     cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON transactions(user_id)")
@@ -623,6 +724,8 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date)")
     _rebuild_sqlite_unique_tables(cur)
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_user_name ON accounts(user_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_user_name ON categories(user_id, name)")
@@ -635,6 +738,70 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_cards_user_acc_type ON credit_cards(user_id, card_account_id, card_type)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_name_type_acc ON credit_cards(user_id, name, card_type, card_account_id)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_inv_user_period ON credit_card_invoices(user_id, card_id, invoice_period)")
+    _backfill_fixed_income_assets_phase1(cur)
+
+
+def _fixed_income_asset_class_condition(column_ref: str = "asset_class") -> str:
+    return (
+        f"LOWER(REPLACE(COALESCE({column_ref}, ''), '_', ' ')) IN ('renda fixa', 'tesouro direto', 'coe', 'fundos') "
+        f"OR UPPER(COALESCE({column_ref}, '')) IN ('RENDA_FIXA', 'TESOURO_DIRETO', 'COE', 'FUNDOS')"
+    )
+
+
+def _backfill_fixed_income_assets_phase1(cur):
+    fixed_income_where = _fixed_income_asset_class_condition("asset_class")
+    fx_factor = (
+        "CASE "
+        "WHEN UPPER(COALESCE(assets.currency, '')) = 'USD' "
+        "THEN CASE WHEN COALESCE(t.exchange_rate, 0) > 0 THEN t.exchange_rate ELSE 1 END "
+        "ELSE 1 END"
+    )
+    buy_cost_expr = (
+        f"(COALESCE(t.quantity, 0) * COALESCE(t.price, 0) * {fx_factor}) + "
+        f"(COALESCE(t.fees, 0) * {fx_factor})"
+    )
+
+    cur.execute(f"""
+    UPDATE assets
+    SET rentability_type = 'MANUAL'
+    WHERE ({fixed_income_where})
+      AND (rentability_type IS NULL OR TRIM(rentability_type) = '')
+    """)
+
+    cur.execute(f"""
+    UPDATE assets
+    SET principal_amount = (
+        SELECT ROUND(SUM({buy_cost_expr}), 6)
+        FROM trades t
+        WHERE t.asset_id = assets.id
+          AND COALESCE(t.user_id, 0) = COALESCE(assets.user_id, 0)
+          AND UPPER(COALESCE(t.side, '')) = 'BUY'
+    )
+    WHERE ({fixed_income_where})
+      AND principal_amount IS NULL
+      AND EXISTS (
+          SELECT 1
+          FROM trades t
+          WHERE t.asset_id = assets.id
+            AND COALESCE(t.user_id, 0) = COALESCE(assets.user_id, 0)
+            AND UPPER(COALESCE(t.side, '')) = 'BUY'
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM trades t
+          WHERE t.asset_id = assets.id
+            AND COALESCE(t.user_id, 0) = COALESCE(assets.user_id, 0)
+            AND UPPER(COALESCE(t.side, '')) = 'SELL'
+      )
+    """)
+
+    cur.execute(f"""
+    UPDATE assets
+    SET current_value = principal_amount
+    WHERE ({fixed_income_where})
+      AND current_value IS NULL
+      AND principal_amount IS NOT NULL
+    """)
 
 
 def _table_sql(cur, table: str) -> str:
@@ -714,6 +881,14 @@ def _rebuild_sqlite_unique_tables(cur):
             rate_type TEXT,
             rate_value REAL,
             maturity_date TEXT,
+            rentability_type TEXT,
+            index_name TEXT,
+            index_pct REAL,
+            spread_rate REAL,
+            fixed_rate REAL,
+            principal_amount REAL,
+            current_value REAL,
+            last_update TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             user_id INTEGER,
             FOREIGN KEY(broker_account_id) REFERENCES accounts(id)
@@ -722,11 +897,15 @@ def _rebuild_sqlite_unique_tables(cur):
         cur.execute("""
         INSERT INTO assets_new(
             id, symbol, name, asset_class, sector, currency,
-            broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date, created_at, user_id
+            broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date,
+            rentability_type, index_name, index_pct, spread_rate, fixed_rate, principal_amount, current_value, last_update,
+            created_at, user_id
         )
         SELECT
             id, symbol, name, asset_class, sector, currency,
-            broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date, created_at, user_id
+            broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date,
+            rentability_type, index_name, index_pct, spread_rate, fixed_rate, principal_amount, current_value, last_update,
+            created_at, user_id
         FROM assets
         """)
         cur.execute("DROP TABLE assets")

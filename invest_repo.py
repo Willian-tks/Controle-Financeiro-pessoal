@@ -39,6 +39,9 @@ INCOME_TYPES = {
 }
 
 
+_UNSET = object()
+
+
 def _uid(user_id: int | None = None) -> int:
     return int(user_id) if user_id is not None else int(get_current_user_id())
 
@@ -95,6 +98,14 @@ def create_asset(
     rate_type=None,
     rate_value=None,
     maturity_date=None,
+    rentability_type=None,
+    index_name=None,
+    index_pct=None,
+    spread_rate=None,
+    fixed_rate=None,
+    principal_amount=None,
+    current_value=None,
+    last_update=None,
     user_id: int | None = None,
 ):
     uid = _uid(user_id)
@@ -108,8 +119,12 @@ def create_asset(
         conn.execute(
             """
             INSERT INTO assets
-            (symbol, name, asset_class, sector, currency, broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date, user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (
+                symbol, name, asset_class, sector, currency, broker_account_id, source_account_id,
+                issuer, rate_type, rate_value, maturity_date, rentability_type, index_name,
+                index_pct, spread_rate, fixed_rate, principal_amount, current_value, last_update, user_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol.strip().upper(),
@@ -123,6 +138,14 @@ def create_asset(
                 rate_type,
                 rate_value,
                 maturity_date,
+                rentability_type,
+                index_name,
+                index_pct,
+                spread_rate,
+                fixed_rate,
+                principal_amount,
+                current_value,
+                last_update,
                 uid,
             ),
         )
@@ -504,18 +527,62 @@ def update_asset(
     sector: str,
     currency: str,
     broker_account_id: int | None,
+    source_account_id: int | None | object = _UNSET,
+    issuer: str | None | object = _UNSET,
+    rate_type: str | None | object = _UNSET,
+    rate_value: float | None | object = _UNSET,
+    maturity_date: str | None | object = _UNSET,
+    rentability_type: str | None | object = _UNSET,
+    index_name: str | None | object = _UNSET,
+    index_pct: float | None | object = _UNSET,
+    spread_rate: float | None | object = _UNSET,
+    fixed_rate: float | None | object = _UNSET,
+    principal_amount: float | None | object = _UNSET,
+    current_value: float | None | object = _UNSET,
+    last_update: str | None | object = _UNSET,
     user_id: int | None = None,
 ):
     uid = _uid(user_id)
     with get_conn() as conn:
         cur = conn.cursor()
+        updates = [
+            "symbol = ?",
+            "name = ?",
+            "asset_class = ?",
+            "sector = ?",
+            "currency = ?",
+            "broker_account_id = ?",
+        ]
+        params: list = [symbol, name, asset_class, sector, currency, broker_account_id]
+
+        optional_fields = [
+            ("source_account_id", source_account_id),
+            ("issuer", issuer),
+            ("rate_type", rate_type),
+            ("rate_value", rate_value),
+            ("maturity_date", maturity_date),
+            ("rentability_type", rentability_type),
+            ("index_name", index_name),
+            ("index_pct", index_pct),
+            ("spread_rate", spread_rate),
+            ("fixed_rate", fixed_rate),
+            ("principal_amount", principal_amount),
+            ("current_value", current_value),
+            ("last_update", last_update),
+        ]
+        for col, value in optional_fields:
+            if value is not _UNSET:
+                updates.append(f"{col} = ?")
+                params.append(value)
+
+        params.extend([asset_id, uid])
         cur.execute(
-            """
+            f"""
             UPDATE assets
-            SET symbol = ?, name = ?, asset_class = ?, sector = ?, currency = ?, broker_account_id = ?
+            SET {", ".join(updates)}
             WHERE id = ? AND user_id = ?
             """,
-            (symbol, name, asset_class, sector, currency, broker_account_id, asset_id, uid),
+            params,
         )
         conn.commit()
 
