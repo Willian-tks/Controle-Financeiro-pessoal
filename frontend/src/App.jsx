@@ -82,7 +82,7 @@ const PAGES = [
 ];
 
 const PAGE_SUBTITLES = {
-  Gerenciador: "Cadastros e manutenção de contas/categorias",
+  Gerenciador: "Cadastros e manutenção de contas, categorias e cartões",
   Contas: "Visão rápida das contas cadastradas",
   "Lançamentos": "Registro e histórico das movimentações",
   Dashboard: "KPIs, gráficos e saldos por conta",
@@ -91,6 +91,7 @@ const PAGE_SUBTITLES = {
 };
 
 const INVEST_TABS = ["Resumo", "Ativos", "Operações", "Proventos", "Cotações"];
+const MANAGER_TABS = ["Cadastro de contas", "Cadastro de categorias", "Cadastro cartão de crédito"];
 const QUOTE_GROUP_OPTIONS = ["Ações BR", "FIIs", "Stocks", "Cripto"];
 const DONUT_COLORS = ["#f4c84b", "#4e7ff3", "#73d39f", "#ef6f5c", "#9a7df9"];
 const CARD_MODELS = ["Black", "Gold", "Platinum", "Orange", "Violeta", "Vermelho"];
@@ -248,20 +249,29 @@ export default function App() {
   const [txAccountId, setTxAccountId] = useState("");
   const [txCategoryId, setTxCategoryId] = useState("");
   const [txMethod, setTxMethod] = useState("PIX");
+  const [txRecentCategoryFilterId, setTxRecentCategoryFilterId] = useState("");
+  const [txRecentStatusFilter, setTxRecentStatusFilter] = useState("");
   const [txFuturePaymentMethod, setTxFuturePaymentMethod] = useState("PIX");
   const [txView, setTxView] = useState("caixa");
   const [txSourceAccountId, setTxSourceAccountId] = useState("");
   const [txCardId, setTxCardId] = useState("");
   const [commitmentEdit, setCommitmentEdit] = useState(null);
   const [cardMsg, setCardMsg] = useState("");
+  const [cardCreateName, setCardCreateName] = useState("");
+  const [cardCreateBrand, setCardCreateBrand] = useState("");
+  const [cardCreateModel, setCardCreateModel] = useState("");
+  const [cardCreateType, setCardCreateType] = useState("");
+  const [cardCreateAccountId, setCardCreateAccountId] = useState("");
+  const [cardCreateDueDay, setCardCreateDueDay] = useState("");
+  const [cardCreateCloseDay, setCardCreateCloseDay] = useState("");
   const [cardName, setCardName] = useState("");
-  const [cardBrand, setCardBrand] = useState("Visa");
-  const [cardModel, setCardModel] = useState("Black");
-  const [cardType, setCardType] = useState("Credito");
+  const [cardBrand, setCardBrand] = useState("");
+  const [cardModel, setCardModel] = useState("");
+  const [cardType, setCardType] = useState("");
   const [cardAccountId, setCardAccountId] = useState("");
   const [cardSourceAccountId, setCardSourceAccountId] = useState("");
-  const [cardDueDay, setCardDueDay] = useState("10");
-  const [cardCloseDay, setCardCloseDay] = useState("5");
+  const [cardDueDay, setCardDueDay] = useState("");
+  const [cardCloseDay, setCardCloseDay] = useState("");
   const [cardEditId, setCardEditId] = useState("");
   const [importMsg, setImportMsg] = useState("");
   const [importPreview, setImportPreview] = useState([]);
@@ -291,6 +301,7 @@ export default function App() {
   const [quoteTimeout, setQuoteTimeout] = useState("25");
   const [quoteWorkers, setQuoteWorkers] = useState("4");
   const [quoteGroups, setQuoteGroups] = useState(QUOTE_GROUP_OPTIONS);
+  const [investSummaryClassFilter, setInvestSummaryClassFilter] = useState("");
   const [tradeAssetClassFilter, setTradeAssetClassFilter] = useState("");
   const [tradeAssetId, setTradeAssetId] = useState("");
   const [tradeSide, setTradeSide] = useState("BUY");
@@ -303,6 +314,7 @@ export default function App() {
   const [assetEditCurrency, setAssetEditCurrency] = useState("BRL");
   const [assetEditBrokerId, setAssetEditBrokerId] = useState("");
   const [investTab, setInvestTab] = useState("Resumo");
+  const [managerTab, setManagerTab] = useState("Cadastro de contas");
   const [manageMsg, setManageMsg] = useState("");
   const [accEditId, setAccEditId] = useState("");
   const [accEditName, setAccEditName] = useState("");
@@ -319,6 +331,7 @@ export default function App() {
   const [payInvoiceTarget, setPayInvoiceTarget] = useState(null);
   const [payAccountId, setPayAccountId] = useState("");
   const [payDate, setPayDate] = useState("");
+  const [invoiceCardFilterId, setInvoiceCardFilterId] = useState("");
   const userMenuRef = useRef(null);
 
   useEffect(() => {
@@ -411,9 +424,9 @@ export default function App() {
     if (!bankAccounts.length) {
       setCardAccountId("");
       setCardSourceAccountId("");
-    } else if (!cardAccountId || !bankAccounts.some((a) => String(a.id) === String(cardAccountId))) {
-      setCardAccountId(String(bankAccounts[0].id));
-      setCardSourceAccountId(String(bankAccounts[0].id));
+    } else if (!bankAccounts.some((a) => String(a.id) === String(cardAccountId))) {
+      setCardAccountId("");
+      setCardSourceAccountId("");
     } else {
       setCardSourceAccountId(String(cardAccountId));
     }
@@ -423,15 +436,29 @@ export default function App() {
     if (!cards.length) {
       setCardEditId("");
       setCardName("");
-      setCardBrand("Visa");
-      setCardModel("Black");
-      setCardType("Credito");
-      setCardDueDay("10");
-      setCardCloseDay("5");
+      setCardBrand("");
+      setCardModel("");
+      setCardType("");
+      setCardAccountId("");
+      setCardSourceAccountId("");
+      setCardDueDay("");
+      setCardCloseDay("");
       return;
     }
-    const cur = cards.find((c) => String(c.id) === String(cardEditId)) || cards[0];
-    setCardEditId(String(cur.id));
+    if (!cardEditId) return;
+    const cur = cards.find((c) => String(c.id) === String(cardEditId));
+    if (!cur) {
+      setCardEditId("");
+      setCardName("");
+      setCardBrand("");
+      setCardModel("");
+      setCardType("");
+      setCardAccountId("");
+      setCardSourceAccountId("");
+      setCardDueDay("");
+      setCardCloseDay("");
+      return;
+    }
     setCardName(String(cur.name || ""));
     setCardBrand(String(cur.brand || "Visa"));
     setCardModel(String(cur.model || "Black"));
@@ -465,6 +492,7 @@ export default function App() {
     [categories, txCategoryId]
   );
   const txIsFutureTab = txView === "futuro";
+  const txIsCashTab = txView === "caixa";
   const txCategoriesForForm = useMemo(
     () => (txIsFutureTab ? categories.filter((c) => String(c.kind) === "Despesa") : categories),
     [categories, txIsFutureTab]
@@ -479,10 +507,60 @@ export default function App() {
   const txMethodOptions = useMemo(() => {
     if (txIsFutureTab) return ["Futuro"];
     if (txIsIncome) return ["PIX", "TED", "Dinheiro"];
-    if (txIsExpense) return ["PIX", "Debito", "Credito", "Futuro", "TED", "Dinheiro"];
+    if (txIsExpense) return ["PIX", "Debito", "Credito", "TED", "Dinheiro"];
     if (txIsTransfer) return ["PIX", "TED", "Dinheiro"];
     return [];
   }, [txIsFutureTab, txIsIncome, txIsExpense, txIsTransfer]);
+  const txRecentCategoryOptions = useMemo(
+    () =>
+      (categories || [])
+        .map((c) => ({ id: String(c.id), name: String(c.name || ""), kind: String(c.kind || "") }))
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+    [categories]
+  );
+  const txRecentCategoryFilter = useMemo(
+    () => txRecentCategoryOptions.find((c) => c.id === String(txRecentCategoryFilterId)) || null,
+    [txRecentCategoryOptions, txRecentCategoryFilterId]
+  );
+  const txRecentStatusOptions = useMemo(() => {
+    const set = new Set();
+    for (const t of transactions || []) {
+      const raw = String(t.charge_status || "").trim();
+      set.add(raw || "__none__");
+    }
+    const preferredOrder = ["Pendente", "Vencido", "Pago", "Aguardando Fatura", "__none__"];
+    const options = [...set];
+    options.sort((a, b) => {
+      const ia = preferredOrder.indexOf(a);
+      const ib = preferredOrder.indexOf(b);
+      if (ia >= 0 && ib >= 0) return ia - ib;
+      if (ia >= 0) return -1;
+      if (ib >= 0) return 1;
+      return String(a).localeCompare(String(b), "pt-BR");
+    });
+    return options.map((value) => ({
+      value,
+      label: value === "__none__" ? "Sem status (-)" : value,
+    }));
+  }, [transactions]);
+  const transactionsVisible = useMemo(() => {
+    const targetId = String(txRecentCategoryFilterId);
+    const targetName = normalizeText(txRecentCategoryFilter?.name || "");
+    return (transactions || []).filter((t) => {
+      if (txRecentCategoryFilterId) {
+        const categoryMatches =
+          String(t.category_id || "") === targetId ||
+          (targetName && normalizeText(t.category || "") === targetName);
+        if (!categoryMatches) return false;
+      }
+      if (txRecentStatusFilter) {
+        const rawStatus = String(t.charge_status || "").trim();
+        const statusKey = rawStatus || "__none__";
+        if (statusKey !== txRecentStatusFilter) return false;
+      }
+      return true;
+    });
+  }, [transactions, txRecentCategoryFilterId, txRecentCategoryFilter, txRecentStatusFilter]);
   const transferAccounts = useMemo(
     () => accounts.filter((a) => ["Banco", "Corretora"].includes(normalizeAccountType(a.type))),
     [accounts]
@@ -595,7 +673,10 @@ export default function App() {
       setTxAccountId(String(selectedTxCard.card_account_id || ""));
     }
   }, [txIsExpenseCredit, selectedTxCard, txAccountId]);
-  const isCreditCardType = cardType === "Credito";
+  const isEditCreditCardType = cardType === "Credito";
+  const hasEditCardTypeSelected = cardType === "Credito" || cardType === "Debito";
+  const isCreateCreditCardType = cardCreateType === "Credito";
+  const hasCreateCardTypeSelected = cardCreateType === "Credito" || cardCreateType === "Debito";
 
   const brl = useMemo(
     () =>
@@ -685,6 +766,28 @@ export default function App() {
         : 0,
     [activeCardCurrentInvoice]
   );
+  const invoiceCardFilterOptions = useMemo(() => {
+    const map = new Map();
+    for (const inv of cardInvoices || []) {
+      const id = Number(inv.card_id);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const name = String(inv.card_name || `Cartão ${id}`);
+      if (!map.has(id)) map.set(id, name);
+    }
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
+  }, [cardInvoices]);
+  const openInvoicesVisible = useMemo(() => {
+    const selectedId = Number(invoiceCardFilterId);
+    const rows = (cardInvoices || []).filter((inv) => {
+      if (String(inv.status || "").toUpperCase() !== "OPEN") return false;
+      if (!invoiceCardFilterId) return true;
+      return Number(inv.card_id) === selectedId;
+    });
+    rows.sort((a, b) => String(a.due_date || "").localeCompare(String(b.due_date || "")));
+    return rows;
+  }, [cardInvoices, invoiceCardFilterId]);
   const investmentByClass = useMemo(() => {
     const rows = investPortfolio?.positions || [];
     const map = new Map();
@@ -701,6 +804,59 @@ export default function App() {
     () => investmentByClass.reduce((acc, r) => acc + Number(r.value || 0), 0),
     [investmentByClass]
   );
+  const investSummaryClassOptions = useMemo(() => {
+    const classes = new Set(
+      (investPortfolio?.positions || [])
+        .map((p) => String(p.asset_class || "").trim())
+        .filter((v) => v)
+    );
+    return [...classes].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [investPortfolio]);
+  useEffect(() => {
+    if (!investSummaryClassFilter) return;
+    if (!investSummaryClassOptions.includes(investSummaryClassFilter)) {
+      setInvestSummaryClassFilter("");
+    }
+  }, [investSummaryClassFilter, investSummaryClassOptions]);
+  const investSummaryPositionsFiltered = useMemo(() => {
+    const rows = investPortfolio?.positions || [];
+    if (!investSummaryClassFilter) return rows;
+    return rows.filter((p) => String(p.asset_class || "") === investSummaryClassFilter);
+  }, [investPortfolio, investSummaryClassFilter]);
+  const investSummaryViewData = useMemo(() => {
+    if (!investSummaryClassFilter) {
+      return {
+        assets_count: Number(investSummaryData.assets_count || 0),
+        total_invested: Number(investSummaryData.total_invested || 0),
+        broker_balance: Number(investSummaryData.broker_balance || 0),
+        total_market: Number(investSummaryData.total_market || 0),
+        total_return: Number(investSummaryData.total_return || 0),
+        total_return_pct: Number(investSummaryData.total_return_pct || 0),
+        total_unrealized: Number(investSummaryData.total_unrealized || 0),
+      };
+    }
+    const rows = investSummaryPositionsFiltered;
+    const totalInvested = rows.reduce((acc, p) => acc + Number(p.cost_basis || 0), 0);
+    const totalMarket = rows.reduce((acc, p) => acc + Number(p.market_value || 0), 0);
+    const totalUnrealized = rows.reduce((acc, p) => acc + Number(p.unrealized_pnl || 0), 0);
+    const totalReturn = totalUnrealized;
+    const totalReturnPct = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
+    return {
+      assets_count: rows.length,
+      total_invested: normalizeMoneyValue(totalInvested),
+      broker_balance: Number(investSummaryData.broker_balance || 0),
+      total_market: normalizeMoneyValue(totalMarket),
+      total_return: normalizeMoneyValue(totalReturn),
+      total_return_pct: Number.isFinite(totalReturnPct) ? totalReturnPct : 0,
+      total_unrealized: normalizeMoneyValue(totalUnrealized),
+    };
+  }, [investSummaryClassFilter, investSummaryData, investSummaryPositionsFiltered]);
+  const investPortfolioPositionsVisible = useMemo(() => {
+    if (investTab === "Resumo" && investSummaryClassFilter) {
+      return investSummaryPositionsFiltered;
+    }
+    return investPortfolio.positions || [];
+  }, [investTab, investSummaryClassFilter, investSummaryPositionsFiltered, investPortfolio]);
   const selectedTradeAsset = useMemo(
     () => investAssets.find((a) => String(a.id) === String(tradeAssetId)) || null,
     [investAssets, tradeAssetId]
@@ -1385,11 +1541,11 @@ export default function App() {
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const name = String(form.get("name") || "").trim();
-    const type = String(form.get("type") || "Banco");
-    const currency = String(form.get("currency") || "BRL").toUpperCase();
+    const type = String(form.get("type") || "").trim();
+    const currency = String(form.get("currency") || "").toUpperCase().trim();
     const showOnDashboard = String(form.get("show_on_dashboard") || "").toLowerCase() === "on";
-    if (!name) {
-      setManageMsg("Informe o nome da conta.");
+    if (!name || !type || !currency) {
+      setManageMsg("Preencha nome, tipo e moeda da conta.");
       return;
     }
     try {
@@ -1441,9 +1597,9 @@ export default function App() {
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const name = String(form.get("name") || "").trim();
-    const kind = String(form.get("kind") || "Despesa");
-    if (!name) {
-      setManageMsg("Informe o nome da categoria.");
+    const kind = String(form.get("kind") || "").trim();
+    if (!name || !kind) {
+      setManageMsg("Preencha nome e tipo da categoria.");
       return;
     }
     try {
@@ -1484,13 +1640,19 @@ export default function App() {
   async function onCreateCard(e) {
     e.preventDefault();
     setCardMsg("");
-    const name = String(cardName || "").trim();
-    const accId = Number(cardAccountId);
-    const due = Number(String(cardDueDay || "0"));
-    const close = Number(String(cardCloseDay || "0"));
-    const isCredit = cardType === "Credito";
+    const name = String(cardCreateName || "").trim();
+    const brand = String(cardCreateBrand || "").trim();
+    const model = String(cardCreateModel || "").trim();
+    const type = String(cardCreateType || "").trim();
+    const accId = Number(cardCreateAccountId);
+    const due = Number(String(cardCreateDueDay || "0"));
+    const close = Number(String(cardCreateCloseDay || "0"));
+    const isCredit = type === "Credito";
     if (
       !name ||
+      !brand ||
+      !model ||
+      !type ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
       (
@@ -1512,15 +1674,22 @@ export default function App() {
     try {
       await createCard({
         name,
-        brand: cardBrand,
-        model: cardModel,
-        card_type: cardType,
+        brand,
+        model,
+        card_type: type,
         card_account_id: accId,
         source_account_id: accId,
         due_day: isCredit ? due : null,
         close_day: isCredit ? close : null,
       });
       setCardMsg("Cartão cadastrado.");
+      setCardCreateName("");
+      setCardCreateBrand("");
+      setCardCreateModel("");
+      setCardCreateType("");
+      setCardCreateAccountId("");
+      setCardCreateDueDay("");
+      setCardCreateCloseDay("");
       await reloadCardsData();
       await reloadAllData();
       await reloadDashboard();
@@ -1533,14 +1702,20 @@ export default function App() {
     setCardMsg("");
     const id = Number(cardEditId);
     const name = String(cardName || "").trim();
+    const brand = String(cardBrand || "").trim();
+    const model = String(cardModel || "").trim();
+    const type = String(cardType || "").trim();
     const accId = Number(cardAccountId);
     const due = Number(String(cardDueDay || "0"));
     const close = Number(String(cardCloseDay || "0"));
-    const isCredit = cardType === "Credito";
+    const isCredit = type === "Credito";
     if (
       !Number.isFinite(id) ||
       id <= 0 ||
       !name ||
+      !brand ||
+      !model ||
+      !type ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
       (
@@ -1558,9 +1733,9 @@ export default function App() {
     try {
       await updateCard(id, {
         name,
-        brand: cardBrand,
-        model: cardModel,
-        card_type: cardType,
+        brand,
+        model,
+        card_type: type,
         card_account_id: accId,
         source_account_id: accId,
         due_day: isCredit ? due : null,
@@ -1593,7 +1768,17 @@ export default function App() {
   function onSelectCardEdit(id) {
     setCardEditId(id);
     const cur = (cards || []).find((c) => String(c.id) === String(id));
-    if (!cur) return;
+    if (!cur) {
+      setCardName("");
+      setCardBrand("");
+      setCardModel("");
+      setCardType("");
+      setCardAccountId("");
+      setCardSourceAccountId("");
+      setCardDueDay("");
+      setCardCloseDay("");
+      return;
+    }
     setCardName(String(cur.name || ""));
     setCardBrand(String(cur.brand || "Visa"));
     setCardModel(String(cur.model || "Black"));
@@ -1857,7 +2042,7 @@ export default function App() {
         </div>
       </aside>
 
-      <main className={`main ${page === "Dashboard" ? "main-dashboard" : ""}`}>
+      <main className={`main ${page === "Dashboard" || page === "Gerenciador" || page === "Contas" || page === "Lançamentos" || page === "Investimentos" || page === "Importar CSV" ? "main-dashboard" : ""}`}>
         <header className="page-header">
           <h1>{page}</h1>
           <p>{subtitle}</p>
@@ -2105,137 +2290,19 @@ export default function App() {
             </section>
 
             <section className="card">
-              <h3>Cadastro de cartões</h3>
-              <div className="mgr-grid">
-                <input
-                  type="text"
-                  placeholder="Nome do cartão"
-                  value={cardName}
-                  onChange={(e) => setCardName(e.target.value)}
-                />
-                <select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)}>
-                  <option value="Visa">Visa</option>
-                  <option value="Master">Master</option>
-                </select>
-                <select value={cardModel} onChange={(e) => setCardModel(e.target.value)}>
-                  {CARD_MODELS.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-                <select value={cardType} onChange={(e) => setCardType(e.target.value)}>
-                  <option value="Credito">Credito</option>
-                  <option value="Debito">Debito</option>
-                </select>
-                <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)}>
-                  <option value="">Conta banco vinculada</option>
-                  {bankAccountsOnly.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-                {!bankAccountsOnly.length ? (
-                  <input type="text" value="Sem conta Banco cadastrada." disabled />
-                ) : null}
-                {isCreditCardType ? (
-                  <>
-                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <span>Dia de fechamento (1-31)</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="31"
-                        value={cardCloseDay}
-                        onChange={(e) => setCardCloseDay(e.target.value)}
-                      />
-                    </label>
-                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <span>Dia do vencimento (1-31)</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="31"
-                        value={cardDueDay}
-                        onChange={(e) => setCardDueDay(e.target.value)}
-                      />
-                    </label>
-                    <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
-                      Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
-                    </small>
-                  </>
-                ) : (
-                  <input type="text" value="Débito imediato na conta banco" disabled />
-                )}
-                <button type="button" onClick={onCreateCard}>Cadastrar cartão</button>
-              </div>
-            </section>
-
-            <section className="card">
-              <h3>Cartões cadastrados</h3>
-              <div className="mgr-grid">
-                <select value={cardEditId} onChange={(e) => onSelectCardEdit(e.target.value)}>
-                  <option value="">Selecione um cartão</option>
-                  {cards.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} - {c.brand || "Visa"} - {c.model || "Black"} - {c.card_type || "Credito"} ({c.linked_account})
-                    </option>
-                  ))}
-                </select>
-                <input value={cardName} onChange={(e) => setCardName(e.target.value)} placeholder="Nome do cartão" />
-                <select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)}>
-                  <option value="Visa">Visa</option>
-                  <option value="Master">Master</option>
-                </select>
-                <select value={cardModel} onChange={(e) => setCardModel(e.target.value)}>
-                  {CARD_MODELS.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-                <select value={cardType} onChange={(e) => setCardType(e.target.value)}>
-                  <option value="Credito">Credito</option>
-                  <option value="Debito">Debito</option>
-                </select>
-                <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)}>
-                  <option value="">Conta banco vinculada</option>
-                  {bankAccountsOnly.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-                {isCreditCardType ? (
-                  <>
-                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <span>Dia de fechamento (1-31)</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="31"
-                        value={cardCloseDay}
-                        onChange={(e) => setCardCloseDay(e.target.value)}
-                      />
-                    </label>
-                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <span>Dia do vencimento (1-31)</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="31"
-                        value={cardDueDay}
-                        onChange={(e) => setCardDueDay(e.target.value)}
-                      />
-                    </label>
-                    <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
-                      Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
-                    </small>
-                  </>
-                ) : (
-                  <input type="text" value="Débito imediato na conta banco" disabled />
-                )}
-                <button type="button" onClick={onUpdateCard}>Atualizar cartão</button>
-                <button type="button" className="danger" onClick={onDeleteCard}>Excluir cartão</button>
-              </div>
-              {cardMsg ? <p>{cardMsg}</p> : null}
-            </section>
-
-            <section className="card">
               <h3>Faturas abertas</h3>
+              <div style={{ display: "grid", gap: 10, maxWidth: 360, marginBottom: 12 }}>
+                <select
+                  className="invoice-filter-select"
+                  value={invoiceCardFilterId}
+                  onChange={(e) => setInvoiceCardFilterId(e.target.value)}
+                >
+                  <option value="">Todos os cartões</option>
+                  {invoiceCardFilterOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.name}</option>
+                  ))}
+                </select>
+              </div>
               <div className="tx-table-wrap">
                 <table className="tx-table">
                   <thead>
@@ -2250,7 +2317,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {cardInvoices.map((i) => (
+                    {openInvoicesVisible.map((i) => (
                       <tr key={i.id}>
                         <td>{i.card_name}</td>
                         <td>{i.invoice_period}</td>
@@ -2267,6 +2334,11 @@ export default function App() {
                         </td>
                       </tr>
                     ))}
+                    {!openInvoicesVisible.length ? (
+                      <tr>
+                        <td colSpan={7}>Nenhuma fatura aberta para o filtro selecionado.</td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>
@@ -2276,119 +2348,280 @@ export default function App() {
 
         {page === "Gerenciador" ? (
           <>
+            <section className="card tabs-card">
+              <div className="mini-tabs">
+                {MANAGER_TABS.map((t) => (
+                  <button
+                    key={t}
+                    className={`mini-tab ${managerTab === t ? "active" : ""}`}
+                    onClick={() => setManagerTab(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </section>
+
             {manageMsg ? (
               <section className="card">
                 <p className="status-msg">{manageMsg}</p>
               </section>
             ) : null}
 
-            <section className="card">
-              <h3>Nova conta</h3>
-              <form className="tx-form" onSubmit={onCreateAccount}>
-                <input name="name" type="text" placeholder="Nome da conta" required />
-                <select name="type" defaultValue="Banco">
-                  <option value="Banco">Banco</option>
-                  <option value="Dinheiro">Dinheiro</option>
-                  <option value="Corretora">Corretora</option>
-                </select>
-                <select name="currency" defaultValue="BRL">
-                  <option value="BRL">BRL</option>
-                  <option value="USD">USD</option>
-                </select>
-                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input type="checkbox" name="show_on_dashboard" />
-                  Fixar no Dashboard (saldo 0)
-                </label>
-                <button type="submit">Salvar conta</button>
-              </form>
-            </section>
+            {managerTab === "Cadastro de contas" ? (
+              <>
+                <section className="card">
+                  <h3>Nova conta</h3>
+                  <form className="tx-form" onSubmit={onCreateAccount}>
+                    <input name="name" type="text" placeholder="Digite o nome da conta" required />
+                    <select name="type" defaultValue="" required>
+                      <option value="" disabled>Selecione o tipo da conta</option>
+                      <option value="Banco">Banco</option>
+                      <option value="Dinheiro">Dinheiro</option>
+                      <option value="Corretora">Corretora</option>
+                    </select>
+                    <select name="currency" defaultValue="" required>
+                      <option value="" disabled>Selecione a moeda</option>
+                      <option value="BRL">BRL</option>
+                      <option value="USD">USD</option>
+                    </select>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input type="checkbox" name="show_on_dashboard" />
+                      Fixar no Dashboard (saldo 0)
+                    </label>
+                    <button type="submit">Salvar conta</button>
+                  </form>
+                </section>
 
-            <section className="card">
-              <h3>Gerenciar contas</h3>
-              <div className="mgr-grid">
-                <select
-                  value={accEditId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setAccEditId(id);
-                    const cur = accounts.find((a) => String(a.id) === id);
-                    if (cur) {
-                      setAccEditName(cur.name);
-                      setAccEditType(cur.type);
-                      setAccEditCurrency((cur.currency || "BRL").toUpperCase());
-                      setAccEditShowOnDashboard(Boolean(cur.show_on_dashboard));
-                    }
-                  }}
-                >
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>{a.id} - {a.name} ({a.type}, {a.currency || "BRL"})</option>
-                  ))}
-                </select>
-                <input value={accEditName} onChange={(e) => setAccEditName(e.target.value)} placeholder="Nome" />
-                <select value={accEditType} onChange={(e) => setAccEditType(e.target.value)}>
-                  <option value="Banco">Banco</option>
-                  <option value="Dinheiro">Dinheiro</option>
-                  <option value="Corretora">Corretora</option>
-                </select>
-                <select value={accEditCurrency} onChange={(e) => setAccEditCurrency(e.target.value)}>
-                  <option value="BRL">BRL</option>
-                  <option value="USD">USD</option>
-                </select>
-                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(accEditShowOnDashboard)}
-                    onChange={(e) => setAccEditShowOnDashboard(e.target.checked)}
-                  />
-                  Fixar no Dashboard (saldo 0)
-                </label>
-                <button onClick={onUpdateAccount}>Atualizar conta</button>
-                <button className="danger" onClick={onDeleteAccount}>Excluir conta</button>
-              </div>
-            </section>
+                <section className="card">
+                  <h3>Gerenciar contas</h3>
+                  <div className="mgr-grid">
+                    <select
+                      value={accEditId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setAccEditId(id);
+                        const cur = accounts.find((a) => String(a.id) === id);
+                        if (cur) {
+                          setAccEditName(cur.name);
+                          setAccEditType(cur.type);
+                          setAccEditCurrency((cur.currency || "BRL").toUpperCase());
+                          setAccEditShowOnDashboard(Boolean(cur.show_on_dashboard));
+                        }
+                      }}
+                    >
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>{a.id} - {a.name} ({a.type}, {a.currency || "BRL"})</option>
+                      ))}
+                    </select>
+                    <input value={accEditName} onChange={(e) => setAccEditName(e.target.value)} placeholder="Nome" />
+                    <select value={accEditType} onChange={(e) => setAccEditType(e.target.value)}>
+                      <option value="Banco">Banco</option>
+                      <option value="Dinheiro">Dinheiro</option>
+                      <option value="Corretora">Corretora</option>
+                    </select>
+                    <select value={accEditCurrency} onChange={(e) => setAccEditCurrency(e.target.value)}>
+                      <option value="BRL">BRL</option>
+                      <option value="USD">USD</option>
+                    </select>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(accEditShowOnDashboard)}
+                        onChange={(e) => setAccEditShowOnDashboard(e.target.checked)}
+                      />
+                      Fixar no Dashboard (saldo 0)
+                    </label>
+                    <button onClick={onUpdateAccount}>Atualizar conta</button>
+                    <button className="danger" onClick={onDeleteAccount}>Excluir conta</button>
+                  </div>
+                </section>
+              </>
+            ) : null}
 
-            <section className="card">
-              <h3>Nova categoria</h3>
-              <form className="tx-form" onSubmit={onCreateCategory}>
-                <input name="name" type="text" placeholder="Nome da categoria" required />
-                <select name="kind" defaultValue="Despesa">
-                  <option value="Despesa">Despesa</option>
-                  <option value="Receita">Receita</option>
-                  <option value="Transferencia">Transferência</option>
-                </select>
-                <button type="submit">Salvar categoria</button>
-              </form>
-            </section>
+            {managerTab === "Cadastro de categorias" ? (
+              <>
+                <section className="card">
+                  <h3>Nova categoria</h3>
+                  <form className="tx-form" onSubmit={onCreateCategory}>
+                    <input name="name" type="text" placeholder="Digite o nome da categoria" required />
+                    <select name="kind" defaultValue="" required>
+                      <option value="" disabled>Selecione o tipo da categoria</option>
+                      <option value="Despesa">Despesa</option>
+                      <option value="Receita">Receita</option>
+                      <option value="Transferencia">Transferência</option>
+                    </select>
+                    <button type="submit">Salvar categoria</button>
+                  </form>
+                </section>
 
-            <section className="card">
-              <h3>Gerenciar categorias</h3>
-              <div className="mgr-grid">
-                <select
-                  value={catEditId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setCatEditId(id);
-                    const cur = categories.find((c) => String(c.id) === id);
-                    if (cur) {
-                      setCatEditName(cur.name);
-                      setCatEditKind(cur.kind);
-                    }
-                  }}
-                >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>{c.id} - {c.name} ({c.kind})</option>
-                  ))}
-                </select>
-                <input value={catEditName} onChange={(e) => setCatEditName(e.target.value)} placeholder="Nome" />
-                <select value={catEditKind} onChange={(e) => setCatEditKind(e.target.value)}>
-                  <option value="Despesa">Despesa</option>
-                  <option value="Receita">Receita</option>
-                  <option value="Transferencia">Transferência</option>
-                </select>
-                <button onClick={onUpdateCategory}>Atualizar categoria</button>
-                <button className="danger" onClick={onDeleteCategory}>Excluir categoria</button>
-              </div>
-            </section>
+                <section className="card">
+                  <h3>Gerenciar categorias</h3>
+                  <div className="mgr-grid">
+                    <select
+                      value={catEditId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setCatEditId(id);
+                        const cur = categories.find((c) => String(c.id) === id);
+                        if (cur) {
+                          setCatEditName(cur.name);
+                          setCatEditKind(cur.kind);
+                        }
+                      }}
+                    >
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.id} - {c.name} ({c.kind})</option>
+                      ))}
+                    </select>
+                    <input value={catEditName} onChange={(e) => setCatEditName(e.target.value)} placeholder="Nome" />
+                    <select value={catEditKind} onChange={(e) => setCatEditKind(e.target.value)}>
+                      <option value="Despesa">Despesa</option>
+                      <option value="Receita">Receita</option>
+                      <option value="Transferencia">Transferência</option>
+                    </select>
+                    <button onClick={onUpdateCategory}>Atualizar categoria</button>
+                    <button className="danger" onClick={onDeleteCategory}>Excluir categoria</button>
+                  </div>
+                </section>
+              </>
+            ) : null}
+
+            {managerTab === "Cadastro cartão de crédito" ? (
+              <>
+                <section className="card">
+                  <h3>Cadastro de cartões</h3>
+                  <div className="mgr-grid">
+                    <input
+                      type="text"
+                      placeholder="Digite o nome do cartão"
+                      value={cardCreateName}
+                      onChange={(e) => setCardCreateName(e.target.value)}
+                    />
+                    <select value={cardCreateBrand} onChange={(e) => setCardCreateBrand(e.target.value)}>
+                      <option value="" disabled>Selecione a bandeira</option>
+                      <option value="Visa">Visa</option>
+                      <option value="Master">Master</option>
+                    </select>
+                    <select value={cardCreateModel} onChange={(e) => setCardCreateModel(e.target.value)}>
+                      <option value="" disabled>Selecione o modelo do cartão</option>
+                      {CARD_MODELS.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <select value={cardCreateType} onChange={(e) => setCardCreateType(e.target.value)}>
+                      <option value="" disabled>Selecione o tipo do cartão</option>
+                      <option value="Credito">Credito</option>
+                      <option value="Debito">Debito</option>
+                    </select>
+                    <select value={cardCreateAccountId} onChange={(e) => setCardCreateAccountId(e.target.value)}>
+                      <option value="" disabled>Selecione a conta banco vinculada</option>
+                      {bankAccountsOnly.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                    {!bankAccountsOnly.length ? (
+                      <input type="text" value="Sem conta Banco cadastrada." disabled />
+                    ) : null}
+                    {!hasCreateCardTypeSelected ? (
+                      <input type="text" value="Selecione primeiro o tipo do cartão" disabled />
+                    ) : isCreateCreditCardType ? (
+                      <>
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          placeholder="Dia de fechamento (1-31)"
+                          value={cardCreateCloseDay}
+                          onChange={(e) => setCardCreateCloseDay(e.target.value)}
+                        />
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          placeholder="Dia do vencimento (1-31)"
+                          value={cardCreateDueDay}
+                          onChange={(e) => setCardCreateDueDay(e.target.value)}
+                        />
+                        <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                          Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
+                        </small>
+                      </>
+                    ) : (
+                      <input type="text" value="Débito imediato na conta banco" disabled />
+                    )}
+                    <button type="button" onClick={onCreateCard}>Cadastrar cartão</button>
+                  </div>
+                </section>
+
+                <section className="card">
+                  <h3>Cartões cadastrados</h3>
+                  <div className="mgr-grid">
+                    <select value={cardEditId} onChange={(e) => onSelectCardEdit(e.target.value)}>
+                      <option value="">Selecione um cartão</option>
+                      {cards.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} - {c.brand || "Visa"} - {c.model || "Black"} - {c.card_type || "Credito"} ({c.linked_account})
+                        </option>
+                      ))}
+                    </select>
+                    <input value={cardName} onChange={(e) => setCardName(e.target.value)} placeholder="Digite o nome do cartão" />
+                    <select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)}>
+                      <option value="" disabled>Selecione a bandeira</option>
+                      <option value="Visa">Visa</option>
+                      <option value="Master">Master</option>
+                    </select>
+                    <select value={cardModel} onChange={(e) => setCardModel(e.target.value)}>
+                      <option value="" disabled>Selecione o modelo do cartão</option>
+                      {CARD_MODELS.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <select value={cardType} onChange={(e) => setCardType(e.target.value)}>
+                      <option value="" disabled>Selecione o tipo do cartão</option>
+                      <option value="Credito">Credito</option>
+                      <option value="Debito">Debito</option>
+                    </select>
+                    <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)}>
+                      <option value="" disabled>Selecione a conta banco vinculada</option>
+                      {bankAccountsOnly.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                    {!hasEditCardTypeSelected ? (
+                      <input type="text" value="Selecione primeiro o tipo do cartão" disabled />
+                    ) : isEditCreditCardType ? (
+                      <>
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          placeholder="Dia de fechamento (1-31)"
+                          value={cardCloseDay}
+                          onChange={(e) => setCardCloseDay(e.target.value)}
+                        />
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          placeholder="Dia do vencimento (1-31)"
+                          value={cardDueDay}
+                          onChange={(e) => setCardDueDay(e.target.value)}
+                        />
+                        <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                          Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
+                        </small>
+                      </>
+                    ) : (
+                      <input type="text" value="Débito imediato na conta banco" disabled />
+                    )}
+                    <button type="button" onClick={onUpdateCard}>Atualizar cartão</button>
+                    <button type="button" className="danger" onClick={onDeleteCard}>Excluir cartão</button>
+                  </div>
+                  {cardMsg ? <p>{cardMsg}</p> : null}
+                </section>
+              </>
+            ) : null}
           </>
         ) : null}
 
@@ -2419,7 +2652,28 @@ export default function App() {
                   Compromissos
                 </button>
               </div>
-              <form className="tx-form" onSubmit={onCreateTransaction}>
+              {txView === "competencia" ? (
+                <>
+                  <div className="transfer-hint" style={{ marginBottom: 10 }}>
+                    <strong className="transfer-badge">Compromissos</strong>
+                    <span>
+                      Use a aba Compromissos para contas a vencer: se hoje ainda não passou do dia informado, a 1ª
+                      parcela entra neste mês; depois replica pelos próximos meses.
+                    </span>
+                  </div>
+                  <div className="transfer-hint" style={{ marginBottom: 12 }}>
+                    <strong className="transfer-badge">Competência</strong>
+                    <span>
+                      A aba Competência apresenta valores já comprometidos - como lançamentos previstos ou vinculados a
+                      faturas futuras - que ainda não foram efetivamente pagos ou recebidos.
+                      <br />
+                      Esses valores não impactam o saldo atual até a data de vencimento ou liquidação.
+                    </span>
+                  </div>
+                </>
+              ) : null}
+              {txView !== "competencia" ? (
+                <form className="tx-form" onSubmit={onCreateTransaction}>
                 {txIsTransfer ? (
                   <div className="transfer-hint">
                     <strong className="transfer-badge">Transferência</strong>
@@ -2432,7 +2686,7 @@ export default function App() {
                   <div className="transfer-hint">
                     <strong className="transfer-badge">Despesa</strong>
                     <span>
-                      Use método Compromissos para contas a vencer: se hoje ainda não passou do dia informado, a 1ª parcela entra neste mês; depois replica pelos próximos meses.
+                      Use a aba Compromissos para contas a vencer: se hoje ainda não passou do dia informado, a 1ª parcela entra neste mês; depois replica pelos próximos meses.
                     </span>
                   </div>
                 ) : null}
@@ -2498,97 +2752,210 @@ export default function App() {
                 ) : (
                   <input name="date" type="date" required />
                 )}
+                {txIsCashTab ? (
+                  <>
+                    <select
+                      name="category_id"
+                      required
+                      value={txCategoryId}
+                      onChange={(e) => setTxCategoryId(e.target.value)}
+                    >
+                      <option value="">Categoria</option>
+                      {txCategoriesForForm.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name} ({c.kind})</option>
+                      ))}
+                    </select>
+                    <select
+                      name="method"
+                      value={txMethod}
+                      onChange={(e) => setTxMethod(e.target.value)}
+                      required
+                      disabled={!txMethodOptions.length}
+                    >
+                      {!txMethodOptions.length ? (
+                        <option value="">Selecione a categoria</option>
+                      ) : null}
+                      {txMethodOptions.map((m) => (
+                        <option key={m} value={m}>{m === "Futuro" ? "Compromissos" : m}</option>
+                      ))}
+                    </select>
+                    {!txIsExpenseCredit ? (
+                      <select
+                        name="account_id"
+                        required
+                        value={txAccountId}
+                        onChange={(e) => setTxAccountId(e.target.value)}
+                      >
+                        <option value="" disabled>
+                          {txIsIncome ? "Conta (entrada da receita)" : txIsExpense ? "Conta (saída da despesa)" : "Conta"}
+                        </option>
+                        {(txIsTransfer ? transferAccounts : accounts).map((a) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    ) : null}
+                    {txIsExpense && !txIsTransfer && txMethodEffective === "Credito" ? (
+                      <select
+                        name="card_id"
+                        value={txCardId}
+                        onChange={(e) => setTxCardId(e.target.value)}
+                        required
+                      >
+                        <option value="">Cartão de crédito (obrigatório)</option>
+                        {cardsForTxMethod.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} - {c.brand || "Visa"} ({c.linked_account})
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                    {txIsExpenseCredit ? (
+                      <input
+                        type="text"
+                        value={selectedTxCard ? `Conta vinculada: ${selectedTxCard.linked_account}` : "Conta vinculada: -"}
+                        disabled
+                      />
+                    ) : null}
+                    {txIsTransfer ? (
+                      <select
+                        name="source_account_id"
+                        value={txSourceAccountId}
+                        onChange={(e) => setTxSourceAccountId(e.target.value)}
+                        required
+                      >
+                        <option value="">Conta origem (Transferência)</option>
+                        {transferAccounts
+                          .filter((a) => String(a.id) !== String(txAccountId))
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                      </select>
+                    ) : null}
+                    <input name="notes" type="text" placeholder="Obs (opcional)" />
+                  </>
+                ) : null}
                 <input name="description" type="text" placeholder="Descrição (opcional)" />
                 <input name="amount" type="number" step="0.01" min="0.01" placeholder="Valor" required />
-                <select
-                  name="category_id"
-                  required
-                  value={txCategoryId}
-                  onChange={(e) => setTxCategoryId(e.target.value)}
-                >
-                  <option value="">Categoria</option>
-                  {txCategoriesForForm.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name} ({c.kind})</option>
-                  ))}
-                </select>
-                {txIsFutureTab ? (
-                  <input type="text" value="Compromissos" disabled />
-                ) : (
-                  <select
-                    name="method"
-                    value={txMethod}
-                    onChange={(e) => setTxMethod(e.target.value)}
-                    required
-                    disabled={!txMethodOptions.length}
-                  >
-                    {!txMethodOptions.length ? (
-                      <option value="">Selecione a categoria</option>
-                    ) : null}
-                    {txMethodOptions.map((m) => (
-                      <option key={m} value={m}>{m === "Futuro" ? "Compromissos" : m}</option>
-                    ))}
-                  </select>
-                )}
-                {!txIsExpenseCredit ? (
-                  <select
-                    name="account_id"
-                    required
-                    value={txAccountId}
-                    onChange={(e) => setTxAccountId(e.target.value)}
-                  >
-                    <option value="" disabled>
-                      {txIsIncome ? "Conta (entrada da receita)" : txIsExpense ? "Conta (saída da despesa)" : "Conta"}
-                    </option>
-                    {(txIsTransfer ? transferAccounts : accounts).map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
-                ) : null}
-                {txIsTransfer ? (
-                  <select
-                    name="source_account_id"
-                    value={txSourceAccountId}
-                    onChange={(e) => setTxSourceAccountId(e.target.value)}
-                    required
-                  >
-                    <option value="">Conta origem (Transferência)</option>
-                    {transferAccounts
-                      .filter((a) => String(a.id) !== String(txAccountId))
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
+                {!txIsCashTab ? (
+                  <>
+                    <select
+                      name="category_id"
+                      required
+                      value={txCategoryId}
+                      onChange={(e) => setTxCategoryId(e.target.value)}
+                    >
+                      <option value="">Categoria</option>
+                      {txCategoriesForForm.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name} ({c.kind})</option>
                       ))}
-                  </select>
+                    </select>
+                    {txIsFutureTab ? (
+                      <input type="text" value="Compromissos" disabled />
+                    ) : (
+                      <select
+                        name="method"
+                        value={txMethod}
+                        onChange={(e) => setTxMethod(e.target.value)}
+                        required
+                        disabled={!txMethodOptions.length}
+                      >
+                        {!txMethodOptions.length ? (
+                          <option value="">Selecione a categoria</option>
+                        ) : null}
+                        {txMethodOptions.map((m) => (
+                          <option key={m} value={m}>{m === "Futuro" ? "Compromissos" : m}</option>
+                        ))}
+                      </select>
+                    )}
+                    {!txIsExpenseCredit ? (
+                      <select
+                        name="account_id"
+                        required
+                        value={txAccountId}
+                        onChange={(e) => setTxAccountId(e.target.value)}
+                      >
+                        <option value="" disabled>
+                          {txIsIncome ? "Conta (entrada da receita)" : txIsExpense ? "Conta (saída da despesa)" : "Conta"}
+                        </option>
+                        {(txIsTransfer ? transferAccounts : accounts).map((a) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    ) : null}
+                    {txIsTransfer ? (
+                      <select
+                        name="source_account_id"
+                        value={txSourceAccountId}
+                        onChange={(e) => setTxSourceAccountId(e.target.value)}
+                        required
+                      >
+                        <option value="">Conta origem (Transferência)</option>
+                        {transferAccounts
+                          .filter((a) => String(a.id) !== String(txAccountId))
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                      </select>
+                    ) : null}
+                    {txIsExpense && !txIsTransfer && txMethodEffective === "Credito" ? (
+                      <select
+                        name="card_id"
+                        value={txCardId}
+                        onChange={(e) => setTxCardId(e.target.value)}
+                        required
+                      >
+                        <option value="">Cartão de crédito (obrigatório)</option>
+                        {cardsForTxMethod.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} - {c.brand || "Visa"} ({c.linked_account})
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                    {txIsExpenseCredit ? (
+                      <input
+                        type="text"
+                        value={selectedTxCard ? `Conta vinculada: ${selectedTxCard.linked_account}` : "Conta vinculada: -"}
+                        disabled
+                      />
+                    ) : null}
+                    <input name="notes" type="text" placeholder="Obs (opcional)" />
+                  </>
                 ) : null}
-                {txIsExpense && !txIsTransfer && txMethodEffective === "Credito" ? (
-                  <select
-                    name="card_id"
-                    value={txCardId}
-                    onChange={(e) => setTxCardId(e.target.value)}
-                    required
-                  >
-                    <option value="">Cartão de crédito (obrigatório)</option>
-                    {cardsForTxMethod.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} - {c.brand || "Visa"} ({c.linked_account})
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-                {txIsExpenseCredit ? (
-                  <input
-                    type="text"
-                    value={selectedTxCard ? `Conta vinculada: ${selectedTxCard.linked_account}` : "Conta vinculada: -"}
-                    disabled
-                  />
-                ) : null}
-                <input name="notes" type="text" placeholder="Obs (opcional)" />
                 <button type="submit">Salvar lançamento</button>
               </form>
-              {txMsg ? <p>{txMsg}</p> : null}
+              ) : null}
+              {txView !== "competencia" && txMsg ? <p>{txMsg}</p> : null}
             </section>
 
             <section className="card">
               <h3>Lançamentos recentes</h3>
+              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(220px, 360px))", marginBottom: 12 }}>
+                <select
+                  className="invoice-filter-select"
+                  value={txRecentCategoryFilterId}
+                  onChange={(e) => setTxRecentCategoryFilterId(e.target.value)}
+                >
+                  <option value="">Todas as categorias</option>
+                  {txRecentCategoryOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.name} ({opt.kind})
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="invoice-filter-select"
+                  value={txRecentStatusFilter}
+                  onChange={(e) => setTxRecentStatusFilter(e.target.value)}
+                >
+                  <option value="">Todos os status</option>
+                  {txRecentStatusOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="tx-table-wrap">
                 <table className="tx-table">
                   <thead>
@@ -2604,7 +2971,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {transactions.map((t) => (
+                    {transactionsVisible.map((t) => (
                       <tr key={t.id}>
                         <td>{t.id}</td>
                         <td>
@@ -2697,6 +3064,11 @@ export default function App() {
                         </td>
                       </tr>
                     ))}
+                    {!transactionsVisible.length ? (
+                      <tr>
+                        <td colSpan={8}>Nenhum lançamento para a categoria selecionada.</td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>
@@ -2797,33 +3169,49 @@ export default function App() {
             </section>
 
             {investTab === "Resumo" ? (
-              <section className="cards">
-                <article className="card">
-                  <h3>Ativos</h3>
-                  <strong>{Number(investSummaryData.assets_count || 0)}</strong>
-                </article>
-                <article className="card">
-                  <h3>Total investido</h3>
-                  <strong>{brl.format(Number(investSummaryData.total_invested || 0))}</strong>
-                </article>
-                <article className="card">
-                  <h3>Saldo na corretora</h3>
-                  <strong>{brl.format(Number(investSummaryData.broker_balance || 0))}</strong>
-                </article>
-                <article className="card">
-                  <h3>Valor de mercado</h3>
-                  <strong>{brl.format(Number(investSummaryData.total_market || 0))}</strong>
-                </article>
-                <article className="card">
-                  <h3>Retorno total</h3>
-                  <strong>{brl.format(Number(investSummaryData.total_return || 0))}</strong>
-                  <p>{Number(investSummaryData.total_return_pct || 0).toFixed(2)}%</p>
-                </article>
-                <article className="card">
-                  <h3>P&L não realizado</h3>
-                  <strong>{brl.format(Number(investSummaryData.total_unrealized || 0))}</strong>
-                </article>
-              </section>
+              <>
+                <section className="card">
+                  <div style={{ display: "grid", gap: 10, maxWidth: 360 }}>
+                    <select
+                      className="invoice-filter-select"
+                      value={investSummaryClassFilter}
+                      onChange={(e) => setInvestSummaryClassFilter(e.target.value)}
+                    >
+                      <option value="">Todas as classes</option>
+                      {investSummaryClassOptions.map((cls) => (
+                        <option key={cls} value={cls}>{cls}</option>
+                      ))}
+                    </select>
+                  </div>
+                </section>
+                <section className="cards">
+                  <article className="card">
+                    <h3>Ativos</h3>
+                    <strong>{Number(investSummaryViewData.assets_count || 0)}</strong>
+                  </article>
+                  <article className="card">
+                    <h3>Total investido</h3>
+                    <strong>{brl.format(Number(investSummaryViewData.total_invested || 0))}</strong>
+                  </article>
+                  <article className="card">
+                    <h3>Saldo na corretora</h3>
+                    <strong>{brl.format(Number(investSummaryViewData.broker_balance || 0))}</strong>
+                  </article>
+                  <article className="card">
+                    <h3>Valor de mercado</h3>
+                    <strong>{brl.format(Number(investSummaryViewData.total_market || 0))}</strong>
+                  </article>
+                  <article className="card">
+                    <h3>Retorno total</h3>
+                    <strong>{brl.format(Number(investSummaryViewData.total_return || 0))}</strong>
+                    <p>{Number(investSummaryViewData.total_return_pct || 0).toFixed(2)}%</p>
+                  </article>
+                  <article className="card">
+                    <h3>P&L não realizado</h3>
+                    <strong>{brl.format(Number(investSummaryViewData.total_unrealized || 0))}</strong>
+                  </article>
+                </section>
+              </>
             ) : null}
 
             {investTab === "Ativos" ? (
@@ -3273,7 +3661,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(investPortfolio.positions || []).map((p) => (
+                    {investPortfolioPositionsVisible.map((p) => (
                       <tr key={`${p.asset_id}-${p.symbol}`}>
                         <td>{p.symbol}</td>
                         <td>{p.asset_class}</td>
