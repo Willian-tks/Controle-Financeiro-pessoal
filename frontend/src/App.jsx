@@ -51,6 +51,7 @@ import {
   getInvestMeta,
   getInvestPortfolio,
   getInvestPrices,
+  getInvestRentabilityDivergenceReport,
   getInvestSummary,
   getInvestTrades,
   getKpis,
@@ -63,6 +64,7 @@ import {
   payCardInvoice,
   settleCommitmentTransaction,
   setToken,
+  updateAllInvestRentability,
   updateAllInvestPrices,
   updateInvestAsset,
   upsertInvestPrice,
@@ -93,6 +95,16 @@ const PAGE_SUBTITLES = {
 const INVEST_TABS = ["Resumo", "Ativos", "Operações", "Proventos", "Cotações"];
 const MANAGER_TABS = ["Cadastro de contas", "Cadastro de categorias", "Cadastro cartão de crédito"];
 const QUOTE_GROUP_OPTIONS = ["Ações BR", "FIIs", "Stocks", "Cripto"];
+const INVEST_RENTABILITY_TIMEOUT_MS = 6000;
+const INVEST_DIVERGENCE_TIMEOUT_MS = 8000;
+const INVEST_RENTABILITY_MIN_SYNC_INTERVAL_MS = 60000;
+const RENTABILITY_TYPE_OPTIONS = [
+  { value: "PREFIXADO", label: "Prefixado" },
+  { value: "PCT_CDI", label: "% do CDI" },
+  { value: "PCT_SELIC", label: "% da SELIC" },
+  { value: "IPCA_SPREAD", label: "IPCA + X" },
+  { value: "MANUAL", label: "Manual" },
+];
 const DONUT_COLORS = ["#f4c84b", "#4e7ff3", "#73d39f", "#ef6f5c", "#9a7df9"];
 const CARD_MODELS = ["Black", "Gold", "Platinum", "Orange", "Violeta", "Vermelho"];
 const PAGE_ICONS = {
@@ -224,6 +236,112 @@ function classKey(assetClass) {
   return normalizeText(assetClass).replace(/\s+/g, "_");
 }
 
+function parseOptionalNumberInput(value) {
+  const raw = String(value ?? "").trim().replace(",", ".");
+  if (!raw) return { empty: true, value: null };
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return { empty: false, value: NaN };
+  return { empty: false, value: num };
+}
+
+function buildAssetRentabilityPayload({
+  isFixedIncome,
+  rentabilityType,
+  indexPctInput,
+  spreadRateInput,
+  fixedRateInput,
+}) {
+  if (!isFixedIncome) {
+    return {
+      ok: true,
+      payload: {
+        rentability_type: null,
+        index_name: null,
+        index_pct: null,
+        spread_rate: null,
+        fixed_rate: null,
+      },
+    };
+  }
+
+  const rt = String(rentabilityType || "MANUAL").trim().toUpperCase();
+
+  if (rt === "MANUAL") {
+    return {
+      ok: true,
+      payload: {
+        rentability_type: "MANUAL",
+        index_name: null,
+        index_pct: null,
+        spread_rate: null,
+        fixed_rate: null,
+      },
+    };
+  }
+
+  if (rt === "PREFIXADO") {
+    const parsed = parseOptionalNumberInput(fixedRateInput);
+    if (parsed.empty || Number.isNaN(parsed.value)) {
+      return { ok: false, error: "Informe uma taxa anual valida para Prefixado." };
+    }
+    return {
+      ok: true,
+      payload: {
+        rentability_type: "PREFIXADO",
+        index_name: null,
+        index_pct: null,
+        spread_rate: null,
+        fixed_rate: parsed.value,
+      },
+    };
+  }
+
+  if (rt === "PCT_CDI" || rt === "PCT_SELIC") {
+    const parsed = parseOptionalNumberInput(indexPctInput);
+    if (parsed.empty || Number.isNaN(parsed.value)) {
+      return { ok: false, error: "Informe um percentual valido do indice." };
+    }
+    return {
+      ok: true,
+      payload: {
+        rentability_type: rt,
+        index_name: rt === "PCT_CDI" ? "CDI" : "SELIC",
+        index_pct: parsed.value,
+        spread_rate: null,
+        fixed_rate: null,
+      },
+    };
+  }
+
+  if (rt === "IPCA_SPREAD") {
+    const parsed = parseOptionalNumberInput(spreadRateInput);
+    if (parsed.empty || Number.isNaN(parsed.value)) {
+      return { ok: false, error: "Informe o spread anual valido para IPCA + X." };
+    }
+    return {
+      ok: true,
+      payload: {
+        rentability_type: "IPCA_SPREAD",
+        index_name: "IPCA",
+        index_pct: null,
+        spread_rate: parsed.value,
+        fixed_rate: null,
+      },
+    };
+  }
+
+  return { ok: false, error: "Tipo de rentabilidade invalido." };
+}
+
+function formatIsoDatePtBr(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  const iso = raw.slice(0, 10);
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return raw;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
 export default function App() {
   const defaultMonthRange = getCurrentMonthRange();
   const [authError, setAuthError] = useState("");
@@ -279,8 +397,14 @@ export default function App() {
   const [assetCsvFile, setAssetCsvFile] = useState(null);
   const [tradeCsvFile, setTradeCsvFile] = useState(null);
   const [investMsg, setInvestMsg] = useState("");
+  const [investRentabilityMsg, setInvestRentabilityMsg] = useState("");
+  const [investDivergenceMsg, setInvestDivergenceMsg] = useState("");
+  const [investDivergenceThreshold, setInvestDivergenceThreshold] = useState("0.10");
+  const [investDivergenceReport, setInvestDivergenceReport] = useState([]);
+  const [investDivergenceRunning, setInvestDivergenceRunning] = useState(false);
   const [investPriceUpdateReport, setInvestPriceUpdateReport] = useState([]);
   const [investPriceUpdateRunning, setInvestPriceUpdateRunning] = useState(false);
+  const [investRentabilitySyncRunning, setInvestRentabilitySyncRunning] = useState(false);
   const [investMeta, setInvestMeta] = useState({ asset_classes: [], asset_sectors: [], income_types: [] });
   const [investAssets, setInvestAssets] = useState([]);
   const [investTrades, setInvestTrades] = useState([]);
@@ -306,6 +430,11 @@ export default function App() {
   const [tradeAssetId, setTradeAssetId] = useState("");
   const [tradeSide, setTradeSide] = useState("BUY");
   const [tradeExchangeRate, setTradeExchangeRate] = useState("");
+  const [assetCreateClass, setAssetCreateClass] = useState("");
+  const [assetCreateRentabilityType, setAssetCreateRentabilityType] = useState("");
+  const [assetCreateIndexPct, setAssetCreateIndexPct] = useState("");
+  const [assetCreateSpreadRate, setAssetCreateSpreadRate] = useState("");
+  const [assetCreateFixedRate, setAssetCreateFixedRate] = useState("");
   const [assetEditId, setAssetEditId] = useState("");
   const [assetEditSymbol, setAssetEditSymbol] = useState("");
   const [assetEditName, setAssetEditName] = useState("");
@@ -313,6 +442,10 @@ export default function App() {
   const [assetEditSector, setAssetEditSector] = useState("Não definido");
   const [assetEditCurrency, setAssetEditCurrency] = useState("BRL");
   const [assetEditBrokerId, setAssetEditBrokerId] = useState("");
+  const [assetEditRentabilityType, setAssetEditRentabilityType] = useState("");
+  const [assetEditIndexPct, setAssetEditIndexPct] = useState("");
+  const [assetEditSpreadRate, setAssetEditSpreadRate] = useState("");
+  const [assetEditFixedRate, setAssetEditFixedRate] = useState("");
   const [investTab, setInvestTab] = useState("Resumo");
   const [managerTab, setManagerTab] = useState("Cadastro de contas");
   const [manageMsg, setManageMsg] = useState("");
@@ -333,6 +466,7 @@ export default function App() {
   const [payDate, setPayDate] = useState("");
   const [invoiceCardFilterId, setInvoiceCardFilterId] = useState("");
   const userMenuRef = useRef(null);
+  const investRentabilityLastSyncRef = useRef(0);
 
   useEffect(() => {
     (async () => {
@@ -474,9 +608,18 @@ export default function App() {
       setAssetEditId("");
       setAssetEditSymbol("");
       setAssetEditName("");
+      setAssetEditClass("");
+      setAssetEditSector("Não definido");
+      setAssetEditCurrency("BRL");
+      setAssetEditBrokerId("");
+      setAssetEditRentabilityType("");
+      setAssetEditIndexPct("");
+      setAssetEditSpreadRate("");
+      setAssetEditFixedRate("");
       return;
     }
     const cur = investAssets.find((a) => String(a.id) === String(assetEditId)) || investAssets[0];
+    const isFixedIncome = isFixedIncomeClass(cur.asset_class || "");
     setAssetEditId(String(cur.id));
     setAssetEditSymbol(cur.symbol || "");
     setAssetEditName(cur.name || "");
@@ -484,7 +627,33 @@ export default function App() {
     setAssetEditSector(cur.sector || "Não definido");
     setAssetEditCurrency((cur.currency || "BRL").toUpperCase());
     setAssetEditBrokerId(cur.broker_account_id ? String(cur.broker_account_id) : "");
+    setAssetEditRentabilityType(isFixedIncome ? String(cur.rentability_type || "MANUAL").toUpperCase() : "");
+    setAssetEditIndexPct(cur.index_pct == null ? "" : String(cur.index_pct));
+    setAssetEditSpreadRate(cur.spread_rate == null ? "" : String(cur.spread_rate));
+    setAssetEditFixedRate(cur.fixed_rate == null ? "" : String(cur.fixed_rate));
   }, [investAssets]);
+
+  useEffect(() => {
+    if (isFixedIncomeClass(assetCreateClass || "")) {
+      setAssetCreateRentabilityType((prev) => prev || "MANUAL");
+      return;
+    }
+    setAssetCreateRentabilityType("");
+    setAssetCreateIndexPct("");
+    setAssetCreateSpreadRate("");
+    setAssetCreateFixedRate("");
+  }, [assetCreateClass]);
+
+  useEffect(() => {
+    if (isFixedIncomeClass(assetEditClass || "")) {
+      setAssetEditRentabilityType((prev) => prev || "MANUAL");
+      return;
+    }
+    setAssetEditRentabilityType("");
+    setAssetEditIndexPct("");
+    setAssetEditSpreadRate("");
+    setAssetEditFixedRate("");
+  }, [assetEditClass]);
 
   const subtitle = useMemo(() => PAGE_SUBTITLES[page] || "Em migração do Streamlit", [page]);
   const txCategory = useMemo(
@@ -561,6 +730,17 @@ export default function App() {
       return true;
     });
   }, [transactions, txRecentCategoryFilterId, txRecentCategoryFilter, txRecentStatusFilter]);
+  const transactionsVisibleOrdered = useMemo(() => {
+    if (txView !== "futuro" && txView !== "competencia") return transactionsVisible;
+    const rows = [...transactionsVisible];
+    rows.sort((a, b) => {
+      const da = String(a?.date || "");
+      const db = String(b?.date || "");
+      if (da === db) return String(a?.id || "").localeCompare(String(b?.id || ""));
+      return da.localeCompare(db);
+    });
+    return rows;
+  }, [transactionsVisible, txView]);
   const transferAccounts = useMemo(
     () => accounts.filter((a) => ["Banco", "Corretora"].includes(normalizeAccountType(a.type))),
     [accounts]
@@ -665,6 +845,22 @@ export default function App() {
       }
     })();
   }, [dashView, user]);
+
+  useEffect(() => {
+    if (!user || page !== "Investimentos") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await reloadInvestData({ syncRentability: true });
+      } catch (err) {
+        if (cancelled) return;
+        setInvestMsg(String(err.message || err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page, user]);
 
   useEffect(() => {
     if (!txIsExpenseCredit) return;
@@ -857,6 +1053,26 @@ export default function App() {
     }
     return investPortfolio.positions || [];
   }, [investTab, investSummaryClassFilter, investSummaryPositionsFiltered, investPortfolio]);
+  const assetCreateIsFixedIncome = useMemo(
+    () => isFixedIncomeClass(assetCreateClass),
+    [assetCreateClass]
+  );
+  const assetEditIsFixedIncome = useMemo(
+    () => isFixedIncomeClass(assetEditClass),
+    [assetEditClass]
+  );
+  const assetEditCurrent = useMemo(
+    () => investAssets.find((a) => String(a.id) === String(assetEditId)) || null,
+    [investAssets, assetEditId]
+  );
+  const assetEditCurrentValueLabel = useMemo(() => {
+    const value = Number(assetEditCurrent?.current_value);
+    return Number.isFinite(value) ? brl.format(value) : "-";
+  }, [assetEditCurrent, brl]);
+  const assetEditLastUpdateLabel = useMemo(
+    () => formatIsoDatePtBr(assetEditCurrent?.last_update),
+    [assetEditCurrent]
+  );
   const selectedTradeAsset = useMemo(
     () => investAssets.find((a) => String(a.id) === String(tradeAssetId)) || null,
     [investAssets, tradeAssetId]
@@ -1012,7 +1228,60 @@ export default function App() {
     setCommitmentEdit(null);
   }
 
-  async function reloadInvestData() {
+  async function syncInvestRentabilityBeforeLoad({ force = false } = {}) {
+    const now = Date.now();
+    if (!force && now - investRentabilityLastSyncRef.current < INVEST_RENTABILITY_MIN_SYNC_INTERVAL_MS) {
+      return null;
+    }
+    setInvestRentabilitySyncRunning(true);
+    try {
+      const out = await updateAllInvestRentability({}, INVEST_RENTABILITY_TIMEOUT_MS);
+      investRentabilityLastSyncRef.current = Date.now();
+      const updated = Number(out?.updated || 0);
+      const errors = Number(out?.errors || 0);
+      if (errors > 0) {
+        setInvestRentabilityMsg(`Rentabilidade atualizada com pendências (${updated} atualizados, ${errors} com erro).`);
+      } else {
+        setInvestRentabilityMsg(`Rentabilidade atualizada (${updated} ativo${updated === 1 ? "" : "s"}).`);
+      }
+      return out;
+    } catch (err) {
+      setInvestRentabilityMsg(`Rentabilidade não atualizada automaticamente: ${String(err.message || err)}`);
+      return null;
+    } finally {
+      setInvestRentabilitySyncRunning(false);
+    }
+  }
+
+  async function onLoadInvestDivergenceReport() {
+    setInvestDivergenceRunning(true);
+    setInvestDivergenceMsg("");
+    try {
+      const threshold = Number(String(investDivergenceThreshold || "").replace(",", "."));
+      const out = await getInvestRentabilityDivergenceReport(
+        {
+          only_auto: true,
+          threshold_pct: Number.isFinite(threshold) ? Math.max(0, threshold) : 0,
+          limit: 200,
+        },
+        INVEST_DIVERGENCE_TIMEOUT_MS
+      );
+      const rows = Array.isArray(out?.rows) ? out.rows : [];
+      setInvestDivergenceReport(rows);
+      setInvestDivergenceMsg(`Relatório gerado: ${rows.length} divergência(s) encontrada(s).`);
+    } catch (err) {
+      setInvestDivergenceReport([]);
+      setInvestDivergenceMsg(`Erro ao gerar relatório de divergência: ${String(err.message || err)}`);
+    } finally {
+      setInvestDivergenceRunning(false);
+    }
+  }
+
+  async function reloadInvestData(options = {}) {
+    const { syncRentability = false, forceRentabilitySync = false } = options || {};
+    if (syncRentability) {
+      await syncInvestRentabilityBeforeLoad({ force: forceRentabilitySync });
+    }
     const [meta, assets, trades, incomes, prices, portfolio, summary] = await Promise.all([
       getInvestMeta(),
       getInvestAssets(),
@@ -1286,12 +1555,23 @@ export default function App() {
     const form = new FormData(e.currentTarget);
     const symbol = String(form.get("symbol") || "").trim().toUpperCase();
     const name = String(form.get("name") || "").trim();
-    const assetClass = String(form.get("asset_class") || "");
+    const assetClass = String(assetCreateClass || form.get("asset_class") || "");
     const sector = String(form.get("sector") || "Não definido");
     const currency = String(form.get("currency") || "BRL").toUpperCase();
     const brokerAccountIdRaw = String(form.get("broker_account_id") || "");
     if (!symbol || !name || !assetClass) {
       setInvestMsg("Informe símbolo, nome e classe do ativo.");
+      return;
+    }
+    const rentCfg = buildAssetRentabilityPayload({
+      isFixedIncome: isFixedIncomeClass(assetClass),
+      rentabilityType: assetCreateRentabilityType,
+      indexPctInput: assetCreateIndexPct,
+      spreadRateInput: assetCreateSpreadRate,
+      fixedRateInput: assetCreateFixedRate,
+    });
+    if (!rentCfg.ok) {
+      setInvestMsg(rentCfg.error || "Configuração de rentabilidade inválida.");
       return;
     }
     try {
@@ -1302,8 +1582,14 @@ export default function App() {
         sector,
         currency,
         broker_account_id: brokerAccountIdRaw ? Number(brokerAccountIdRaw) : null,
+        ...rentCfg.payload,
       });
       formEl.reset();
+      setAssetCreateClass("");
+      setAssetCreateRentabilityType("");
+      setAssetCreateIndexPct("");
+      setAssetCreateSpreadRate("");
+      setAssetCreateFixedRate("");
       setInvestMsg("Ativo salvo.");
       await reloadInvestData();
     } catch (err) {
@@ -1316,6 +1602,17 @@ export default function App() {
       setInvestMsg("Selecione e preencha os dados do ativo.");
       return;
     }
+    const rentCfg = buildAssetRentabilityPayload({
+      isFixedIncome: assetEditIsFixedIncome,
+      rentabilityType: assetEditRentabilityType,
+      indexPctInput: assetEditIndexPct,
+      spreadRateInput: assetEditSpreadRate,
+      fixedRateInput: assetEditFixedRate,
+    });
+    if (!rentCfg.ok) {
+      setInvestMsg(rentCfg.error || "Configuração de rentabilidade inválida.");
+      return;
+    }
     try {
       await updateInvestAsset(Number(assetEditId), {
         symbol: assetEditSymbol.trim().toUpperCase(),
@@ -1324,6 +1621,7 @@ export default function App() {
         sector: assetEditSector || "Não definido",
         currency: (assetEditCurrency || "BRL").toUpperCase(),
         broker_account_id: assetEditBrokerId ? Number(assetEditBrokerId) : null,
+        ...rentCfg.payload,
       });
       setInvestMsg("Ativo atualizado.");
       await reloadInvestData();
@@ -2971,7 +3269,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {transactionsVisible.map((t) => (
+                    {transactionsVisibleOrdered.map((t) => (
                       <tr key={t.id}>
                         <td>{t.id}</td>
                         <td>
@@ -3064,7 +3362,7 @@ export default function App() {
                         </td>
                       </tr>
                     ))}
-                    {!transactionsVisible.length ? (
+                    {!transactionsVisibleOrdered.length ? (
                       <tr>
                         <td colSpan={8}>Nenhum lançamento para a categoria selecionada.</td>
                       </tr>
@@ -3165,13 +3463,15 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              {investRentabilitySyncRunning ? <p>Atualizando rentabilidade da renda fixa...</p> : null}
+              {!investRentabilitySyncRunning && investRentabilityMsg ? <p>{investRentabilityMsg}</p> : null}
               {investMsg ? <p>{investMsg}</p> : null}
             </section>
 
             {investTab === "Resumo" ? (
               <>
                 <section className="card">
-                  <div style={{ display: "grid", gap: 10, maxWidth: 360 }}>
+                  <div className="tx-form" style={{ gridTemplateColumns: "repeat(3, minmax(220px, 360px))" }}>
                     <select
                       className="invoice-filter-select"
                       value={investSummaryClassFilter}
@@ -3182,7 +3482,19 @@ export default function App() {
                         <option key={cls} value={cls}>{cls}</option>
                       ))}
                     </select>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={investDivergenceThreshold}
+                      onChange={(e) => setInvestDivergenceThreshold(e.target.value)}
+                      placeholder="Limiar de divergência (%)"
+                    />
+                    <button type="button" onClick={onLoadInvestDivergenceReport} disabled={investDivergenceRunning}>
+                      {investDivergenceRunning ? "Gerando relatório..." : "Carregar divergências"}
+                    </button>
                   </div>
+                  {investDivergenceMsg ? <p>{investDivergenceMsg}</p> : null}
                 </section>
                 <section className="cards">
                   <article className="card">
@@ -3211,6 +3523,42 @@ export default function App() {
                     <strong>{brl.format(Number(investSummaryViewData.total_unrealized || 0))}</strong>
                   </article>
                 </section>
+                <section className="card">
+                  <h3>Divergência de rentabilidade</h3>
+                  <div className="tx-table-wrap">
+                    <table className="tx-table">
+                      <thead>
+                        <tr>
+                          <th>Ativo</th>
+                          <th>Tipo</th>
+                          <th>Valor salvo</th>
+                          <th>Valor projetado</th>
+                          <th>Delta</th>
+                          <th>Delta %</th>
+                          <th>Atualização proj.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {investDivergenceReport.map((row) => (
+                          <tr key={`${row.asset_id}-${row.symbol}`}>
+                            <td>{row.symbol || row.asset_id}</td>
+                            <td>{row.rentability_type || "-"}</td>
+                            <td>{brl.format(Number(row.stored_current_value || 0))}</td>
+                            <td>{brl.format(Number(row.projected_current_value || 0))}</td>
+                            <td>{brl.format(Number(row.delta_value || 0))}</td>
+                            <td>{Number(row.delta_pct || 0).toFixed(4)}%</td>
+                            <td>{formatIsoDatePtBr(row.projected_last_update)}</td>
+                          </tr>
+                        ))}
+                        {!investDivergenceReport.length ? (
+                          <tr>
+                            <td colSpan={7}>Sem divergências acima do limiar selecionado.</td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
               </>
             ) : null}
 
@@ -3221,12 +3569,55 @@ export default function App() {
                   <form className="tx-form" onSubmit={onCreateInvestAsset}>
                     <input name="symbol" type="text" placeholder="Símbolo" required />
                     <input name="name" type="text" placeholder="Nome" required />
-                    <select name="asset_class" defaultValue="">
+                    <select
+                      name="asset_class"
+                      value={assetCreateClass}
+                      onChange={(e) => setAssetCreateClass(e.target.value)}
+                    >
                       <option value="" disabled>Classe</option>
                       {investMeta.asset_classes.map((c) => (
                         <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
+                    {assetCreateIsFixedIncome ? (
+                      <select
+                        value={assetCreateRentabilityType}
+                        onChange={(e) => setAssetCreateRentabilityType(e.target.value)}
+                      >
+                        <option value="" disabled>Tipo de rentabilidade</option>
+                        {RENTABILITY_TYPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    ) : null}
+                    {assetCreateIsFixedIncome && assetCreateRentabilityType === "PREFIXADO" ? (
+                      <input
+                        type="number"
+                        step="0.00000001"
+                        value={assetCreateFixedRate}
+                        onChange={(e) => setAssetCreateFixedRate(e.target.value)}
+                        placeholder="Taxa anual (%)"
+                      />
+                    ) : null}
+                    {assetCreateIsFixedIncome &&
+                    (assetCreateRentabilityType === "PCT_CDI" || assetCreateRentabilityType === "PCT_SELIC") ? (
+                      <input
+                        type="number"
+                        step="0.00000001"
+                        value={assetCreateIndexPct}
+                        onChange={(e) => setAssetCreateIndexPct(e.target.value)}
+                        placeholder="Percentual do índice (%)"
+                      />
+                    ) : null}
+                    {assetCreateIsFixedIncome && assetCreateRentabilityType === "IPCA_SPREAD" ? (
+                      <input
+                        type="number"
+                        step="0.00000001"
+                        value={assetCreateSpreadRate}
+                        onChange={(e) => setAssetCreateSpreadRate(e.target.value)}
+                        placeholder="Spread anual (%)"
+                      />
+                    ) : null}
                     <select name="sector" defaultValue="Não definido">
                       {investMeta.asset_sectors.map((s) => (
                         <option key={s} value={s}>{s}</option>
@@ -3264,6 +3655,17 @@ export default function App() {
                           setAssetEditSector(cur.sector || "Não definido");
                           setAssetEditCurrency((cur.currency || "BRL").toUpperCase());
                           setAssetEditBrokerId(cur.broker_account_id ? String(cur.broker_account_id) : "");
+                          if (isFixedIncomeClass(cur.asset_class || "")) {
+                            setAssetEditRentabilityType(String(cur.rentability_type || "MANUAL").toUpperCase());
+                            setAssetEditIndexPct(cur.index_pct == null ? "" : String(cur.index_pct));
+                            setAssetEditSpreadRate(cur.spread_rate == null ? "" : String(cur.spread_rate));
+                            setAssetEditFixedRate(cur.fixed_rate == null ? "" : String(cur.fixed_rate));
+                          } else {
+                            setAssetEditRentabilityType("");
+                            setAssetEditIndexPct("");
+                            setAssetEditSpreadRate("");
+                            setAssetEditFixedRate("");
+                          }
                         }
                       }}
                     >
@@ -3278,6 +3680,45 @@ export default function App() {
                         <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
+                    {assetEditIsFixedIncome ? (
+                      <select
+                        value={assetEditRentabilityType}
+                        onChange={(e) => setAssetEditRentabilityType(e.target.value)}
+                      >
+                        <option value="" disabled>Tipo de rentabilidade</option>
+                        {RENTABILITY_TYPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    ) : null}
+                    {assetEditIsFixedIncome && assetEditRentabilityType === "PREFIXADO" ? (
+                      <input
+                        type="number"
+                        step="0.00000001"
+                        value={assetEditFixedRate}
+                        onChange={(e) => setAssetEditFixedRate(e.target.value)}
+                        placeholder="Taxa anual (%)"
+                      />
+                    ) : null}
+                    {assetEditIsFixedIncome &&
+                    (assetEditRentabilityType === "PCT_CDI" || assetEditRentabilityType === "PCT_SELIC") ? (
+                      <input
+                        type="number"
+                        step="0.00000001"
+                        value={assetEditIndexPct}
+                        onChange={(e) => setAssetEditIndexPct(e.target.value)}
+                        placeholder="Percentual do índice (%)"
+                      />
+                    ) : null}
+                    {assetEditIsFixedIncome && assetEditRentabilityType === "IPCA_SPREAD" ? (
+                      <input
+                        type="number"
+                        step="0.00000001"
+                        value={assetEditSpreadRate}
+                        onChange={(e) => setAssetEditSpreadRate(e.target.value)}
+                        placeholder="Spread anual (%)"
+                      />
+                    ) : null}
                     <select value={assetEditSector} onChange={(e) => setAssetEditSector(e.target.value)}>
                       {investMeta.asset_sectors.map((s) => (
                         <option key={s} value={s}>{s}</option>
@@ -3295,6 +3736,8 @@ export default function App() {
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
                     </select>
+                    <input value={`Valor atual: ${assetEditCurrentValueLabel}`} readOnly />
+                    <input value={`Última atualização: ${assetEditLastUpdateLabel}`} readOnly />
                     <button onClick={onUpdateInvestAsset}>Atualizar ativo</button>
                   </div>
                 </section>
@@ -3311,6 +3754,8 @@ export default function App() {
                           <th>Setor</th>
                           <th>Moeda</th>
                           <th>Corretora</th>
+                          <th>Valor atual</th>
+                          <th>Última atualização</th>
                           <th>Ação</th>
                         </tr>
                       </thead>
@@ -3323,6 +3768,8 @@ export default function App() {
                             <td>{a.sector || "-"}</td>
                             <td>{a.currency}</td>
                             <td>{a.broker_account || "-"}</td>
+                            <td>{a.current_value == null ? "-" : brl.format(Number(a.current_value || 0))}</td>
+                            <td>{formatIsoDatePtBr(a.last_update)}</td>
                             <td>
                               <button onClick={() => onDeleteInvestAsset(a.id)}>Excluir</button>
                             </td>

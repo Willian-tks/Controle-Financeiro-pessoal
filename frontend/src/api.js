@@ -13,22 +13,33 @@ export function clearToken() {
 }
 
 async function req(path, options = {}) {
+  const { timeoutMs, ...fetchOptions } = options || {};
   const token = getToken();
   const headers = {
     "Content-Type": "application/json",
-    ...(options.headers || {}),
+    ...(fetchOptions.headers || {}),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
+  const controller = new AbortController();
+  const timeoutHandle =
+    Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+      ? setTimeout(() => controller.abort(), Number(timeoutMs))
+      : null;
   let res;
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    res = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers, signal: controller.signal });
   } catch (err) {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (err?.name === "AbortError") {
+      throw new Error("Tempo limite excedido ao consultar a API.");
+    }
     const msg = String(err?.message || err || "");
     if (msg.toLowerCase().includes("failed to fetch")) {
       throw new Error(`Falha de conexão com a API (${API_BASE}). Verifique se o backend está ativo.`);
     }
     throw err;
   }
+  if (timeoutHandle) clearTimeout(timeoutHandle);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.detail || `HTTP ${res.status}`);
@@ -280,6 +291,22 @@ export function updateAllInvestPrices(payload = {}) {
   return req("/invest/prices/update-all", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateAllInvestRentability(payload = {}, timeoutMs = 0) {
+  return req("/invest/rentability/update-all", {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+    timeoutMs: Number(timeoutMs) || 0,
+  });
+}
+
+export function getInvestRentabilityDivergenceReport(payload = {}, timeoutMs = 0) {
+  return req("/invest/rentability/divergence-report", {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+    timeoutMs: Number(timeoutMs) || 0,
   });
 }
 

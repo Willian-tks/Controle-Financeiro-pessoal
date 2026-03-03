@@ -40,7 +40,7 @@ def df_assets(user_id: int | None = None):
     uid = _uid(user_id)
     return _query_df(
         """
-        SELECT id, symbol, name, asset_class, sector, currency
+        SELECT id, symbol, name, asset_class, sector, currency, current_value, last_update, rentability_type
         FROM assets
         WHERE user_id = ?
         ORDER BY asset_class, symbol
@@ -205,7 +205,9 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     assets = df_assets(user_id=uid)
     if not assets.empty and not pos.empty:
         pos = pos.merge(
-            assets.rename(columns={"id": "asset_id"})[["asset_id", "name", "sector", "currency"]],
+            assets.rename(columns={"id": "asset_id"})[
+                ["asset_id", "name", "sector", "currency", "current_value", "last_update", "rentability_type"]
+            ],
             on="asset_id",
             how="left",
         )
@@ -216,11 +218,21 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
             pos["sector"] = None
         if "currency" not in pos.columns:
             pos["currency"] = None
+        if "current_value" not in pos.columns:
+            pos["current_value"] = None
+        if "last_update" not in pos.columns:
+            pos["last_update"] = None
+        if "rentability_type" not in pos.columns:
+            pos["rentability_type"] = None
 
     fx = pd.to_numeric(pos.get("last_fx", 1.0), errors="coerce").fillna(1.0)
     is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
     fx_factor = fx.where(is_usd_asset, 1.0)
     pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
+    # Para renda fixa, prioriza current_value calculado pelo motor quando disponível.
+    cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
+    rf_mask = pos.get("asset_class", "").astype(str).map(_norm_asset_class).isin(_FIXED_INCOME_CLASSES)
+    pos.loc[rf_mask & (cv > 0), "market_value"] = cv[rf_mask & (cv > 0)]
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
 
     inc = df_income(date_from, date_to, user_id=uid)

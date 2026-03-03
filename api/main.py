@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import auth
 import api.importers as importers
 import invest_index_rates
+import invest_rentability
 import invest_repo
 import invest_reports
 import invest_quotes
@@ -38,6 +39,8 @@ from .schemas import (
     IndexRatesUpsertRequest,
     PriceUpsertRequest,
     QuoteUpdateAllRequest,
+    RentabilityDivergenceRequest,
+    RentabilityUpdateRequest,
     TradeCreateRequest,
     TransactionCreateRequest,
 )
@@ -184,6 +187,160 @@ def _is_fixed_income_asset(asset: dict) -> bool:
             cls_raw = None
     cls = _norm_asset_class(cls_raw)
     return cls in {"renda_fixa", "tesouro_direto", "coe", "fundos"}
+
+
+def _norm_rentability_type(value: Any) -> str | None:
+    raw = str(value or "").strip().upper()
+    raw = (
+        raw.replace("Ã", "A")
+        .replace("Á", "A")
+        .replace("À", "A")
+        .replace("Â", "A")
+        .replace("É", "E")
+        .replace("Ê", "E")
+        .replace("Í", "I")
+        .replace("Ó", "O")
+        .replace("Ô", "O")
+        .replace("Õ", "O")
+        .replace("Ú", "U")
+        .replace("Ç", "C")
+        .replace(" ", "_")
+    )
+    mapping = {
+        "PREFIXADO": "PREFIXADO",
+        "PCT_CDI": "PCT_CDI",
+        "PCT_DI": "PCT_CDI",
+        "PCT_SELIC": "PCT_SELIC",
+        "IPCA_SPREAD": "IPCA_SPREAD",
+        "IPCA_X": "IPCA_SPREAD",
+        "MANUAL": "MANUAL",
+    }
+    if not raw:
+        return None
+    return mapping.get(raw, raw)
+
+
+def _norm_index_name(value: Any) -> str | None:
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return None
+    if raw in {"DI", "CDI"}:
+        return "CDI"
+    if raw.startswith("SELIC"):
+        return "SELIC"
+    if raw == "IPCA":
+        return "IPCA"
+    return raw
+
+
+def _validate_asset_rentability(
+    *,
+    asset_class: str,
+    rentability_type: Any,
+    index_name: Any,
+    index_pct: Any,
+    spread_rate: Any,
+    fixed_rate: Any,
+) -> dict[str, Any]:
+    is_fixed_income = _norm_asset_class(asset_class) in {"renda_fixa", "tesouro_direto", "coe", "fundos"}
+    rt = _norm_rentability_type(rentability_type)
+    idx = _norm_index_name(index_name)
+    ip = index_pct
+    sr = spread_rate
+    fr = fixed_rate
+
+    if not is_fixed_income:
+        if any(v is not None for v in [idx, ip, sr, fr]) or (rt not in {None, "MANUAL"}):
+            raise HTTPException(
+                status_code=400,
+                detail="Rentabilidade automática é permitida apenas para Renda Fixa/Tesouro/Fundos/COE.",
+            )
+        return {
+            "rentability_type": None,
+            "index_name": None,
+            "index_pct": None,
+            "spread_rate": None,
+            "fixed_rate": None,
+        }
+
+    if rt is None:
+        if is_fixed_income:
+            rt = "MANUAL"
+        else:
+            raise HTTPException(status_code=400, detail="Informe rentability_type quando enviar parâmetros de taxa.")
+
+    valid_types = {"PREFIXADO", "PCT_CDI", "PCT_SELIC", "IPCA_SPREAD", "MANUAL"}
+    if rt not in valid_types:
+        raise HTTPException(status_code=400, detail=f"rentability_type inválido: {rt}")
+
+    if rt == "MANUAL":
+        if any(v is not None for v in [idx, ip, sr, fr]):
+            raise HTTPException(status_code=400, detail="MANUAL não permite index_name/index_pct/spread_rate/fixed_rate.")
+        return {
+            "rentability_type": "MANUAL",
+            "index_name": None,
+            "index_pct": None,
+            "spread_rate": None,
+            "fixed_rate": None,
+        }
+
+    if rt == "PREFIXADO":
+        if fr is None:
+            raise HTTPException(status_code=400, detail="PREFIXADO exige fixed_rate.")
+        if any(v is not None for v in [idx, ip]):
+            raise HTTPException(status_code=400, detail="PREFIXADO não permite index_name/index_pct.")
+        return {
+            "rentability_type": "PREFIXADO",
+            "index_name": None,
+            "index_pct": None,
+            "spread_rate": sr,
+            "fixed_rate": fr,
+        }
+
+    if rt == "PCT_CDI":
+        if idx != "CDI":
+            raise HTTPException(status_code=400, detail="PCT_CDI exige index_name=CDI.")
+        if ip is None:
+            raise HTTPException(status_code=400, detail="PCT_CDI exige index_pct.")
+        if fr is not None:
+            raise HTTPException(status_code=400, detail="PCT_CDI não permite fixed_rate.")
+        return {
+            "rentability_type": "PCT_CDI",
+            "index_name": "CDI",
+            "index_pct": ip,
+            "spread_rate": sr,
+            "fixed_rate": None,
+        }
+
+    if rt == "PCT_SELIC":
+        if idx != "SELIC":
+            raise HTTPException(status_code=400, detail="PCT_SELIC exige index_name=SELIC.")
+        if ip is None:
+            raise HTTPException(status_code=400, detail="PCT_SELIC exige index_pct.")
+        if fr is not None:
+            raise HTTPException(status_code=400, detail="PCT_SELIC não permite fixed_rate.")
+        return {
+            "rentability_type": "PCT_SELIC",
+            "index_name": "SELIC",
+            "index_pct": ip,
+            "spread_rate": sr,
+            "fixed_rate": None,
+        }
+
+    # IPCA_SPREAD
+    if idx != "IPCA":
+        raise HTTPException(status_code=400, detail="IPCA_SPREAD exige index_name=IPCA.")
+    if sr is None:
+        raise HTTPException(status_code=400, detail="IPCA_SPREAD exige spread_rate.")
+    if any(v is not None for v in [ip, fr]):
+        raise HTTPException(status_code=400, detail="IPCA_SPREAD não permite index_pct/fixed_rate.")
+    return {
+        "rentability_type": "IPCA_SPREAD",
+        "index_name": "IPCA",
+        "index_pct": None,
+        "spread_rate": sr,
+        "fixed_rate": None,
+    }
 
 
 def _quote_group_for_asset(asset: dict) -> str:
@@ -1192,6 +1349,62 @@ def invest_sync_index_rates(
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@app.post("/invest/rentability/update/{asset_id}")
+def invest_update_asset_rentability(
+    asset_id: int,
+    body: RentabilityUpdateRequest | None = None,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    as_of_date = (body.as_of_date if body else None)
+    try:
+        return invest_rentability.update_investment_value(
+            asset_id=int(asset_id),
+            as_of_date=as_of_date,
+            user_id=uid,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/invest/rentability/update-all")
+def invest_update_all_rentability(
+    body: RentabilityUpdateRequest | None = None,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    as_of_date = (body.as_of_date if body else None)
+    try:
+        return invest_rentability.update_fixed_income_assets(
+            as_of_date=as_of_date,
+            user_id=uid,
+            only_auto=bool(body.only_auto) if body else True,
+            reset_from_principal=bool(body.reset_from_principal) if body else False,
+            asset_ids=(body.asset_ids or []) if body else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/invest/rentability/divergence-report")
+def invest_rentability_divergence_report(
+    body: RentabilityDivergenceRequest | None = None,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    as_of_date = (body.as_of_date if body else None)
+    try:
+        return invest_rentability.preview_divergence_report(
+            as_of_date=as_of_date,
+            user_id=uid,
+            only_auto=bool(body.only_auto) if body else True,
+            threshold_pct=float(body.threshold_pct or 0.0) if body else 0.0,
+            limit=int(body.limit or 200) if body else 200,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/invest/assets")
 def invest_list_assets(user: dict = Depends(_current_user)) -> list[dict]:
     uid = int(user["id"])
@@ -1222,6 +1435,15 @@ def invest_create_asset(
     if body.source_account_id is not None and int(body.source_account_id) not in account_ids:
         raise HTTPException(status_code=400, detail="Conta origem inválida")
 
+    rent_cfg = _validate_asset_rentability(
+        asset_class=body.asset_class,
+        rentability_type=body.rentability_type,
+        index_name=body.index_name,
+        index_pct=body.index_pct,
+        spread_rate=body.spread_rate,
+        fixed_rate=body.fixed_rate,
+    )
+
     created = invest_repo.create_asset(
         symbol=symbol,
         name=name,
@@ -1234,11 +1456,11 @@ def invest_create_asset(
         rate_type=(body.rate_type or "").strip() or None,
         rate_value=body.rate_value,
         maturity_date=(body.maturity_date or "").strip() or None,
-        rentability_type=(body.rentability_type or "").strip() or None,
-        index_name=(body.index_name or "").strip() or None,
-        index_pct=body.index_pct,
-        spread_rate=body.spread_rate,
-        fixed_rate=body.fixed_rate,
+        rentability_type=rent_cfg["rentability_type"],
+        index_name=rent_cfg["index_name"],
+        index_pct=rent_cfg["index_pct"],
+        spread_rate=rent_cfg["spread_rate"],
+        fixed_rate=rent_cfg["fixed_rate"],
         principal_amount=body.principal_amount,
         current_value=body.current_value,
         last_update=(body.last_update or "").strip() or None,
@@ -1283,6 +1505,20 @@ def invest_update_asset(
             optional_updates[numeric_field] = raw_payload.get(numeric_field)
     if "source_account_id" in raw_payload:
         optional_updates["source_account_id"] = raw_payload.get("source_account_id")
+
+    rent_cfg = _validate_asset_rentability(
+        asset_class=body.asset_class,
+        rentability_type=optional_updates.get("rentability_type", asset.get("rentability_type")),
+        index_name=optional_updates.get("index_name", asset.get("index_name")),
+        index_pct=optional_updates.get("index_pct", asset.get("index_pct")),
+        spread_rate=optional_updates.get("spread_rate", asset.get("spread_rate")),
+        fixed_rate=optional_updates.get("fixed_rate", asset.get("fixed_rate")),
+    )
+    optional_updates["rentability_type"] = rent_cfg["rentability_type"]
+    optional_updates["index_name"] = rent_cfg["index_name"]
+    optional_updates["index_pct"] = rent_cfg["index_pct"]
+    optional_updates["spread_rate"] = rent_cfg["spread_rate"]
+    optional_updates["fixed_rate"] = rent_cfg["fixed_rate"]
 
     invest_repo.update_asset(
         asset_id=asset_id,

@@ -154,6 +154,20 @@ class IndexRatesSyncRequest(BaseModel):
     timeout_s: float | None = None
 
 
+class RentabilityUpdateRequest(BaseModel):
+    as_of_date: str | None = None
+    only_auto: bool = True
+    reset_from_principal: bool = False
+    asset_ids: list[int] | None = None
+
+
+class RentabilityDivergenceRequest(BaseModel):
+    as_of_date: str | None = None
+    only_auto: bool = True
+    threshold_pct: float = 0.0
+    limit: int = 200
+
+
 class CreditCardCreateRequest(BaseModel):
     name: str
     brand: str | None = None
