@@ -160,7 +160,7 @@ Separar papel global de papel do workspace.
 
 - [x] Migrar `users.role` para `users.global_role` com compatibilidade.
 - [x] Ajustar `auth.py` para leitura/escrita de `global_role`.
-- [ ] Ajustar endpoints administrativos em `api/main.py`:
+- [x] Ajustar endpoints administrativos em `api/main.py`:
   - criar OWNER (com workspace)
   - criar GUEST (em workspace existente)
   - promover SUPER_ADMIN (restrito a SUPER_ADMIN)
@@ -230,21 +230,21 @@ Disponibilizar governanca pelo frontend.
 
 ### Entregaveis
 
-- [ ] Tela OWNER para convidados e permissoes
-- [ ] Tela SUPER_ADMIN para criacao de OWNER e bloqueio de workspace
-- [ ] Seletor de workspace ativo (quando usuario tiver mais de 1)
+- [x] Tela OWNER para convidados e permissoes
+- [x] Tela SUPER_ADMIN para criacao de OWNER e bloqueio de workspace
+- [x] Seletor de workspace ativo (quando usuario tiver mais de 1)
 
 ### Tarefas tecnicas
 
-- [ ] `frontend/src/App.jsx`: pagina de gestao de usuarios/workspaces.
-- [ ] `frontend/src/api.js`: endpoints de workspace, membros e permissoes.
-- [ ] Fluxo de troca de workspace e refresh de contexto/token.
+- [x] `frontend/src/App.jsx`: pagina de gestao de usuarios/workspaces.
+- [x] `frontend/src/api.js`: endpoints de workspace, membros e permissoes.
+- [x] Fluxo de troca de workspace e refresh de contexto/token.
 
 ### Critérios de aceite
 
-- [ ] OWNER gerencia GUEST sem acesso a recursos globais.
-- [ ] SUPER_ADMIN gerencia workspaces e bloqueios.
-- [ ] Troca de workspace atualiza dados sem vazamento.
+- [x] OWNER gerencia GUEST sem acesso a recursos globais.
+- [x] SUPER_ADMIN gerencia workspaces e bloqueios.
+- [x] Troca de workspace atualiza dados sem vazamento.
 
 ---
 
@@ -264,7 +264,7 @@ Entrar em producao com seguranca.
 - [ ] Criar testes automatizados:
   - [x] isolamento A vs B
   - [x] GUEST sem edit/delete
-  - bloqueio de workspace no login e nas rotas
+  - [x] bloqueio de workspace no login e nas rotas
   - [x] OWNER full dentro do workspace
   - [x] SUPER_ADMIN com bypass
 - [ ] Auditar queries com `EXPLAIN` em pontos criticos.

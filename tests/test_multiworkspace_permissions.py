@@ -64,7 +64,8 @@ class MultiWorkspacePermissionsTests(unittest.TestCase):
                 VALUES
                     (1, 'owner@example.com', 'x', 'Owner', 'user', 'USER', 1),
                     (2, 'guest@example.com', 'x', 'Guest', 'user', 'USER', 1),
-                    (3, 'other@example.com', 'x', 'Other', 'user', 'USER', 1)
+                    (3, 'other@example.com', 'x', 'Other', 'user', 'USER', 1),
+                    (9, 'admin@example.com', 'x', 'Admin', 'admin', 'SUPER_ADMIN', 1)
                 """
             )
             conn.execute(
@@ -84,12 +85,19 @@ class MultiWorkspacePermissionsTests(unittest.TestCase):
                 """
             )
 
-    def _headers(self, user_id: int, email: str, workspace_id: int, workspace_role: str = "GUEST") -> dict[str, str]:
+    def _headers(
+        self,
+        user_id: int,
+        email: str,
+        workspace_id: int,
+        workspace_role: str = "GUEST",
+        global_role: str = "USER",
+    ) -> dict[str, str]:
         token = create_token(
             user_id=user_id,
             email=email,
             workspace_id=workspace_id,
-            global_role="USER",
+            global_role=global_role,
             workspace_role=workspace_role,
         )
         return {"Authorization": f"Bearer {token}"}
@@ -206,6 +214,60 @@ class MultiWorkspacePermissionsTests(unittest.TestCase):
         bad_headers = self._headers(2, "guest@example.com", 101, workspace_role="GUEST")
         resp = self.client.get("/accounts", headers=bad_headers)
         self.assertEqual(403, resp.status_code)
+
+    def test_blocked_workspace_denies_owner_but_allows_super_admin(self):
+        with db_module.get_conn() as conn:
+            conn.execute("UPDATE workspaces SET status = 'blocked' WHERE id = 101")
+
+        owner_headers = self._headers(1, "owner@example.com", 101, workspace_role="OWNER", global_role="USER")
+        owner_resp = self.client.get("/accounts", headers=owner_headers)
+        self.assertEqual(403, owner_resp.status_code)
+
+        super_headers = self._headers(
+            9,
+            "admin@example.com",
+            101,
+            workspace_role="SUPER_ADMIN",
+            global_role="SUPER_ADMIN",
+        )
+        super_resp = self.client.get("/accounts", headers=super_headers)
+        self.assertEqual(200, super_resp.status_code, super_resp.text)
+
+    def test_super_admin_can_create_and_block_workspace(self):
+        super_headers = self._headers(
+            9,
+            "admin@example.com",
+            101,
+            workspace_role="SUPER_ADMIN",
+            global_role="SUPER_ADMIN",
+        )
+
+        created_resp = self.client.post(
+            "/admin/workspaces",
+            json={"workspace_name": "WS Novo", "owner_email": "other@example.com"},
+            headers=super_headers,
+        )
+        self.assertEqual(200, created_resp.status_code, created_resp.text)
+        ws = created_resp.json().get("workspace") or {}
+        ws_id = int(ws.get("workspace_id") or 0)
+        self.assertGreater(ws_id, 0)
+
+        list_resp = self.client.get("/admin/workspaces", headers=super_headers)
+        self.assertEqual(200, list_resp.status_code, list_resp.text)
+        ids = [int(item.get("workspace_id") or 0) for item in list_resp.json()]
+        self.assertIn(ws_id, ids)
+
+        block_resp = self.client.put(
+            f"/admin/workspaces/{ws_id}/status",
+            json={"status": "blocked"},
+            headers=super_headers,
+        )
+        self.assertEqual(200, block_resp.status_code, block_resp.text)
+        self.assertEqual("blocked", str(block_resp.json()["workspace"].get("workspace_status")))
+
+        owner_headers = self._headers(1, "owner@example.com", 101, workspace_role="OWNER", global_role="USER")
+        forbidden_resp = self.client.get("/admin/workspaces", headers=owner_headers)
+        self.assertEqual(403, forbidden_resp.status_code)
 
 
 if __name__ == "__main__":

@@ -58,6 +58,66 @@ export function getMe() {
   return req("/me");
 }
 
+export function getWorkspaces() {
+  return req("/workspaces");
+}
+
+export function switchWorkspace(workspaceId) {
+  return req("/workspaces/switch", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: Number(workspaceId) }),
+  });
+}
+
+export function getWorkspaceMembers() {
+  return req("/workspaces/members");
+}
+
+export function createWorkspaceMember(payload) {
+  return req("/workspaces/members", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateWorkspaceMemberPermissions(memberUserId, payload) {
+  return req(`/workspaces/members/${memberUserId}/permissions`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteWorkspaceMember(memberUserId) {
+  return req(`/workspaces/members/${memberUserId}`, {
+    method: "DELETE",
+  });
+}
+
+export function getAdminWorkspaces() {
+  return req("/admin/workspaces");
+}
+
+export function createAdminWorkspace(payload) {
+  return req("/admin/workspaces", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateAdminWorkspaceStatus(workspaceId, payload) {
+  return req(`/admin/workspaces/${workspaceId}/status`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateUserGlobalRole(userId, payload) {
+  return req(`/admin/users/${userId}/global-role`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getAccounts() {
   return req("/accounts");
 }

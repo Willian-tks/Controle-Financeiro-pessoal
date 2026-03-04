@@ -41,9 +41,12 @@ from .schemas import (
     CommitmentSettleRequest,
     LoginRequest,
     LoginResponse,
+    UserGlobalRoleUpdateRequest,
+    WorkspaceAdminCreateRequest,
     WorkspaceMemberCreateRequest,
     WorkspacePermissionItemRequest,
     WorkspacePermissionsUpdateRequest,
+    WorkspaceStatusUpdateRequest,
     WorkspaceSwitchRequest,
     IncomeCreateRequest,
     IndexRatesSyncRequest,
@@ -712,6 +715,14 @@ def me(user: dict = Depends(_current_user)) -> dict:
 
 @app.get("/workspaces")
 def list_workspaces(user: dict = Depends(_current_user)) -> list[dict]:
+    if _is_super_admin(user):
+        rows = auth.list_all_workspaces()
+        out: list[dict] = []
+        for r in rows:
+            item = dict(r)
+            item["workspace_role"] = "SUPER_ADMIN"
+            out.append(item)
+        return out
     uid = int(user["id"])
     rows = auth.list_user_workspaces(uid)
     return [dict(r) for r in rows]
@@ -915,6 +926,83 @@ def delete_workspace_member(
     if deleted <= 0:
         raise HTTPException(status_code=404, detail="Membro não encontrado no workspace atual.")
     return {"ok": True}
+
+
+@app.get("/admin/workspaces")
+def admin_list_workspaces(user: dict = Depends(_current_user)) -> list[dict]:
+    _require_admin(user)
+    rows = auth.list_all_workspaces()
+    return [dict(r) for r in rows]
+
+
+@app.post("/admin/workspaces")
+def admin_create_workspace(
+    body: WorkspaceAdminCreateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_admin(user)
+    owner_email = str(body.owner_email or "").strip().lower()
+    workspace_name = str(body.workspace_name or "").strip()
+    if not owner_email:
+        raise HTTPException(status_code=400, detail="E-mail do owner é obrigatório.")
+    if not workspace_name:
+        raise HTTPException(status_code=400, detail="Nome do workspace é obrigatório.")
+
+    owner = auth.get_user_by_email(owner_email)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Usuário owner não encontrado.")
+    if not bool(owner.get("is_active", True)):
+        raise HTTPException(status_code=400, detail="Usuário owner está inativo.")
+    try:
+        created = auth.create_workspace_with_owner(
+            owner_user_id=int(owner["id"]),
+            workspace_name=workspace_name,
+            created_by=int(user["id"]),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not created:
+        raise HTTPException(status_code=500, detail="Falha ao criar workspace.")
+
+    ws = dict(created)
+    ws["workspace_status"] = str(ws.get("status") or "active").strip().lower()
+    ws["owner_email"] = owner.get("email")
+    ws["owner_display_name"] = owner.get("display_name")
+    return {"ok": True, "workspace": ws}
+
+
+@app.put("/admin/workspaces/{workspace_id}/status")
+def admin_update_workspace_status(
+    workspace_id: int,
+    body: WorkspaceStatusUpdateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_admin(user)
+    try:
+        updated = auth.update_workspace_status(int(workspace_id), body.status)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Workspace não encontrado.")
+    out = dict(updated)
+    out["workspace_status"] = str(out.get("status") or "active").strip().lower()
+    return {"ok": True, "workspace": out}
+
+
+@app.put("/admin/users/{user_id}/global-role")
+def admin_update_global_role(
+    user_id: int,
+    body: UserGlobalRoleUpdateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_admin(user)
+    try:
+        updated = auth.set_user_global_role(int(user_id), body.global_role)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    return {"ok": True, "user": dict(updated)}
 
 
 @app.get("/accounts")

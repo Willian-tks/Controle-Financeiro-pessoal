@@ -313,6 +313,28 @@ body {
   color: var(--text-muted);
 }
 
+.workspace-switch-row {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace-select {
+  min-width: 280px;
+  border-radius: 10px;
+  border: 1px solid #cfd8e9;
+  background: #ffffff;
+  color: #1d3557;
+  padding: 10px 12px;
+}
+
+.workspace-msg {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(180px, 1fr));
@@ -413,6 +435,66 @@ body {
   padding: 10px;
   background: #ffffff;
   color: #1d3557;
+}
+
+.workspace-meta-line {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.workspace-invite-form,
+.workspace-create-form {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) 180px;
+  gap: 10px;
+}
+
+.workspace-invite-form input,
+.workspace-invite-form button,
+.workspace-create-form input,
+.workspace-create-form button {
+  border-radius: 10px;
+  border: 1px solid #cfd8e9;
+  padding: 10px;
+}
+
+.workspace-create-form {
+  grid-template-columns: repeat(3, minmax(200px, 1fr));
+}
+
+.workspace-invite-form button,
+.workspace-create-form button {
+  background: #1f8cea;
+  color: #fff;
+  border-color: #1f8cea;
+  font-weight: 700;
+}
+
+.perm-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.perm-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) repeat(4, minmax(80px, auto));
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #d6deec;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #f5f8ff;
+}
+
+.perm-module {
+  font-weight: 700;
+}
+
+.perm-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
 }
 
 .tx-table-wrap {
@@ -525,6 +607,16 @@ body {
   color: #eef4ff;
 }
 
+.main-dashboard .workspace-select {
+  background: rgba(11, 24, 54, 0.78);
+  border-color: rgba(138, 174, 255, 0.4);
+  color: #eef4ff;
+}
+
+.main-dashboard .workspace-msg {
+  color: #9fb3e1;
+}
+
 .main-dashboard .tx-form input::placeholder,
 .main-dashboard .mgr-grid input::placeholder {
   color: #9fb3e1;
@@ -534,7 +626,8 @@ body {
 .main-dashboard .tx-form select:focus,
 .main-dashboard .mgr-grid input:focus,
 .main-dashboard .mgr-grid select:focus,
-.main-dashboard .invoice-filter-select:focus {
+.main-dashboard .invoice-filter-select:focus,
+.main-dashboard .workspace-select:focus {
   outline: 0;
   border-color: rgba(86, 181, 255, 0.9);
   box-shadow: 0 0 0 3px rgba(86, 181, 255, 0.22);
@@ -612,6 +705,30 @@ body {
 
 .main-dashboard .status-msg {
   color: #b9cdf8;
+}
+
+.main-dashboard .workspace-invite-form input,
+.main-dashboard .workspace-create-form input {
+  background: rgba(11, 24, 54, 0.78);
+  border-color: rgba(138, 174, 255, 0.4);
+  color: #eef4ff;
+}
+
+.main-dashboard .workspace-invite-form button,
+.main-dashboard .workspace-create-form button {
+  background: linear-gradient(90deg, #2ec6ff, #4e7ff3);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.main-dashboard .perm-row {
+  background: rgba(13, 27, 60, 0.62);
+  border-color: rgba(138, 174, 255, 0.32);
+}
+
+.main-dashboard .perm-module,
+.main-dashboard .perm-row label {
+  color: #e6efff;
 }
 
 .dash-filter-card h3 {
@@ -1234,6 +1351,20 @@ body {
   .tx-form,
   .mgr-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-invite-form,
+  .workspace-create-form {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .perm-row {
+    grid-template-columns: 1fr 1fr;
   }
 
   .page-header h1 {

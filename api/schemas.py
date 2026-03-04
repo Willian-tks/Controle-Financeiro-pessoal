@@ -32,6 +32,19 @@ class WorkspacePermissionsUpdateRequest(BaseModel):
     permissions: list[WorkspacePermissionItemRequest]
 
 
+class WorkspaceAdminCreateRequest(BaseModel):
+    workspace_name: str
+    owner_email: str
+
+
+class WorkspaceStatusUpdateRequest(BaseModel):
+    status: str
+
+
+class UserGlobalRoleUpdateRequest(BaseModel):
+    global_role: str
+
+
 class TransactionCreateRequest(BaseModel):
     date: str
     description: str

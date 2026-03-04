@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import brandLogo from "./icons/domus.png";
 import icDashboard from "./icons/dashboard.png";
 import icContas from "./icons/contas.png";
@@ -56,6 +56,15 @@ import {
   getInvestTrades,
   getKpis,
   getMe,
+  getWorkspaces,
+  switchWorkspace,
+  getWorkspaceMembers,
+  createWorkspaceMember,
+  updateWorkspaceMemberPermissions,
+  deleteWorkspaceMember,
+  getAdminWorkspaces,
+  createAdminWorkspace,
+  updateAdminWorkspaceStatus,
   getTransactions,
   importAssetsCsv,
   importTradesCsv,
@@ -115,6 +124,20 @@ const PAGE_ICONS = {
   Gerenciador: icGerenciador,
   "Importar CSV": icImportarCsv,
 };
+const WORKSPACE_PERMISSION_MODULES = [
+  "dashboard",
+  "lancamentos",
+  "investimentos",
+  "relatorios",
+  "contas",
+];
+const WORKSPACE_PERMISSION_LABELS = {
+  dashboard: "Dashboard",
+  lancamentos: "Lançamentos",
+  investimentos: "Investimentos",
+  relatorios: "Relatórios",
+  contas: "Contas",
+};
 
 function getCurrentMonthRange() {
   const now = new Date();
@@ -145,6 +168,29 @@ function normalizeText(value) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeWorkspaceStatus(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "blocked") return "blocked";
+  return "active";
+}
+
+function buildPermissionsDraft(member) {
+  const current = Array.isArray(member?.permissions) ? member.permissions : [];
+  const map = new Map(
+    current.map((item) => [String(item.module || "").trim().toLowerCase(), item])
+  );
+  return WORKSPACE_PERMISSION_MODULES.map((module) => {
+    const src = map.get(module) || {};
+    return {
+      module,
+      can_view: Boolean(src.can_view),
+      can_add: Boolean(src.can_add),
+      can_edit: Boolean(src.can_edit),
+      can_delete: Boolean(src.can_delete),
+    };
+  });
 }
 
 function pct(part, total) {
@@ -449,6 +495,19 @@ export default function App() {
   const [investTab, setInvestTab] = useState("Resumo");
   const [managerTab, setManagerTab] = useState("Cadastro de contas");
   const [manageMsg, setManageMsg] = useState("");
+  const [workspaces, setWorkspaces] = useState([]);
+  const [workspaceMsg, setWorkspaceMsg] = useState("");
+  const [workspaceSwitchingId, setWorkspaceSwitchingId] = useState("");
+  const [workspaceMembers, setWorkspaceMembers] = useState([]);
+  const [workspaceMembersLoading, setWorkspaceMembersLoading] = useState(false);
+  const [workspaceInviteEmail, setWorkspaceInviteEmail] = useState("");
+  const [workspacePermDrafts, setWorkspacePermDrafts] = useState({});
+  const [workspaceManageMsg, setWorkspaceManageMsg] = useState("");
+  const [adminWorkspaces, setAdminWorkspaces] = useState([]);
+  const [adminWorkspaceName, setAdminWorkspaceName] = useState("");
+  const [adminOwnerEmail, setAdminOwnerEmail] = useState("");
+  const [adminMsg, setAdminMsg] = useState("");
+  const [adminStatusUpdatingId, setAdminStatusUpdatingId] = useState("");
   const [accEditId, setAccEditId] = useState("");
   const [accEditName, setAccEditName] = useState("");
   const [accEditType, setAccEditType] = useState("Banco");
@@ -485,6 +544,7 @@ export default function App() {
     if (!user) return;
     (async () => {
       try {
+        await reloadWorkspaces();
         await reloadAllData();
         await reloadCardsData();
         await reloadDashboard({
@@ -494,6 +554,17 @@ export default function App() {
           view: dashView,
         });
         await reloadInvestData();
+        if (canManageWorkspaceUsers) {
+          await reloadWorkspaceMembers();
+        } else {
+          setWorkspaceMembers([]);
+          setWorkspacePermDrafts({});
+        }
+        if (isSuperAdmin) {
+          await reloadAdminWorkspaces();
+        } else {
+          setAdminWorkspaces([]);
+        }
       } catch {
         // handled by screen state
       }
@@ -656,6 +727,44 @@ export default function App() {
   }, [assetEditClass]);
 
   const subtitle = useMemo(() => PAGE_SUBTITLES[page] || "Em migração do Streamlit", [page]);
+  const isSuperAdmin = String(user?.global_role || "").toUpperCase() === "SUPER_ADMIN";
+  const isWorkspaceOwner = String(user?.workspace_role || "").toUpperCase() === "OWNER";
+  const canManageWorkspaceUsers = isSuperAdmin || isWorkspaceOwner;
+  const managerTabs = useMemo(() => {
+    if (!canManageWorkspaceUsers) return MANAGER_TABS;
+    return [...MANAGER_TABS, "Usuários e workspaces"];
+  }, [canManageWorkspaceUsers]);
+  const currentWorkspaceId = String(user?.workspace_id || "");
+  const workspaceOptions = useMemo(() => {
+    return (workspaces || []).map((ws) => ({
+      id: String(ws.workspace_id || ws.id || ""),
+      name: String(ws.workspace_name || ws.name || `Workspace ${ws.workspace_id || ws.id}`),
+      status: normalizeWorkspaceStatus(ws.workspace_status || ws.status),
+      role: String(ws.workspace_role || "").toUpperCase(),
+      owner_email: ws.owner_email || "",
+      owner_display_name: ws.owner_display_name || "",
+      members_count: Number(ws.members_count || 0),
+    }));
+  }, [workspaces]);
+  const workspaceMembersSorted = useMemo(() => {
+    const rows = [...(workspaceMembers || [])];
+    rows.sort((a, b) => {
+      const ra = String(a.workspace_role || "").toUpperCase();
+      const rb = String(b.workspace_role || "").toUpperCase();
+      if (ra !== rb) {
+        if (ra === "OWNER") return -1;
+        if (rb === "OWNER") return 1;
+      }
+      return String(a.email || "").localeCompare(String(b.email || ""), "pt-BR");
+    });
+    return rows;
+  }, [workspaceMembers]);
+
+  useEffect(() => {
+    if (managerTabs.includes(managerTab)) return;
+    setManagerTab(managerTabs[0] || "Cadastro de contas");
+  }, [managerTabs, managerTab]);
+
   const txCategory = useMemo(
     () => categories.find((c) => String(c.id) === String(txCategoryId)) || null,
     [categories, txCategoryId]
@@ -733,6 +842,31 @@ export default function App() {
   const transactionsVisibleOrdered = useMemo(() => {
     if (txView !== "futuro" && txView !== "competencia") return transactionsVisible;
     const rows = [...transactionsVisible];
+    if (txView === "futuro") {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      rows.sort((a, b) => {
+        const da = String(a?.date || "");
+        const db = String(b?.date || "");
+        const aIsUpcoming = da >= todayIso;
+        const bIsUpcoming = db >= todayIso;
+        if (aIsUpcoming !== bIsUpcoming) return aIsUpcoming ? -1 : 1;
+        if (da === db) return String(a?.id || "").localeCompare(String(b?.id || ""));
+        if (aIsUpcoming && bIsUpcoming) {
+          return da.localeCompare(db);
+        }
+        return db.localeCompare(da);
+      });
+      return rows;
+    }
+    if (txView === "competencia") {
+      rows.sort((a, b) => {
+        const da = String(a?.date || "");
+        const db = String(b?.date || "");
+        if (da === db) return String(b?.id || "").localeCompare(String(a?.id || ""));
+        return db.localeCompare(da);
+      });
+      return rows;
+    }
     rows.sort((a, b) => {
       const da = String(a?.date || "");
       const db = String(b?.date || "");
@@ -1170,6 +1304,171 @@ export default function App() {
       setUser(data.user);
     } catch (err) {
       setAuthError(String(err.message || err));
+    }
+  }
+
+  async function reloadWorkspaces() {
+    try {
+      const rows = await getWorkspaces();
+      setWorkspaces(Array.isArray(rows) ? rows : []);
+      setWorkspaceMsg("");
+    } catch (err) {
+      setWorkspaces([]);
+      setWorkspaceMsg(String(err.message || err));
+    }
+  }
+
+  async function reloadWorkspaceMembers() {
+    if (!canManageWorkspaceUsers) {
+      setWorkspaceMembers([]);
+      setWorkspacePermDrafts({});
+      return;
+    }
+    setWorkspaceMembersLoading(true);
+    try {
+      const rows = await getWorkspaceMembers();
+      const list = Array.isArray(rows) ? rows : [];
+      setWorkspaceMembers(list);
+      setWorkspacePermDrafts((prev) => {
+        const next = { ...prev };
+        for (const m of list) {
+          const role = String(m.workspace_role || "").toUpperCase();
+          if (role !== "GUEST") continue;
+          const key = String(m.user_id || "");
+          next[key] = buildPermissionsDraft(m);
+        }
+        return next;
+      });
+      setWorkspaceManageMsg("");
+    } catch (err) {
+      setWorkspaceMembers([]);
+      setWorkspaceManageMsg(String(err.message || err));
+    } finally {
+      setWorkspaceMembersLoading(false);
+    }
+  }
+
+  async function reloadAdminWorkspaces() {
+    if (!isSuperAdmin) {
+      setAdminWorkspaces([]);
+      return;
+    }
+    try {
+      const rows = await getAdminWorkspaces();
+      setAdminWorkspaces(Array.isArray(rows) ? rows : []);
+      setAdminMsg("");
+    } catch (err) {
+      setAdminWorkspaces([]);
+      setAdminMsg(String(err.message || err));
+    }
+  }
+
+  async function onSwitchWorkspace(e) {
+    const targetId = String(e.target.value || "");
+    if (!targetId || targetId === currentWorkspaceId) return;
+    setWorkspaceSwitchingId(targetId);
+    setWorkspaceMsg("");
+    try {
+      const out = await switchWorkspace(Number(targetId));
+      setToken(out.token);
+      setUser(out.user);
+    } catch (err) {
+      setWorkspaceMsg(String(err.message || err));
+    } finally {
+      setWorkspaceSwitchingId("");
+    }
+  }
+
+  async function onAddWorkspaceGuest(e) {
+    e.preventDefault();
+    const email = String(workspaceInviteEmail || "").trim().toLowerCase();
+    if (!email) {
+      setWorkspaceManageMsg("Informe o e-mail do usuário para convidar.");
+      return;
+    }
+    setWorkspaceManageMsg("");
+    try {
+      await createWorkspaceMember({ email, role: "GUEST" });
+      setWorkspaceInviteEmail("");
+      setWorkspaceManageMsg("Convidado atualizado com sucesso.");
+      await reloadWorkspaceMembers();
+      await reloadWorkspaces();
+    } catch (err) {
+      setWorkspaceManageMsg(String(err.message || err));
+    }
+  }
+
+  function onToggleMemberPermission(memberUserId, module, field, checked) {
+    const key = String(memberUserId || "");
+    if (!key || !module) return;
+    setWorkspacePermDrafts((prev) => {
+      const base = Array.isArray(prev[key]) && prev[key].length ? prev[key] : buildPermissionsDraft({});
+      const nextRows = base.map((row) => {
+        if (String(row.module) !== String(module)) return row;
+        return { ...row, [field]: Boolean(checked) };
+      });
+      return { ...prev, [key]: nextRows };
+    });
+  }
+
+  async function onSaveMemberPermissions(memberUserId) {
+    const key = String(memberUserId || "");
+    const payload = Array.isArray(workspacePermDrafts[key]) ? workspacePermDrafts[key] : [];
+    setWorkspaceManageMsg("");
+    try {
+      await updateWorkspaceMemberPermissions(Number(memberUserId), { permissions: payload });
+      setWorkspaceManageMsg("Permissões salvas.");
+      await reloadWorkspaceMembers();
+    } catch (err) {
+      setWorkspaceManageMsg(String(err.message || err));
+    }
+  }
+
+  async function onRemoveWorkspaceMember(memberUserId) {
+    if (!window.confirm("Remover este membro do workspace atual?")) return;
+    setWorkspaceManageMsg("");
+    try {
+      await deleteWorkspaceMember(Number(memberUserId));
+      setWorkspaceManageMsg("Membro removido.");
+      await reloadWorkspaceMembers();
+      await reloadWorkspaces();
+    } catch (err) {
+      setWorkspaceManageMsg(String(err.message || err));
+    }
+  }
+
+  async function onCreateAdminWorkspace(e) {
+    e.preventDefault();
+    const workspace_name = String(adminWorkspaceName || "").trim();
+    const owner_email = String(adminOwnerEmail || "").trim().toLowerCase();
+    if (!workspace_name || !owner_email) {
+      setAdminMsg("Informe nome do workspace e e-mail do owner.");
+      return;
+    }
+    setAdminMsg("");
+    try {
+      await createAdminWorkspace({ workspace_name, owner_email });
+      setAdminWorkspaceName("");
+      setAdminOwnerEmail("");
+      setAdminMsg("Workspace criado com sucesso.");
+      await Promise.all([reloadAdminWorkspaces(), reloadWorkspaces()]);
+    } catch (err) {
+      setAdminMsg(String(err.message || err));
+    }
+  }
+
+  async function onToggleAdminWorkspaceStatus(workspaceId, currentStatus) {
+    const target = normalizeWorkspaceStatus(currentStatus) === "active" ? "blocked" : "active";
+    setAdminStatusUpdatingId(String(workspaceId));
+    setAdminMsg("");
+    try {
+      await updateAdminWorkspaceStatus(Number(workspaceId), { status: target });
+      setAdminMsg(`Workspace ${workspaceId} atualizado para ${target}.`);
+      await Promise.all([reloadAdminWorkspaces(), reloadWorkspaces()]);
+    } catch (err) {
+      setAdminMsg(String(err.message || err));
+    } finally {
+      setAdminStatusUpdatingId("");
     }
   }
 
@@ -2138,7 +2437,16 @@ export default function App() {
     clearToken();
     setUser(null);
     setAccounts([]);
+    setCategories([]);
+    setTransactions([]);
+    setCards([]);
+    setCardInvoices([]);
     setKpis(null);
+    setWorkspaces([]);
+    setWorkspaceMembers([]);
+    setWorkspacePermDrafts({});
+    setAdminWorkspaces([]);
+    setPage("Dashboard");
   }
 
   async function onApplyDashboardFilters(e) {
@@ -2344,6 +2652,23 @@ export default function App() {
         <header className="page-header">
           <h1>{page}</h1>
           <p>{subtitle}</p>
+          <div className="workspace-switch-row">
+            <select
+              className="workspace-select"
+              value={currentWorkspaceId}
+              onChange={onSwitchWorkspace}
+              disabled={!workspaceOptions.length || Boolean(workspaceSwitchingId)}
+            >
+              {!currentWorkspaceId ? <option value="">Selecione um workspace</option> : null}
+              {workspaceOptions.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name} {ws.status === "blocked" ? "(bloqueado)" : ""}
+                </option>
+              ))}
+            </select>
+            {workspaceSwitchingId ? <span className="workspace-msg">Trocando workspace...</span> : null}
+            {!workspaceSwitchingId && workspaceMsg ? <span className="workspace-msg">{workspaceMsg}</span> : null}
+          </div>
         </header>
 
         {page === "Dashboard" && kpis ? (
@@ -2648,7 +2973,7 @@ export default function App() {
           <>
             <section className="card tabs-card">
               <div className="mini-tabs">
-                {MANAGER_TABS.map((t) => (
+                {managerTabs.map((t) => (
                   <button
                     key={t}
                     className={`mini-tab ${managerTab === t ? "active" : ""}`}
@@ -2918,6 +3243,222 @@ export default function App() {
                   </div>
                   {cardMsg ? <p>{cardMsg}</p> : null}
                 </section>
+              </>
+            ) : null}
+
+            {managerTab === "Usuários e workspaces" ? (
+              <>
+                <section className="card">
+                  <h3>Workspace atual</h3>
+                  <p className="workspace-meta-line">
+                    <b>ID:</b> {user.workspace_id || "-"} | <b>Nome:</b> {user.workspace_name || "-"} |{" "}
+                    <b>Papel:</b> {user.workspace_role || "-"} | <b>Status:</b> {user.workspace_status || "-"}
+                  </p>
+                  <form className="workspace-invite-form" onSubmit={onAddWorkspaceGuest}>
+                    <input
+                      type="email"
+                      placeholder="E-mail do convidado (GUEST)"
+                      value={workspaceInviteEmail}
+                      onChange={(e) => setWorkspaceInviteEmail(e.target.value)}
+                      disabled={!canManageWorkspaceUsers}
+                    />
+                    <button type="submit" disabled={!canManageWorkspaceUsers}>
+                      Adicionar convidado
+                    </button>
+                  </form>
+                  {workspaceManageMsg ? <p className="status-msg">{workspaceManageMsg}</p> : null}
+                </section>
+
+                <section className="card">
+                  <h3>Membros e permissões</h3>
+                  {workspaceMembersLoading ? <p>Carregando membros...</p> : null}
+                  <div className="tx-table-wrap">
+                    <table className="tx-table">
+                      <thead>
+                        <tr>
+                          <th>Usuário</th>
+                          <th>E-mail</th>
+                          <th>Papel</th>
+                          <th>Ativo</th>
+                          <th>Ação</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {workspaceMembersSorted.map((m) => {
+                          const role = String(m.workspace_role || "").toUpperCase();
+                          const draft = workspacePermDrafts[String(m.user_id)] || buildPermissionsDraft(m);
+                          const canRemove = role !== "OWNER" && Number(m.user_id) !== Number(user.id);
+                          return (
+                            <Fragment key={`member-${m.user_id}`}>
+                              <tr key={`member-row-${m.user_id}`}>
+                                <td>{m.display_name || "-"}</td>
+                                <td>{m.email || "-"}</td>
+                                <td>{role || "-"}</td>
+                                <td>{m.is_active ? "Sim" : "Não"}</td>
+                                <td>
+                                  {canRemove ? (
+                                    <button
+                                      type="button"
+                                      className="tx-action-neutral"
+                                      onClick={() => onRemoveWorkspaceMember(m.user_id)}
+                                    >
+                                      Remover
+                                    </button>
+                                  ) : (
+                                    "-"
+                                  )}
+                                </td>
+                              </tr>
+                              {role === "GUEST" ? (
+                                <tr key={`member-perm-${m.user_id}`}>
+                                  <td colSpan={5}>
+                                    <div className="perm-grid">
+                                      {draft.map((perm) => (
+                                        <div key={`${m.user_id}-${perm.module}`} className="perm-row">
+                                          <div className="perm-module">{WORKSPACE_PERMISSION_LABELS[perm.module] || perm.module}</div>
+                                          <label>
+                                            <input
+                                              type="checkbox"
+                                              checked={Boolean(perm.can_view)}
+                                              onChange={(e) =>
+                                                onToggleMemberPermission(m.user_id, perm.module, "can_view", e.target.checked)
+                                              }
+                                            />
+                                            Ver
+                                          </label>
+                                          <label>
+                                            <input
+                                              type="checkbox"
+                                              checked={Boolean(perm.can_add)}
+                                              onChange={(e) =>
+                                                onToggleMemberPermission(m.user_id, perm.module, "can_add", e.target.checked)
+                                              }
+                                            />
+                                            Incluir
+                                          </label>
+                                          <label>
+                                            <input
+                                              type="checkbox"
+                                              checked={Boolean(perm.can_edit)}
+                                              onChange={(e) =>
+                                                onToggleMemberPermission(m.user_id, perm.module, "can_edit", e.target.checked)
+                                              }
+                                            />
+                                            Editar
+                                          </label>
+                                          <label>
+                                            <input
+                                              type="checkbox"
+                                              checked={Boolean(perm.can_delete)}
+                                              onChange={(e) =>
+                                                onToggleMemberPermission(m.user_id, perm.module, "can_delete", e.target.checked)
+                                              }
+                                            />
+                                            Excluir
+                                          </label>
+                                        </div>
+                                      ))}
+                                      <div>
+                                        <button
+                                          type="button"
+                                          className="tx-action-primary"
+                                          onClick={() => onSaveMemberPermissions(m.user_id)}
+                                        >
+                                          Salvar permissões
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })}
+                        {!workspaceMembersSorted.length && !workspaceMembersLoading ? (
+                          <tr>
+                            <td colSpan={5}>Nenhum membro encontrado para o workspace atual.</td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                {isSuperAdmin ? (
+                  <>
+                    <section className="card">
+                      <h3>Criar workspace (SUPER_ADMIN)</h3>
+                      <form className="workspace-create-form" onSubmit={onCreateAdminWorkspace}>
+                        <input
+                          type="text"
+                          placeholder="Nome do workspace"
+                          value={adminWorkspaceName}
+                          onChange={(e) => setAdminWorkspaceName(e.target.value)}
+                        />
+                        <input
+                          type="email"
+                          placeholder="E-mail do owner"
+                          value={adminOwnerEmail}
+                          onChange={(e) => setAdminOwnerEmail(e.target.value)}
+                        />
+                        <button type="submit">Criar workspace</button>
+                      </form>
+                      {adminMsg ? <p className="status-msg">{adminMsg}</p> : null}
+                    </section>
+
+                    <section className="card">
+                      <h3>Workspaces (SUPER_ADMIN)</h3>
+                      <div className="tx-table-wrap">
+                        <table className="tx-table">
+                          <thead>
+                            <tr>
+                              <th>ID</th>
+                              <th>Nome</th>
+                              <th>Owner</th>
+                              <th>Status</th>
+                              <th>Membros</th>
+                              <th>Ação</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {adminWorkspaces.map((ws) => {
+                              const wsId = Number(ws.workspace_id || ws.id || 0);
+                              const wsStatus = normalizeWorkspaceStatus(ws.workspace_status || ws.status);
+                              return (
+                                <tr key={wsId}>
+                                  <td>{wsId}</td>
+                                  <td>{ws.workspace_name || ws.name || "-"}</td>
+                                  <td>{ws.owner_email || "-"}</td>
+                                  <td>{wsStatus}</td>
+                                  <td>{Number(ws.members_count || 0)}</td>
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className={wsStatus === "active" ? "" : "tx-action-primary"}
+                                      onClick={() => onToggleAdminWorkspaceStatus(wsId, wsStatus)}
+                                      disabled={adminStatusUpdatingId === String(wsId)}
+                                    >
+                                      {adminStatusUpdatingId === String(wsId)
+                                        ? "Atualizando..."
+                                        : wsStatus === "active"
+                                          ? "Bloquear"
+                                          : "Ativar"}
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {!adminWorkspaces.length ? (
+                              <tr>
+                                <td colSpan={6}>Nenhum workspace encontrado.</td>
+                              </tr>
+                            ) : null}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  </>
+                ) : null}
               </>
             ) : null}
           </>

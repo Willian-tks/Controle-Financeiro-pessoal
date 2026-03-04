@@ -232,6 +232,142 @@ def list_user_workspaces(user_id: int, active_only: bool = False) -> list[dict[s
     return out
 
 
+def list_all_workspaces() -> list[dict[str, Any]]:
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT
+            w.id AS workspace_id,
+            w.name AS workspace_name,
+            w.owner_user_id,
+            w.status AS workspace_status,
+            u.email AS owner_email,
+            u.display_name AS owner_display_name,
+            (
+                SELECT COUNT(*)
+                FROM workspace_users wu
+                WHERE wu.workspace_id = w.id
+            ) AS members_count
+        FROM workspaces w
+        LEFT JOIN users u ON u.id = w.owner_user_id
+        ORDER BY
+            CASE WHEN LOWER(COALESCE(w.status, 'active')) = 'active' THEN 0 ELSE 1 END,
+            w.id
+        """
+    ).fetchall()
+    conn.close()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        d["workspace_status"] = str(d.get("workspace_status") or "").strip().lower() or "active"
+        out.append(d)
+    return out
+
+
+def create_workspace_with_owner(
+    owner_user_id: int,
+    workspace_name: str,
+    created_by: int | None = None,
+) -> dict[str, Any] | None:
+    owner_id = int(owner_user_id)
+    name = str(workspace_name or "").strip()
+    if not name:
+        raise ValueError("Nome do workspace é obrigatório.")
+
+    conn = get_conn()
+    owner = conn.execute(
+        """
+        SELECT id, email, is_active
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        """,
+        (owner_id,),
+    ).fetchone()
+    if not owner:
+        conn.close()
+        raise ValueError("Owner informado não existe.")
+    if not bool(owner["is_active"]):
+        conn.close()
+        raise ValueError("Owner informado está inativo.")
+
+    conn.execute(
+        """
+        INSERT INTO workspaces(name, owner_user_id, status)
+        VALUES (?, ?, 'active')
+        """,
+        (name, owner_id),
+    )
+    ws_row = conn.execute("SELECT last_insert_rowid() AS workspace_id").fetchone()
+    ws_id = int(ws_row["workspace_id"]) if ws_row else 0
+    if ws_id <= 0:
+        conn.rollback()
+        conn.close()
+        return None
+
+    creator = int(created_by) if created_by is not None else owner_id
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO workspace_users(workspace_id, user_id, role, created_by)
+        VALUES (?, ?, 'OWNER', ?)
+        """,
+        (ws_id, owner_id, creator),
+    )
+    conn.execute(
+        """
+        UPDATE workspace_users
+        SET role = 'OWNER'
+        WHERE workspace_id = ? AND user_id = ?
+        """,
+        (ws_id, owner_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return get_workspace_by_id(ws_id)
+
+
+def update_workspace_status(workspace_id: int, status: str) -> dict[str, Any] | None:
+    ws_id = int(workspace_id)
+    status_n = str(status or "").strip().lower()
+    if status_n not in {"active", "blocked"}:
+        raise ValueError("Status do workspace inválido.")
+
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE workspaces SET status = ? WHERE id = ?",
+        (status_n, ws_id),
+    )
+    conn.commit()
+    conn.close()
+    if int(cur.rowcount or 0) <= 0:
+        return None
+    return get_workspace_by_id(ws_id)
+
+
+def set_user_global_role(user_id: int, global_role: str) -> dict[str, Any] | None:
+    uid = int(user_id)
+    role_n = str(global_role or "").strip().upper()
+    if role_n not in {"SUPER_ADMIN", "USER"}:
+        raise ValueError("Global role inválido.")
+    legacy = _legacy_role_from_global(role_n)
+
+    conn = get_conn()
+    cur = conn.execute(
+        """
+        UPDATE users
+        SET global_role = ?, role = ?
+        WHERE id = ?
+        """,
+        (role_n, legacy, uid),
+    )
+    conn.commit()
+    conn.close()
+    if int(cur.rowcount or 0) <= 0:
+        return None
+    return get_user_by_id(uid)
+
+
 def ensure_default_workspace_for_user(user_id: int) -> dict[str, Any] | None:
     uid = int(user_id)
     conn = get_conn()
