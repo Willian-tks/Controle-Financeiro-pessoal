@@ -563,17 +563,197 @@ def _postgres_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date);")
 
 
+def _row_value(row: Any, key: str, default: Any = None) -> Any:
+    if row is None:
+        return default
+    try:
+        return row[key]
+    except Exception:
+        try:
+            return row.get(key, default)  # type: ignore[attr-defined]
+        except Exception:
+            return default
+
+
+def _workspace_default_name(email: str | None, user_id: int) -> str:
+    base = (str(email or "").strip().split("@", 1)[0] or "").strip()
+    if not base:
+        base = f"Usuario {int(user_id)}"
+    return f"Workspace {base}"
+
+
+def _backfill_multiworkspace_phase1(cur) -> None:
+    user_rows = cur.execute(
+        """
+        SELECT id, email
+        FROM users
+        ORDER BY id
+        """
+    ).fetchall()
+    if not user_rows:
+        return
+
+    owner_workspace_by_user: dict[int, int] = {}
+    for u in user_rows:
+        uid = int(_row_value(u, "id", 0) or 0)
+        if uid <= 0:
+            continue
+        email = str(_row_value(u, "email", "") or "")
+
+        ws_row = cur.execute(
+            """
+            SELECT w.id
+            FROM workspaces w
+            JOIN workspace_users wu ON wu.workspace_id = w.id
+            WHERE wu.user_id = ?
+              AND UPPER(COALESCE(wu.role, '')) = 'OWNER'
+            ORDER BY w.id
+            LIMIT 1
+            """,
+            (uid,),
+        ).fetchone()
+        ws_id = int(_row_value(ws_row, "id", 0) or 0)
+
+        if ws_id <= 0:
+            ws_row = cur.execute(
+                """
+                SELECT id
+                FROM workspaces
+                WHERE owner_user_id = ?
+                ORDER BY id
+                LIMIT 1
+                """,
+                (uid,),
+            ).fetchone()
+            ws_id = int(_row_value(ws_row, "id", 0) or 0)
+
+        if ws_id <= 0:
+            cur.execute(
+                """
+                INSERT INTO workspaces(name, owner_user_id, status)
+                VALUES (?, ?, 'active')
+                """,
+                (_workspace_default_name(email, uid), uid),
+            )
+            ws_row = cur.execute(
+                """
+                SELECT id
+                FROM workspaces
+                WHERE owner_user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (uid,),
+            ).fetchone()
+            ws_id = int(_row_value(ws_row, "id", 0) or 0)
+
+        if ws_id <= 0:
+            continue
+
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO workspace_users(workspace_id, user_id, role, created_by)
+            VALUES (?, ?, 'OWNER', ?)
+            """,
+            (ws_id, uid, uid),
+        )
+        cur.execute(
+            """
+            UPDATE workspace_users
+            SET role = 'OWNER'
+            WHERE workspace_id = ? AND user_id = ?
+            """,
+            (ws_id, uid),
+        )
+        owner_workspace_by_user[uid] = ws_id
+
+    if not owner_workspace_by_user:
+        return
+
+    domain_tables = [
+        "accounts",
+        "categories",
+        "transactions",
+        "assets",
+        "trades",
+        "income_events",
+        "prices",
+        "asset_prices",
+        "credit_cards",
+        "credit_card_invoices",
+        "credit_card_charges",
+        "index_rates",
+    ]
+    for table in domain_tables:
+        for uid, ws_id in owner_workspace_by_user.items():
+            cur.execute(
+                f"UPDATE {table} SET workspace_id = ? WHERE workspace_id IS NULL AND user_id = ?",
+                (ws_id, uid),
+            )
+
+    fallback_ws = min(owner_workspace_by_user.values())
+    for table in domain_tables:
+        cur.execute(
+            f"UPDATE {table} SET workspace_id = ? WHERE workspace_id IS NULL",
+            (fallback_ws,),
+        )
+
+
 def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS global_role TEXT")
+    cur.execute("""
+    UPDATE users
+    SET global_role = CASE
+        WHEN LOWER(COALESCE(role, '')) = 'admin' THEN 'SUPER_ADMIN'
+        ELSE 'USER'
+    END
+    WHERE global_role IS NULL OR TRIM(global_role) = ''
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS workspaces (
+        id BIGSERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_user_id BIGINT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS workspace_users (
+        id BIGSERIAL PRIMARY KEY,
+        workspace_id BIGINT NOT NULL,
+        user_id BIGINT NOT NULL,
+        role TEXT NOT NULL,
+        created_by BIGINT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS permissions (
+        id BIGSERIAL PRIMARY KEY,
+        workspace_user_id BIGINT NOT NULL,
+        module TEXT NOT NULL,
+        can_view BOOLEAN NOT NULL DEFAULT FALSE,
+        can_add BOOLEAN NOT NULL DEFAULT FALSE,
+        can_edit BOOLEAN NOT NULL DEFAULT FALSE,
+        can_delete BOOLEAN NOT NULL DEFAULT FALSE
+    );
+    """)
 
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'BRL'")
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS show_on_dashboard BOOLEAN NOT NULL DEFAULT FALSE")
     cur.execute("ALTER TABLE categories ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE categories ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS recurrence_id TEXT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS sector TEXT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS source_account_id BIGINT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS issuer TEXT")
@@ -589,19 +769,27 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS current_value DOUBLE PRECISION")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS last_update TEXT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS exchange_rate DOUBLE PRECISION NOT NULL DEFAULT 1")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE asset_prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE asset_prices ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'Visa'")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT 'Black'")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS card_type TEXT NOT NULL DEFAULT 'Credito'")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS close_day INTEGER")
     cur.execute("ALTER TABLE credit_card_invoices ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE credit_card_invoices ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS user_id BIGINT")
+    cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS category_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS description TEXT")
+    cur.execute("ALTER TABLE index_rates ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS index_rates (
@@ -640,6 +828,33 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_workspace_users_workspace ON workspace_users(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_workspace_users_user ON workspace_users(user_id)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_workspace_users_workspace_user ON workspace_users(workspace_id, user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_permissions_workspace_user ON permissions(workspace_user_id)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_permissions_workspace_user_module ON permissions(workspace_user_id, module)")
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_workspace ON accounts(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_workspace ON categories(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_workspace ON transactions(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_assets_workspace ON assets(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_workspace ON trades(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_income_events_workspace ON income_events(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_workspace ON prices(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_asset_prices_workspace ON asset_prices(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_cards_workspace ON credit_cards(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_invoices_workspace ON credit_card_invoices(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_charges_workspace ON credit_card_charges(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_workspace ON index_rates(workspace_id)")
+
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_workspace_name ON accounts(workspace_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_workspace_name ON categories(workspace_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_assets_workspace_symbol ON assets(workspace_id, symbol)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_prices_workspace_asset_date ON prices(workspace_id, asset_id, date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_prices_workspace_asset_date ON asset_prices(workspace_id, asset_id, px_date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_workspace_name_date ON index_rates(workspace_id, index_name, ref_date)")
     cur.execute("DROP INDEX IF EXISTS ux_cc_cards_user_acc")
     cur.execute("DROP INDEX IF EXISTS ux_cc_cards_user_name")
     cur.execute("DROP INDEX IF EXISTS ux_cc_cards_user_acc_type")
@@ -649,6 +864,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_name_type_acc ON credit_cards(user_id, name, card_type, card_account_id)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_inv_user_period ON credit_card_invoices(user_id, card_id, invoice_period)")
     _backfill_fixed_income_assets_phase1(cur)
+    _backfill_multiworkspace_phase1(cur)
 
 
 def _add_column_sqlite(cur, table: str, column_def: str):
@@ -662,6 +878,46 @@ def _add_column_sqlite(cur, table: str, column_def: str):
 def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "users", "role TEXT NOT NULL DEFAULT 'user'")
     _add_column_sqlite(cur, "users", "is_active INTEGER NOT NULL DEFAULT 1")
+    _add_column_sqlite(cur, "users", "global_role TEXT")
+    cur.execute("""
+    UPDATE users
+    SET global_role = CASE
+        WHEN LOWER(COALESCE(role, '')) = 'admin' THEN 'SUPER_ADMIN'
+        ELSE 'USER'
+    END
+    WHERE global_role IS NULL OR TRIM(global_role) = ''
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS workspaces (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        owner_user_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS workspace_users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        created_by INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_user_id INTEGER NOT NULL,
+        module TEXT NOT NULL,
+        can_view INTEGER NOT NULL DEFAULT 0,
+        can_add INTEGER NOT NULL DEFAULT 0,
+        can_edit INTEGER NOT NULL DEFAULT 0,
+        can_delete INTEGER NOT NULL DEFAULT 0
+    );
+    """)
 
     _add_column_sqlite(cur, "accounts", "user_id INTEGER")
     _add_column_sqlite(cur, "accounts", "currency TEXT NOT NULL DEFAULT 'BRL'")
@@ -738,7 +994,50 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_cards_user_acc_type ON credit_cards(user_id, card_account_id, card_type)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_cards_user_name_type_acc ON credit_cards(user_id, name, card_type, card_account_id)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_cc_inv_user_period ON credit_card_invoices(user_id, card_id, invoice_period)")
+
+    _add_column_sqlite(cur, "accounts", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "categories", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "transactions", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "assets", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "trades", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "income_events", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "prices", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "asset_prices", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "credit_cards", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "credit_card_invoices", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "credit_card_charges", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "index_rates", "workspace_id INTEGER")
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_workspace_users_workspace ON workspace_users(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_workspace_users_user ON workspace_users(user_id)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_workspace_users_workspace_user ON workspace_users(workspace_id, user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_permissions_workspace_user ON permissions(workspace_user_id)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_permissions_workspace_user_module ON permissions(workspace_user_id, module)")
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_workspace ON accounts(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_workspace ON categories(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_workspace ON transactions(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_assets_workspace ON assets(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_workspace ON trades(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_income_events_workspace ON income_events(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_workspace ON prices(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_asset_prices_workspace ON asset_prices(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_cards_workspace ON credit_cards(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_invoices_workspace ON credit_card_invoices(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_charges_workspace ON credit_card_charges(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_workspace ON index_rates(workspace_id)")
+
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_workspace_name ON accounts(workspace_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_workspace_name ON categories(workspace_id, name)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_assets_workspace_symbol ON assets(workspace_id, symbol)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_prices_workspace_asset_date ON prices(workspace_id, asset_id, date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_prices_workspace_asset_date ON asset_prices(workspace_id, asset_id, px_date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_workspace_name_date ON index_rates(workspace_id, index_name, ref_date)")
+
     _backfill_fixed_income_assets_phase1(cur)
+    _backfill_multiworkspace_phase1(cur)
 
 
 def _fixed_income_asset_class_condition(column_ref: str = "asset_class") -> str:
