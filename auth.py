@@ -32,6 +32,32 @@ def _norm_email(email: str) -> str:
     return (email or "").strip().lower()
 
 
+def _global_role_from_legacy(role: str | None) -> str:
+    raw = str(role or "").strip().lower()
+    return "SUPER_ADMIN" if raw == "admin" else "USER"
+
+
+def _legacy_role_from_global(global_role: str | None) -> str:
+    raw = str(global_role or "").strip().upper()
+    return "admin" if raw == "SUPER_ADMIN" else "user"
+
+
+def _effective_global_role(user: dict[str, Any] | None) -> str:
+    if not user:
+        return "USER"
+    raw = str((user.get("global_role") or "")).strip().upper()
+    if raw in {"SUPER_ADMIN", "USER"}:
+        return raw
+    return _global_role_from_legacy(str(user.get("role") or ""))
+
+
+def _workspace_default_name(email: str | None, user_id: int) -> str:
+    base = (str(email or "").strip().split("@", 1)[0] or "").strip()
+    if not base:
+        base = f"Usuario {int(user_id)}"
+    return f"Workspace {base}"
+
+
 def _hash_password(password: str) -> str:
     salt = os.urandom(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
@@ -74,12 +100,19 @@ def ensure_bootstrap_admin() -> None:
     ).fetchone()
     if not row:
         conn.execute(
-            "INSERT INTO users(email, password_hash, display_name, role, is_active) VALUES (?, ?, ?, 'admin', TRUE)",
+            """
+            INSERT INTO users(email, password_hash, display_name, role, global_role, is_active)
+            VALUES (?, ?, ?, 'admin', 'SUPER_ADMIN', TRUE)
+            """,
             (admin_email, _hash_password(admin_password), admin_name),
         )
     else:
         conn.execute(
-            "UPDATE users SET password_hash = ?, display_name = ?, role = 'admin', is_active = TRUE WHERE id = ?",
+            """
+            UPDATE users
+            SET password_hash = ?, display_name = ?, role = 'admin', global_role = 'SUPER_ADMIN', is_active = TRUE
+            WHERE id = ?
+            """,
             (_hash_password(admin_password), admin_name, int(row["id"])),
         )
     conn.commit()
@@ -89,11 +122,202 @@ def ensure_bootstrap_admin() -> None:
 def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     conn = get_conn()
     row = conn.execute(
-        "SELECT id, email, display_name, role, is_active, created_at FROM users WHERE id = ?",
+        """
+        SELECT id, email, display_name, role, global_role, is_active, created_at
+        FROM users
+        WHERE id = ?
+        """,
         (int(user_id),),
     ).fetchone()
     conn.close()
+    if not row:
+        return None
+    user = dict(row)
+    user["global_role"] = _effective_global_role(user)
+    user["role"] = _legacy_role_from_global(user["global_role"])
+    return user
+
+
+def get_workspace_by_id(workspace_id: int) -> dict[str, Any] | None:
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id AS workspace_id, name AS workspace_name, owner_user_id, status, created_at
+        FROM workspaces
+        WHERE id = ?
+        """,
+        (int(workspace_id),),
+    ).fetchone()
+    conn.close()
     return dict(row) if row else None
+
+
+def get_user_workspace_membership(user_id: int, workspace_id: int) -> dict[str, Any] | None:
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT
+            wu.workspace_id,
+            wu.user_id,
+            wu.role AS workspace_role,
+            w.name AS workspace_name,
+            w.status AS workspace_status,
+            w.owner_user_id
+        FROM workspace_users wu
+        JOIN workspaces w ON w.id = wu.workspace_id
+        WHERE wu.user_id = ? AND wu.workspace_id = ?
+        LIMIT 1
+        """,
+        (int(user_id), int(workspace_id)),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    member = dict(row)
+    member["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() or "GUEST"
+    member["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() or "active"
+    return member
+
+
+def list_user_workspaces(user_id: int, active_only: bool = False) -> list[dict[str, Any]]:
+    conn = get_conn()
+    where_status = " AND LOWER(COALESCE(w.status, 'active')) = 'active'" if active_only else ""
+    rows = conn.execute(
+        f"""
+        SELECT
+            w.id AS workspace_id,
+            w.name AS workspace_name,
+            w.owner_user_id,
+            w.status AS workspace_status,
+            wu.role AS workspace_role
+        FROM workspace_users wu
+        JOIN workspaces w ON w.id = wu.workspace_id
+        WHERE wu.user_id = ? {where_status}
+        ORDER BY
+            CASE WHEN UPPER(COALESCE(wu.role, '')) = 'OWNER' THEN 0 ELSE 1 END,
+            w.id
+        """,
+        (int(user_id),),
+    ).fetchall()
+    conn.close()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        d["workspace_role"] = str(d.get("workspace_role") or "").strip().upper() or "GUEST"
+        d["workspace_status"] = str(d.get("workspace_status") or "").strip().lower() or "active"
+        out.append(d)
+    return out
+
+
+def ensure_default_workspace_for_user(user_id: int) -> dict[str, Any] | None:
+    uid = int(user_id)
+    conn = get_conn()
+    user_row = conn.execute("SELECT email FROM users WHERE id = ?", (uid,)).fetchone()
+    user_email = str(user_row["email"]) if user_row and user_row["email"] else None
+
+    row = conn.execute(
+        """
+        SELECT
+            wu.workspace_id,
+            wu.user_id,
+            wu.role AS workspace_role,
+            w.name AS workspace_name,
+            w.status AS workspace_status,
+            w.owner_user_id
+        FROM workspace_users wu
+        JOIN workspaces w ON w.id = wu.workspace_id
+        WHERE wu.user_id = ?
+        ORDER BY
+            CASE WHEN LOWER(COALESCE(w.status, 'active')) = 'active' THEN 0 ELSE 1 END,
+            CASE WHEN UPPER(COALESCE(wu.role, '')) = 'OWNER' THEN 0 ELSE 1 END,
+            w.id
+        LIMIT 1
+        """,
+        (uid,),
+    ).fetchone()
+    if row:
+        conn.close()
+        member = dict(row)
+        member["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() or "GUEST"
+        member["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() or "active"
+        return member
+
+    ws = conn.execute(
+        """
+        SELECT id, name, status, owner_user_id
+        FROM workspaces
+        WHERE owner_user_id = ?
+        ORDER BY id
+        LIMIT 1
+        """,
+        (uid,),
+    ).fetchone()
+    ws_id = int(ws["id"]) if ws else 0
+
+    if ws_id <= 0:
+        conn.execute(
+            """
+            INSERT INTO workspaces(name, owner_user_id, status)
+            VALUES (?, ?, 'active')
+            """,
+            (_workspace_default_name(user_email, uid), uid),
+        )
+        ws = conn.execute(
+            """
+            SELECT id, name, status, owner_user_id
+            FROM workspaces
+            WHERE owner_user_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (uid,),
+        ).fetchone()
+        ws_id = int(ws["id"]) if ws else 0
+
+    if ws_id <= 0:
+        conn.close()
+        return None
+
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO workspace_users(workspace_id, user_id, role, created_by)
+        VALUES (?, ?, 'OWNER', ?)
+        """,
+        (ws_id, uid, uid),
+    )
+    conn.execute(
+        """
+        UPDATE workspace_users
+        SET role = 'OWNER'
+        WHERE workspace_id = ? AND user_id = ?
+        """,
+        (ws_id, uid),
+    )
+    conn.commit()
+
+    row = conn.execute(
+        """
+        SELECT
+            wu.workspace_id,
+            wu.user_id,
+            wu.role AS workspace_role,
+            w.name AS workspace_name,
+            w.status AS workspace_status,
+            w.owner_user_id
+        FROM workspace_users wu
+        JOIN workspaces w ON w.id = wu.workspace_id
+        WHERE wu.user_id = ? AND wu.workspace_id = ?
+        LIMIT 1
+        """,
+        (uid, ws_id),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    member = dict(row)
+    member["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() or "OWNER"
+    member["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() or "active"
+    return member
 
 
 def _load_invite(token: str) -> dict[str, Any] | None:
@@ -128,7 +352,7 @@ def validate_invite(token: str, email: str | None = None) -> tuple[bool, str, di
 
 def create_invite(admin_user_id: int, invited_email: str | None = None, expires_days: int = 7) -> tuple[bool, str, dict[str, Any] | None]:
     admin = get_user_by_id(int(admin_user_id))
-    if not admin or admin.get("role") != "admin":
+    if not admin or _effective_global_role(admin) != "SUPER_ADMIN":
         return False, "Somente admin pode gerar convite.", None
 
     token = secrets.token_urlsafe(24)
@@ -161,7 +385,7 @@ def create_invite(admin_user_id: int, invited_email: str | None = None, expires_
 
 def list_recent_invites(admin_user_id: int, limit: int = 20) -> list[dict[str, Any]]:
     admin = get_user_by_id(int(admin_user_id))
-    if not admin or admin.get("role") != "admin":
+    if not admin or _effective_global_role(admin) != "SUPER_ADMIN":
         return []
     conn = get_conn()
     rows = conn.execute(
@@ -203,11 +427,18 @@ def register_user_with_invite(
 
     pwd_hash = _hash_password(password)
     conn.execute(
-        "INSERT INTO users(email, password_hash, display_name, role, is_active) VALUES (?, ?, ?, 'user', TRUE)",
+        """
+        INSERT INTO users(email, password_hash, display_name, role, global_role, is_active)
+        VALUES (?, ?, ?, 'user', 'USER', TRUE)
+        """,
         (email_n, pwd_hash, display),
     )
     created = conn.execute(
-        "SELECT id, email, display_name, role, is_active, created_at FROM users WHERE email = ?",
+        """
+        SELECT id, email, display_name, role, global_role, is_active, created_at
+        FROM users
+        WHERE email = ?
+        """,
         (email_n,),
     ).fetchone()
     conn.execute(
@@ -223,7 +454,11 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
     email_n = _norm_email(email)
     conn = get_conn()
     row = conn.execute(
-        "SELECT id, email, display_name, role, is_active, created_at, password_hash FROM users WHERE email = ?",
+        """
+        SELECT id, email, display_name, role, global_role, is_active, created_at, password_hash
+        FROM users
+        WHERE email = ?
+        """,
         (email_n,),
     ).fetchone()
     conn.close()
@@ -233,14 +468,18 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
         return None
     if not _verify_password(password, row["password_hash"]):
         return None
-    return {
+    user = {
         "id": row["id"],
         "email": row["email"],
         "display_name": row["display_name"],
         "role": row["role"],
+        "global_role": row["global_role"],
         "is_active": row["is_active"],
         "created_at": row["created_at"],
     }
+    user["global_role"] = _effective_global_role(user)
+    user["role"] = _legacy_role_from_global(user["global_role"])
+    return user
 
 
 def claim_legacy_data_for_user(user_id: int) -> None:

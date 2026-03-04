@@ -19,7 +19,13 @@ import invest_quotes
 import repo
 import reports
 from db import get_conn, init_db
-from tenant import clear_current_user_id
+from tenant import (
+    clear_tenant_context,
+    set_current_global_role,
+    set_current_user_id,
+    set_current_workspace_id,
+    set_current_workspace_role,
+)
 
 from .schemas import (
     AccountCreateRequest,
@@ -34,6 +40,7 @@ from .schemas import (
     CommitmentSettleRequest,
     LoginRequest,
     LoginResponse,
+    WorkspaceSwitchRequest,
     IncomeCreateRequest,
     IndexRatesSyncRequest,
     IndexRatesUpsertRequest,
@@ -452,18 +459,94 @@ def _auth_payload(authorization: str | None = Header(default=None)) -> dict:
     payload = verify_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
-    return payload
+    return dict(payload)
 
 
-def _current_user(payload: dict = Depends(_auth_payload)) -> dict:
-    user = auth.get_user_by_id(int(payload["uid"]))
+def _global_role_from_user(user: dict | None) -> str:
+    if not user:
+        return "USER"
+    raw = str(user.get("global_role", "") or "").strip().upper()
+    if raw in {"SUPER_ADMIN", "USER"}:
+        return raw
+    legacy = str(user.get("role", "") or "").strip().lower()
+    return "SUPER_ADMIN" if legacy == "admin" else "USER"
+
+
+def _is_super_admin(user: dict | None) -> bool:
+    return _global_role_from_user(user) == "SUPER_ADMIN"
+
+
+def _current_user(
+    payload: dict = Depends(_auth_payload),
+    x_workspace_id: int | None = Header(default=None, alias="X-Workspace-Id"),
+) -> dict:
+    uid = int(payload["uid"])
+    user = auth.get_user_by_id(uid)
     if not user or not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="Invalid user")
-    return user
+
+    global_role = _global_role_from_user(user)
+    requested_workspace_id = x_workspace_id
+    if requested_workspace_id is None:
+        wid_claim = payload.get("wid", payload.get("workspace_id"))
+        if wid_claim is not None:
+            try:
+                requested_workspace_id = int(wid_claim)
+            except Exception:
+                raise HTTPException(status_code=401, detail="Invalid workspace claim in token")
+
+    member: dict | None = None
+    workspace_id: int | None = int(requested_workspace_id) if requested_workspace_id else None
+
+    if workspace_id is not None and workspace_id <= 0:
+        raise HTTPException(status_code=400, detail="X-Workspace-Id inválido")
+
+    if workspace_id is None:
+        member = auth.ensure_default_workspace_for_user(uid)
+        if member:
+            workspace_id = int(member["workspace_id"])
+
+    if global_role == "SUPER_ADMIN":
+        if workspace_id is not None:
+            ws = auth.get_workspace_by_id(workspace_id)
+            if not ws:
+                raise HTTPException(status_code=404, detail="Workspace não encontrado")
+            if not member:
+                member = {
+                    "workspace_id": int(ws["workspace_id"]),
+                    "workspace_name": ws.get("workspace_name"),
+                    "workspace_status": str(ws.get("status") or "active").lower(),
+                    "workspace_role": "SUPER_ADMIN",
+                    "owner_user_id": ws.get("owner_user_id"),
+                }
+    else:
+        if workspace_id is None:
+            raise HTTPException(status_code=403, detail="Usuário sem workspace associado")
+        member = auth.get_user_workspace_membership(uid, workspace_id)
+        if not member:
+            raise HTTPException(status_code=403, detail="Usuário não pertence ao workspace informado")
+        if str(member.get("workspace_status") or "").strip().lower() != "active":
+            raise HTTPException(status_code=403, detail="Workspace bloqueado")
+
+    set_current_user_id(uid)
+    set_current_global_role(global_role)
+    if workspace_id is not None:
+        set_current_workspace_id(workspace_id)
+    if member:
+        set_current_workspace_role(str(member.get("workspace_role") or "").strip().upper())
+
+    out = dict(user)
+    out["global_role"] = global_role
+    out["role"] = "admin" if global_role == "SUPER_ADMIN" else "user"
+    out["workspace_id"] = int(workspace_id) if workspace_id is not None else None
+    out["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() if member else None
+    out["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() if member else None
+    out["workspace_name"] = member.get("workspace_name") if member else None
+    return out
 
 
 def _require_admin(user: dict) -> None:
-    if str(user.get("role", "")).strip().lower() != "admin":
+    if not _is_super_admin(user):
         raise HTTPException(status_code=403, detail="Somente admin pode executar esta operação")
 
 
@@ -525,13 +608,87 @@ def login(body: LoginRequest) -> LoginResponse:
     user = auth.authenticate_user(body.email, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
-    token = create_token(int(user["id"]), str(user["email"]))
-    return LoginResponse(token=token, user=user)
+
+    uid = int(user["id"])
+    global_role = _global_role_from_user(user)
+    member = auth.ensure_default_workspace_for_user(uid)
+    workspace_id = int(member["workspace_id"]) if member else None
+
+    if global_role != "SUPER_ADMIN" and workspace_id is None:
+        raise HTTPException(status_code=403, detail="Usuário sem workspace associado")
+
+    workspace_role = None
+    if member:
+        workspace_role = str(member.get("workspace_role") or "").strip().upper() or None
+
+    token = create_token(
+        uid,
+        str(user["email"]),
+        workspace_id=workspace_id,
+        global_role=global_role,
+        workspace_role=workspace_role,
+    )
+
+    out_user = dict(user)
+    out_user["global_role"] = global_role
+    out_user["role"] = "admin" if global_role == "SUPER_ADMIN" else "user"
+    out_user["workspace_id"] = workspace_id
+    out_user["workspace_role"] = workspace_role
+    out_user["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() if member else None
+    out_user["workspace_name"] = member.get("workspace_name") if member else None
+    return LoginResponse(token=token, user=out_user)
 
 
 @app.get("/me")
 def me(user: dict = Depends(_current_user)) -> dict:
     return user
+
+
+@app.get("/workspaces")
+def list_workspaces(user: dict = Depends(_current_user)) -> list[dict]:
+    uid = int(user["id"])
+    rows = auth.list_user_workspaces(uid)
+    return [dict(r) for r in rows]
+
+
+@app.post("/workspaces/switch", response_model=LoginResponse)
+def switch_workspace(body: WorkspaceSwitchRequest, user: dict = Depends(_current_user)) -> LoginResponse:
+    uid = int(user["id"])
+    target_workspace_id = int(body.workspace_id)
+    global_role = _global_role_from_user(user)
+
+    if global_role == "SUPER_ADMIN":
+        ws = auth.get_workspace_by_id(target_workspace_id)
+        if not ws:
+            raise HTTPException(status_code=404, detail="Workspace não encontrado")
+        workspace_role = "SUPER_ADMIN"
+        workspace_status = str(ws.get("status") or "active").strip().lower()
+        workspace_name = ws.get("workspace_name")
+    else:
+        member = auth.get_user_workspace_membership(uid, target_workspace_id)
+        if not member:
+            raise HTTPException(status_code=403, detail="Usuário não pertence ao workspace informado")
+        if str(member.get("workspace_status") or "").strip().lower() != "active":
+            raise HTTPException(status_code=403, detail="Workspace bloqueado")
+        workspace_role = str(member.get("workspace_role") or "").strip().upper() or "GUEST"
+        workspace_status = str(member.get("workspace_status") or "").strip().lower() or "active"
+        workspace_name = member.get("workspace_name")
+
+    token = create_token(
+        uid,
+        str(user["email"]),
+        workspace_id=target_workspace_id,
+        global_role=global_role,
+        workspace_role=workspace_role,
+    )
+    out_user = dict(user)
+    out_user["global_role"] = global_role
+    out_user["role"] = "admin" if global_role == "SUPER_ADMIN" else "user"
+    out_user["workspace_id"] = target_workspace_id
+    out_user["workspace_role"] = workspace_role
+    out_user["workspace_status"] = workspace_status
+    out_user["workspace_name"] = workspace_name
+    return LoginResponse(token=token, user=out_user)
 
 
 @app.get("/accounts")
@@ -1863,4 +2020,4 @@ async def tenant_cleanup_middleware(request, call_next):
         response = await call_next(request)
         return response
     finally:
-        clear_current_user_id()
+        clear_tenant_context()

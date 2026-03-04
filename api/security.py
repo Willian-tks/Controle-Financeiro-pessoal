@@ -19,12 +19,24 @@ def _unb64url(data: str) -> bytes:
     return base64.urlsafe_b64decode((data + pad).encode("ascii"))
 
 
-def create_token(user_id: int, email: str) -> str:
+def create_token(
+    user_id: int,
+    email: str,
+    workspace_id: int | None = None,
+    global_role: str | None = None,
+    workspace_role: str | None = None,
+) -> str:
     payload = {
         "uid": int(user_id),
         "email": email,
         "exp": int(time.time()) + TTL_SECONDS,
     }
+    if workspace_id is not None:
+        payload["wid"] = int(workspace_id)
+    if global_role:
+        payload["g_role"] = str(global_role).strip().upper()
+    if workspace_role:
+        payload["w_role"] = str(workspace_role).strip().upper()
     body = _b64url(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     sig = hmac.new(SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     return f"{body}.{_b64url(sig)}"

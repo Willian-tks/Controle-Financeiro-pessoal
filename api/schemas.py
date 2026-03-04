@@ -11,6 +11,10 @@ class LoginResponse(BaseModel):
     user: dict
 
 
+class WorkspaceSwitchRequest(BaseModel):
+    workspace_id: int
+
+
 class TransactionCreateRequest(BaseModel):
     date: str
     description: str

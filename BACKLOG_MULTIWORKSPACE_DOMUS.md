@@ -61,32 +61,32 @@ Criar estruturas de workspace sem quebrar funcionamento atual.
 
 ### Entregaveis
 
-- [ ] Nova tabela `workspaces`
-- [ ] Nova tabela `workspace_users`
-- [ ] Nova tabela `permissions`
-- [ ] Coluna `workspace_id` em todas as tabelas de dominio
-- [ ] Indices por `workspace_id`
+- [x] Nova tabela `workspaces`
+- [x] Nova tabela `workspace_users`
+- [x] Nova tabela `permissions`
+- [x] Coluna `workspace_id` em todas as tabelas de dominio
+- [x] Indices por `workspace_id`
 
 ### Tarefas tecnicas
 
-- [ ] `db.py`: adicionar `CREATE TABLE`/migracao para:
+- [x] `db.py`: adicionar `CREATE TABLE`/migracao para:
   - `workspaces(id, name, owner_user_id, status, created_at)`
   - `workspace_users(id, workspace_id, user_id, role, created_by, created_at)`
   - `permissions(id, workspace_user_id, module, can_view, can_add, can_edit, can_delete)`
-- [ ] `db.py`: adicionar `workspace_id` em:
+- [x] `db.py`: adicionar `workspace_id` em:
   - `accounts`, `categories`, `transactions`
   - `assets`, `trades`, `income_events`, `prices`, `asset_prices`, `index_rates`
   - `credit_cards`, `credit_card_invoices`, `credit_card_charges`
-- [ ] `db.py`: criar indices:
+- [x] `db.py`: criar indices:
   - `idx_*_workspace` por tabela
   - compostos criticos de unicidade por workspace (ex.: nome conta, nome categoria, simbolo ativo)
-- [ ] `db.py`: manter compatibilidade durante migracao (sem `NOT NULL` imediato em etapa inicial)
+- [x] `db.py`: manter compatibilidade durante migracao (sem `NOT NULL` imediato em etapa inicial)
 
 ### Critérios de aceite
 
-- [ ] Migracao executa sem perda de dados.
-- [ ] Aplicacao sobe com schema novo.
-- [ ] Nenhuma consulta quebra por coluna ausente.
+- [x] Migracao executa sem perda de dados.
+- [x] Aplicacao sobe com schema novo.
+- [x] Nenhuma consulta quebra por coluna ausente.
 
 ---
 
@@ -97,23 +97,23 @@ Popular `workspace_id` para dados legados de forma segura.
 
 ### Entregaveis
 
-- [ ] Workspace pessoal por usuario existente
-- [ ] Vinculo `OWNER` em `workspace_users`
-- [ ] Backfill de `workspace_id` em todas as tabelas de dominio
+- [x] Workspace pessoal por usuario existente
+- [x] Vinculo `OWNER` em `workspace_users`
+- [x] Backfill de `workspace_id` em todas as tabelas de dominio
 
 ### Tarefas tecnicas
 
-- [ ] `db.py`/script dedicado: criar um workspace "Pessoal - <email>" para cada `users.id`.
-- [ ] Script de backfill:
+- [x] `db.py`/script dedicado: criar um workspace "Pessoal - <email>" para cada `users.id`.
+- [x] Script de backfill:
   - `workspace_id` por `user_id` em todas as tabelas de dominio.
-- [ ] Criar `workspace_users` com `role='OWNER'` para cada workspace criado.
-- [ ] Validar orfaos e gerar relatorio de inconsistencias antes de travar `NOT NULL`.
+- [x] Criar `workspace_users` com `role='OWNER'` para cada workspace criado.
+- [x] Validar orfaos e gerar relatorio de inconsistencias antes de travar `NOT NULL`.
 
 ### Critérios de aceite
 
-- [ ] 100% das linhas de dominio com `workspace_id` preenchido.
-- [ ] Cada usuario possui ao menos 1 workspace valido.
-- [ ] Sem dados sem dono logico.
+- [x] 100% das linhas de dominio com `workspace_id` preenchido.
+- [x] Cada usuario possui ao menos 1 workspace valido.
+- [x] Sem dados sem dono logico.
 
 ---
 
@@ -124,25 +124,25 @@ Forcar escopo de acesso por workspace em runtime.
 
 ### Entregaveis
 
-- [ ] Contexto de workspace ativo no request
-- [ ] Middleware de isolamento por workspace
-- [ ] Middleware de bloqueio por status do workspace
+- [x] Contexto de workspace ativo no request
+- [x] Middleware de isolamento por workspace
+- [x] Middleware de bloqueio por status do workspace
 
 ### Tarefas tecnicas
 
-- [ ] Criar `workspace_tenant.py` (ou evoluir `tenant.py`) para carregar:
+- [x] Criar `workspace_tenant.py` (ou evoluir `tenant.py`) para carregar:
   - `current_user_id`
   - `current_workspace_id`
   - `current_workspace_role`
-- [ ] `api/security.py`: incluir `workspace_id` no token.
-- [ ] `api/main.py`: extrair `workspace_id` do token/header e validar associacao em `workspace_users`.
-- [ ] `api/main.py`: negar acesso se `workspaces.status != 'active'` para nao admin.
+- [x] `api/security.py`: incluir `workspace_id` no token.
+- [x] `api/main.py`: extrair `workspace_id` do token/header e validar associacao em `workspace_users`.
+- [x] `api/main.py`: negar acesso se `workspaces.status != 'active'` para nao admin.
 
 ### Critérios de aceite
 
-- [ ] Usuario fora do workspace recebe `403`.
-- [ ] Workspace bloqueado impede acesso de OWNER/GUEST.
-- [ ] SUPER_ADMIN mantem acesso administrativo.
+- [x] Usuario fora do workspace recebe `403`.
+- [x] Workspace bloqueado impede acesso de OWNER/GUEST.
+- [x] SUPER_ADMIN mantem acesso administrativo.
 
 ---
 
@@ -153,13 +153,13 @@ Separar papel global de papel do workspace.
 
 ### Entregaveis
 
-- [ ] `users.global_role` consolidado
-- [ ] `workspace_users.role` ativo (`OWNER`/`GUEST`)
+- [x] `users.global_role` consolidado
+- [x] `workspace_users.role` ativo (`OWNER`/`GUEST`)
 
 ### Tarefas tecnicas
 
-- [ ] Migrar `users.role` para `users.global_role` com compatibilidade.
-- [ ] Ajustar `auth.py` para leitura/escrita de `global_role`.
+- [x] Migrar `users.role` para `users.global_role` com compatibilidade.
+- [x] Ajustar `auth.py` para leitura/escrita de `global_role`.
 - [ ] Ajustar endpoints administrativos em `api/main.py`:
   - criar OWNER (com workspace)
   - criar GUEST (em workspace existente)
@@ -167,8 +167,8 @@ Separar papel global de papel do workspace.
 
 ### Critérios de aceite
 
-- [ ] Nao existe ambiguidade entre role global e role local.
-- [ ] OWNER/GUEST funcionam apenas dentro do workspace.
+- [x] Nao existe ambiguidade entre role global e role local.
+- [x] OWNER/GUEST funcionam apenas dentro do workspace.
 
 ---
 
@@ -308,7 +308,7 @@ Entrar em producao com seguranca.
 
 ## 7. Backlog de execucao imediata (proxima sprint)
 
-- [ ] Sprint 1: Fase A + Fase B (schema/backfill)
+- [x] Sprint 1: Fase A + Fase B (schema/backfill)
 - [ ] Sprint 2: Fase C + Fase D (auth/contexto/papeis)
 - [ ] Sprint 3: Fase E + Fase F (repos/permissoes)
 - [ ] Sprint 4: Fase G + Fase H (ui/testes/rollout)
