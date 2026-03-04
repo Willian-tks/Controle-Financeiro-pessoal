@@ -1,18 +1,67 @@
-from db import get_conn
-from tenant import get_current_user_id
+﻿from db import get_conn
+from tenant import get_current_user_id, get_current_workspace_id
 from datetime import date, datetime
 import calendar
 import re
+from contextvars import ContextVar
+
+
+_USE_WORKSPACE_SCOPE: ContextVar[bool] = ContextVar("repo_use_workspace_scope", default=False)
 
 
 def _uid(user_id: int | None = None) -> int:
-    return int(user_id) if user_id is not None else int(get_current_user_id())
+    wid = get_current_workspace_id(required=False)
+    if wid is not None:
+        _USE_WORKSPACE_SCOPE.set(True)
+        return int(wid)
+
+    uid = int(user_id) if user_id is not None else int(get_current_user_id())
+    conn = get_conn()
+    try:
+        row = _exec(conn, 
+            """
+            SELECT wu.workspace_id
+            FROM workspace_users wu
+            JOIN workspaces w ON w.id = wu.workspace_id
+            WHERE wu.user_id = ?
+            ORDER BY
+                CASE WHEN LOWER(COALESCE(w.status, 'active')) = 'active' THEN 0 ELSE 1 END,
+                CASE WHEN UPPER(COALESCE(wu.role, '')) = 'OWNER' THEN 0 ELSE 1 END,
+                wu.workspace_id
+            LIMIT 1
+            """,
+            (uid,),
+            rewrite_scope=False,
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+
+    if not row:
+        _USE_WORKSPACE_SCOPE.set(False)
+        return uid
+    _USE_WORKSPACE_SCOPE.set(True)
+    try:
+        return int(row["workspace_id"])
+    except Exception:
+        return int(row[0])
+
+
+def _scope_sql(query: str) -> str:
+    return re.sub(r"(?<![A-Za-z0-9_])user_id(?![A-Za-z0-9_])", "workspace_id", str(query))
+
+
+def _exec(conn, query: str, params: tuple | list | None = None, rewrite_scope: bool | None = None):
+    use_workspace = _USE_WORKSPACE_SCOPE.get() if rewrite_scope is None else bool(rewrite_scope)
+    q = _scope_sql(query) if use_workspace else str(query)
+    return conn.execute(q, tuple(params or ()))
 
 
 def list_accounts(user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    rows = conn.execute(
+    rows = _exec(conn, 
         """
         SELECT
             id,
@@ -43,12 +92,12 @@ def create_account(
         return
     curr = (currency or "BRL").strip().upper()
     conn = get_conn()
-    exists = conn.execute(
+    exists = _exec(conn, 
         "SELECT id FROM accounts WHERE user_id = ? AND name = ?",
         (uid, nm),
     ).fetchone()
     if not exists:
-        conn.execute(
+        _exec(conn, 
             "INSERT INTO accounts(name, type, currency, show_on_dashboard, user_id) VALUES (?, ?, ?, ?, ?)",
             (nm, acc_type, curr, 1 if bool(show_on_dashboard) else 0, uid),
         )
@@ -60,12 +109,12 @@ def list_categories(kind: str | None = None, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
     if kind:
-        rows = conn.execute(
+        rows = _exec(conn, 
             "SELECT id, name, kind FROM categories WHERE user_id = ? AND kind = ? ORDER BY name",
             (uid, kind),
         ).fetchall()
     else:
-        rows = conn.execute(
+        rows = _exec(conn, 
             "SELECT id, name, kind FROM categories WHERE user_id = ? ORDER BY kind, name",
             (uid,),
         ).fetchall()
@@ -79,12 +128,12 @@ def create_category(name: str, kind: str, user_id: int | None = None):
     if not nm:
         return
     conn = get_conn()
-    exists = conn.execute(
+    exists = _exec(conn, 
         "SELECT id FROM categories WHERE user_id = ? AND name = ?",
         (uid, nm),
     ).fetchone()
     if not exists:
-        conn.execute(
+        _exec(conn, 
             "INSERT INTO categories(name, kind, user_id) VALUES (?, ?, ?)",
             (nm, kind, uid),
         )
@@ -105,7 +154,7 @@ def insert_transaction(
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    conn.execute(
+    _exec(conn, 
         """
         INSERT INTO transactions(date, description, amount_brl, account_id, category_id, recurrence_id, method, notes, user_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -129,7 +178,7 @@ def insert_transaction(
 def delete_transaction(tx_id: int, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    conn.execute(
+    _exec(conn, 
         "DELETE FROM transactions WHERE id = ? AND user_id = ?",
         (int(tx_id), uid),
     )
@@ -144,7 +193,7 @@ def delete_transaction_with_scope(tx_id: int, scope: str = "single", user_id: in
         mode = "single"
 
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT id, date, description, amount_brl, category_id, account_id, recurrence_id, method, notes
         FROM transactions
@@ -159,7 +208,7 @@ def delete_transaction_with_scope(tx_id: int, scope: str = "single", user_id: in
     method = str(row["method"] or "").strip().upper()
     is_commitment = method in {"FUTURO", "AGENDADO"}
     if mode != "future" or not is_commitment:
-        cur = conn.execute("DELETE FROM transactions WHERE id = ? AND user_id = ?", (int(tx_id), uid))
+        cur = _exec(conn, "DELETE FROM transactions WHERE id = ? AND user_id = ?", (int(tx_id), uid))
         conn.commit()
         deleted = cur.rowcount if cur.rowcount is not None else 0
         conn.close()
@@ -167,7 +216,7 @@ def delete_transaction_with_scope(tx_id: int, scope: str = "single", user_id: in
 
     recurrence_id = str(row["recurrence_id"] or "").strip()
     if recurrence_id:
-        cur = conn.execute(
+        cur = _exec(conn, 
             """
             DELETE FROM transactions
             WHERE user_id = ?
@@ -182,7 +231,7 @@ def delete_transaction_with_scope(tx_id: int, scope: str = "single", user_id: in
         return int(deleted)
 
     # Fallback para séries antigas sem recurrence_id: remove "este e próximos" por assinatura.
-    cur = conn.execute(
+    cur = _exec(conn, 
         """
         DELETE FROM transactions
         WHERE user_id = ?
@@ -228,7 +277,7 @@ def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", u
         mode = "single"
 
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT id, card_id, invoice_period, amount, purchase_date, paid, note, category_id, description
         FROM credit_card_charges
@@ -251,7 +300,7 @@ def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", u
     if mode == "future":
         group_id = _extract_future_credit_group(row["note"])
         if group_id:
-            rows = conn.execute(
+            rows = _exec(conn, 
                 """
                 SELECT id, card_id, invoice_period, amount
                 FROM credit_card_charges
@@ -269,7 +318,7 @@ def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", u
         else:
             base_desc = _base_installment_description(row["description"])
             if base_desc:
-                rows = conn.execute(
+                rows = _exec(conn, 
                     """
                     SELECT id, card_id, invoice_period, amount
                     FROM credit_card_charges
@@ -303,13 +352,13 @@ def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", u
         amounts_by_invoice[key] = abs(float(row["amount"] or 0.0))
 
     marks = ",".join(["?"] * len(ids_to_delete))
-    conn.execute(
+    _exec(conn, 
         f"DELETE FROM credit_card_charges WHERE user_id = ? AND id IN ({marks})",
         [uid, *ids_to_delete],
     )
 
     for (card_id, invoice_period), removed_amount in amounts_by_invoice.items():
-        inv = conn.execute(
+        inv = _exec(conn, 
             """
             SELECT id, total_amount, paid_amount
             FROM credit_card_invoices
@@ -325,9 +374,9 @@ def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", u
         paid = float(inv["paid_amount"] or 0.0)
         status = "OPEN" if total > paid else "PAID"
         if total <= 0 and paid <= 0:
-            conn.execute("DELETE FROM credit_card_invoices WHERE id = ? AND user_id = ?", (int(inv["id"]), uid))
+            _exec(conn, "DELETE FROM credit_card_invoices WHERE id = ? AND user_id = ?", (int(inv["id"]), uid))
         else:
-            conn.execute(
+            _exec(conn, 
                 "UPDATE credit_card_invoices SET total_amount = ?, status = ? WHERE id = ? AND user_id = ?",
                 (total, status, int(inv["id"]), uid),
             )
@@ -341,7 +390,7 @@ def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", u
 def get_transaction_by_id(tx_id: int, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT id, date, description, amount_brl, account_id, category_id, method, notes
         FROM transactions
@@ -363,7 +412,7 @@ def settle_commitment_transaction(
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT id, method, notes
         FROM transactions
@@ -389,7 +438,7 @@ def settle_commitment_transaction(
     extra_notes = str(notes or "").strip()
     final_notes = extra_notes if extra_notes else base_notes
 
-    conn.execute(
+    _exec(conn, 
         """
         UPDATE transactions
         SET date = ?, account_id = ?, amount_brl = ?, method = ?, notes = ?
@@ -444,7 +493,7 @@ def fetch_transactions(
         params.append(int(category_id))
 
     q += " ORDER BY t.date DESC, t.id DESC"
-    rows = conn.execute(q, params).fetchall()
+    rows = _exec(conn, q, params).fetchall()
     conn.close()
     return rows
 
@@ -452,7 +501,7 @@ def fetch_transactions(
 def get_category_by_name(name: str, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         "SELECT id, name, kind FROM categories WHERE user_id = ? AND name = ?",
         (uid, name),
     ).fetchone()
@@ -466,12 +515,12 @@ def ensure_category(name: str, kind: str = "Transferencia", user_id: int | None 
     if row:
         return row["id"]
     conn = get_conn()
-    conn.execute(
+    _exec(conn, 
         "INSERT INTO categories(name, kind, user_id) VALUES (?, ?, ?)",
         (name, kind, uid),
     )
     conn.commit()
-    row = conn.execute(
+    row = _exec(conn, 
         "SELECT id FROM categories WHERE user_id = ? AND name = ?",
         (uid, name),
     ).fetchone()
@@ -491,7 +540,7 @@ def create_transaction(
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    conn.execute(
+    _exec(conn, 
         """
         INSERT INTO transactions(date, description, amount_brl, category_id, account_id, method, notes, user_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -505,7 +554,7 @@ def create_transaction(
 def delete_transactions_by_description_prefix(prefix: str, user_id: int | None = None) -> int:
     uid = _uid(user_id)
     conn = get_conn()
-    cur = conn.execute(
+    cur = _exec(conn, 
         "DELETE FROM transactions WHERE user_id = ? AND description LIKE ?",
         (uid, f"{prefix}%"),
     )
@@ -518,7 +567,7 @@ def delete_transactions_by_description_prefix(prefix: str, user_id: int | None =
 def delete_transactions_by_description_exact(desc: str, user_id: int | None = None) -> int:
     uid = _uid(user_id)
     conn = get_conn()
-    cur = conn.execute(
+    cur = _exec(conn, 
         "DELETE FROM transactions WHERE user_id = ? AND description = ?",
         (uid, desc),
     )
@@ -538,7 +587,7 @@ def update_account(
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    conn.execute(
+    _exec(conn, 
         "UPDATE accounts SET name = ?, type = ?, currency = ?, show_on_dashboard = ? WHERE id = ? AND user_id = ?",
         (
             name.strip(),
@@ -556,7 +605,7 @@ def update_account(
 def account_usage_count(account_id: int, user_id: int | None = None) -> int:
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         "SELECT COUNT(*) AS n FROM transactions WHERE account_id = ? AND user_id = ?",
         (int(account_id), uid),
     ).fetchone()
@@ -571,7 +620,7 @@ def delete_account(account_id: int, user_id: int | None = None) -> int:
         return 0
 
     conn = get_conn()
-    cur = conn.execute(
+    cur = _exec(conn, 
         "DELETE FROM accounts WHERE id = ? AND user_id = ?",
         (int(account_id), uid),
     )
@@ -583,7 +632,7 @@ def delete_account(account_id: int, user_id: int | None = None) -> int:
 def update_category(category_id: int, name: str, kind: str, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    conn.execute(
+    _exec(conn, 
         "UPDATE categories SET name = ?, kind = ? WHERE id = ? AND user_id = ?",
         (name.strip(), kind, int(category_id), uid),
     )
@@ -594,7 +643,7 @@ def update_category(category_id: int, name: str, kind: str, user_id: int | None 
 def category_usage_count(category_id: int, user_id: int | None = None) -> int:
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         "SELECT COUNT(*) AS n FROM transactions WHERE category_id = ? AND user_id = ?",
         (int(category_id), uid),
     ).fetchone()
@@ -609,7 +658,7 @@ def delete_category(category_id: int, user_id: int | None = None) -> int:
         return 0
 
     conn = get_conn()
-    cur = conn.execute(
+    cur = _exec(conn, 
         "DELETE FROM categories WHERE id = ? AND user_id = ?",
         (int(category_id), uid),
     )
@@ -621,7 +670,7 @@ def delete_category(category_id: int, user_id: int | None = None) -> int:
 def clear_transactions(user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    cur = conn.execute("DELETE FROM transactions WHERE user_id = ?", (uid,))
+    cur = _exec(conn, "DELETE FROM transactions WHERE user_id = ?", (uid,))
     conn.commit()
     conn.close()
     return cur.rowcount
@@ -631,7 +680,7 @@ def account_balance_value(account_id: int, user_id: int | None = None) -> float:
     uid = _uid(user_id)
     conn = get_conn()
     today = datetime.now().strftime("%Y-%m-%d")
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT COALESCE(SUM(amount_brl), 0) AS bal
         FROM transactions
@@ -650,7 +699,7 @@ def account_balance_value(account_id: int, user_id: int | None = None) -> float:
 def list_credit_cards(user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    rows = conn.execute(
+    rows = _exec(conn, 
         """
         SELECT
             cc.id, cc.name, cc.card_account_id, ca.name AS linked_account, ca.type AS linked_account_type,
@@ -681,7 +730,7 @@ def create_credit_card(
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    conn.execute(
+    _exec(conn, 
         """
         INSERT INTO credit_cards(name, brand, model, card_type, card_account_id, source_account_id, due_day, close_day, user_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -716,7 +765,7 @@ def update_credit_card(
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    conn.execute(
+    _exec(conn, 
         """
         UPDATE credit_cards
         SET name = ?, brand = ?, model = ?, card_type = ?, card_account_id = ?, source_account_id = ?, due_day = ?, close_day = ?
@@ -742,7 +791,7 @@ def update_credit_card(
 def delete_credit_card(card_id: int, user_id: int | None = None) -> int:
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT COUNT(*) AS n
         FROM credit_card_charges
@@ -753,7 +802,7 @@ def delete_credit_card(card_id: int, user_id: int | None = None) -> int:
     if row and int(row["n"]) > 0:
         conn.close()
         return 0
-    cur = conn.execute("DELETE FROM credit_cards WHERE id = ? AND user_id = ?", (int(card_id), uid))
+    cur = _exec(conn, "DELETE FROM credit_cards WHERE id = ? AND user_id = ?", (int(card_id), uid))
     conn.commit()
     conn.close()
     return int(cur.rowcount or 0)
@@ -762,7 +811,7 @@ def delete_credit_card(card_id: int, user_id: int | None = None) -> int:
 def get_credit_card_by_account_and_type(card_account_id: int, card_type: str, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day, close_day
         FROM credit_cards
@@ -777,7 +826,7 @@ def get_credit_card_by_account_and_type(card_account_id: int, card_type: str, us
 def get_credit_card_by_id_and_type(card_id: int, card_type: str, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day, close_day
         FROM credit_cards
@@ -827,7 +876,7 @@ def register_credit_charge(
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    card = conn.execute(
+    card = _exec(conn, 
         "SELECT id, due_day, close_day FROM credit_cards WHERE id = ? AND user_id = ?",
         (int(card_id), uid),
     ).fetchone()
@@ -841,7 +890,7 @@ def register_credit_charge(
         int(card["close_day"]) if card["close_day"] is not None else None,
     )
     value = abs(float(amount))
-    conn.execute(
+    _exec(conn, 
         """
         INSERT INTO credit_card_charges(
             card_id, purchase_date, amount, category_id, description, invoice_period, due_date, paid, note, user_id
@@ -861,7 +910,7 @@ def register_credit_charge(
         ),
     )
 
-    existing = conn.execute(
+    existing = _exec(conn, 
         """
         SELECT id, total_amount, paid_amount, status
         FROM credit_card_invoices
@@ -871,7 +920,7 @@ def register_credit_charge(
     ).fetchone()
     if existing:
         new_total = float(existing["total_amount"] or 0.0) + value
-        conn.execute(
+        _exec(conn, 
             """
             UPDATE credit_card_invoices
             SET total_amount = ?, due_date = ?,
@@ -881,7 +930,7 @@ def register_credit_charge(
             (new_total, due_date, new_total, int(existing["id"]), uid),
         )
     else:
-        conn.execute(
+        _exec(conn, 
             """
             INSERT INTO credit_card_invoices(card_id, invoice_period, due_date, total_amount, paid_amount, status, user_id)
             VALUES (?, ?, ?, ?, 0, 'OPEN', ?)
@@ -929,7 +978,7 @@ def fetch_credit_charges_competencia(
         q += " AND ch.purchase_date <= ?"
         params.append(date_to)
     q += " ORDER BY ch.purchase_date ASC, ch.id ASC"
-    rows = conn.execute(q, params).fetchall()
+    rows = _exec(conn, q, params).fetchall()
     conn.close()
     return rows
 
@@ -972,7 +1021,7 @@ def fetch_credit_charges_future(
         q += " AND ch.purchase_date <= ?"
         params.append(date_to)
     q += " ORDER BY ch.purchase_date ASC, ch.id ASC"
-    rows = conn.execute(q, params).fetchall()
+    rows = _exec(conn, q, params).fetchall()
     conn.close()
     return rows
 
@@ -1004,7 +1053,7 @@ def list_credit_card_invoices(user_id: int | None = None, status: str | None = N
         q += " AND i.card_id = ?"
         params.append(int(card_id))
     q += " ORDER BY i.due_date DESC, i.id DESC"
-    rows = conn.execute(q, params).fetchall()
+    rows = _exec(conn, q, params).fetchall()
     conn.close()
     return rows
 
@@ -1017,7 +1066,7 @@ def pay_credit_card_invoice(
 ) -> dict:
     uid = _uid(user_id)
     conn = get_conn()
-    inv = conn.execute(
+    inv = _exec(conn, 
         """
         SELECT i.id, i.card_id, i.invoice_period, i.due_date, i.total_amount, i.paid_amount, i.status,
                cc.name AS card_name, cc.card_account_id, cc.source_account_id,
@@ -1042,7 +1091,7 @@ def pay_credit_card_invoice(
     pay_account_id = int(inv["source_account_id"])
     pay_account_name = str(inv["source_account_name"])
     if source_account_id is not None:
-        row_acc = conn.execute(
+        row_acc = _exec(conn, 
             "SELECT id, name, type FROM accounts WHERE id = ? AND user_id = ?",
             (int(source_account_id), uid),
         ).fetchone()
@@ -1059,7 +1108,7 @@ def pay_credit_card_invoice(
     linked_name = str(inv["linked_account_name"])
     period = str(inv["invoice_period"])
 
-    grouped = conn.execute(
+    grouped = _exec(conn, 
         """
         SELECT
             ch.category_id,
@@ -1100,7 +1149,7 @@ def pay_credit_card_invoice(
 
     for cat_id, cat_name, amount_value in rows_to_post:
         desc = base_desc if len(rows_to_post) == 1 else f"{base_desc} - {cat_name}"
-        conn.execute(
+        _exec(conn, 
             """
             INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1116,14 +1165,15 @@ def pay_credit_card_invoice(
                 uid,
             ),
         )
-    conn.execute(
+    _exec(conn, 
         "UPDATE credit_card_invoices SET paid_amount = total_amount, status = 'PAID' WHERE id = ? AND user_id = ?",
         (int(invoice_id), uid),
     )
-    conn.execute(
+    _exec(conn, 
         "UPDATE credit_card_charges SET paid = 1 WHERE user_id = ? AND card_id = ? AND invoice_period = ?",
         (uid, int(inv["card_id"]), str(inv["invoice_period"])),
     )
     conn.commit()
     conn.close()
     return {"ok": True, "paid_amount": abs(remaining)}
+

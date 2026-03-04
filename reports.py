@@ -1,12 +1,61 @@
-import pandas as pd
+﻿import pandas as pd
+import re
+from contextvars import ContextVar
 
 from db import get_conn
 import repo
-from tenant import get_current_user_id
+from tenant import get_current_user_id, get_current_workspace_id
+
+_USE_WORKSPACE_SCOPE: ContextVar[bool] = ContextVar('reports_use_workspace_scope', default=False)
 
 
 def _uid(user_id: int | None = None) -> int:
-    return int(user_id) if user_id is not None else int(get_current_user_id())
+    wid = get_current_workspace_id(required=False)
+    if wid is not None:
+        _USE_WORKSPACE_SCOPE.set(True)
+        return int(wid)
+
+    uid = int(user_id) if user_id is not None else int(get_current_user_id())
+    conn = get_conn()
+    try:
+        row = _exec(conn, 
+            """
+            SELECT wu.workspace_id
+            FROM workspace_users wu
+            JOIN workspaces w ON w.id = wu.workspace_id
+            WHERE wu.user_id = ?
+            ORDER BY
+                CASE WHEN LOWER(COALESCE(w.status, 'active')) = 'active' THEN 0 ELSE 1 END,
+                CASE WHEN UPPER(COALESCE(wu.role, '')) = 'OWNER' THEN 0 ELSE 1 END,
+                wu.workspace_id
+            LIMIT 1
+            """,
+            (uid,),
+            rewrite_scope=False,
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+
+    if not row:
+        _USE_WORKSPACE_SCOPE.set(False)
+        return uid
+    _USE_WORKSPACE_SCOPE.set(True)
+    try:
+        return int(row["workspace_id"])
+    except Exception:
+        return int(row[0])
+
+
+def _scope_sql(query: str) -> str:
+    return re.sub(r"(?<![A-Za-z0-9_])user_id(?![A-Za-z0-9_])", "workspace_id", str(query))
+
+
+def _exec(conn, query: str, params: tuple | list | None = None, rewrite_scope: bool | None = None):
+    use_workspace = _USE_WORKSPACE_SCOPE.get() if rewrite_scope is None else bool(rewrite_scope)
+    q = _scope_sql(query) if use_workspace else str(query)
+    return conn.execute(q, tuple(params or ()))
 
 
 def _future_method_mask(df: pd.DataFrame) -> pd.Series:
@@ -67,7 +116,7 @@ def _df_transactions_cash(date_from: str | None = None, date_to: str | None = No
         params.append(date_to)
 
     q += " ORDER BY t.date ASC, t.id ASC"
-    rows = conn.execute(q, params).fetchall()
+    rows = _exec(conn, q, params).fetchall()
     conn.close()
 
     df = pd.DataFrame([dict(r) for r in rows])
@@ -205,7 +254,7 @@ def cash_balance_timeseries(date_from=None, date_to=None, user_id: int | None = 
 def account_balance_by_id(account_id: int, user_id: int | None = None) -> float:
     uid = _uid(user_id)
     conn = get_conn()
-    row = conn.execute(
+    row = _exec(conn, 
         """
         SELECT COALESCE(SUM(amount_brl), 0) AS bal
         FROM transactions
@@ -248,7 +297,7 @@ def commitments_summary(
         params.append(account)
     q += " ORDER BY t.date ASC, t.id ASC"
 
-    rows = conn.execute(q, params).fetchall()
+    rows = _exec(conn, q, params).fetchall()
     conn.close()
 
     if not rows:
@@ -274,3 +323,5 @@ def commitments_summary(
         a_vencer += float(cdf["amount_brl"].abs().sum())
 
     return {"a_vencer": a_vencer, "vencidos": vencidos}
+
+

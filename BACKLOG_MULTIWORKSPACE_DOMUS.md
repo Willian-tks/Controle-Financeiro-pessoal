@@ -179,21 +179,21 @@ Migrar regra de escopo de dados para `workspace_id`.
 
 ### Entregaveis
 
-- [ ] Repositorio transacional (`repo.py`) filtrando por `workspace_id`
-- [ ] Repositorio de investimentos (`invest_repo.py`) filtrando por `workspace_id`
-- [ ] Relatorios (`reports.py`) filtrando por `workspace_id`
+- [x] Repositorio transacional (`repo.py`) filtrando por `workspace_id`
+- [x] Repositorio de investimentos (`invest_repo.py`) filtrando por `workspace_id`
+- [x] Relatorios (`reports.py`) filtrando por `workspace_id`
 
 ### Tarefas tecnicas
 
-- [ ] Substituir `_uid(...)` por helper de escopo (ex.: `_scope_workspace_id(...)`).
-- [ ] Atualizar todas as queries para `WHERE workspace_id = ?`.
-- [ ] Atualizar joins garantindo mesma particao (`t.workspace_id = a.workspace_id`, etc).
-- [ ] Revisar constraints unicas para chave por workspace.
+- [x] Substituir `_uid(...)` por helper de escopo (ex.: `_scope_workspace_id(...)`).
+- [x] Atualizar todas as queries para `WHERE workspace_id = ?`.
+- [x] Atualizar joins garantindo mesma particao (`t.workspace_id = a.workspace_id`, etc).
+- [x] Revisar constraints unicas para chave por workspace.
 
 ### Critérios de aceite
 
-- [ ] Nao ha query de dominio sem filtro por workspace.
-- [ ] Teste de isolamento nao encontra vazamento cross-workspace.
+- [x] Nao ha query de dominio sem filtro por workspace.
+- [x] Teste de isolamento nao encontra vazamento cross-workspace.
 
 ---
 
@@ -204,22 +204,22 @@ Aplicar controle de acao por modulo para `GUEST`.
 
 ### Entregaveis
 
-- [ ] Middleware/servico `check_permission(module, action)`
-- [ ] Seeds de permissao default por novo GUEST
-- [ ] Protecao de rotas por modulo/acao
+- [x] Middleware/servico `check_permission(module, action)`
+- [x] Seeds de permissao default por novo GUEST
+- [x] Protecao de rotas por modulo/acao
 
 ### Tarefas tecnicas
 
-- [ ] Criar servico de permissao (ex.: `permissions_service.py`).
-- [ ] Mapear rotas FastAPI para modulo/acao.
-- [ ] Bloquear acesso de `GUEST` ao modulo `usuarios`.
-- [ ] Criar endpoints para OWNER editar permissoes de GUEST.
+- [x] Criar servico de permissao (ex.: `permissions_service.py`).
+- [x] Mapear rotas FastAPI para modulo/acao.
+- [x] Bloquear acesso de `GUEST` ao modulo `usuarios`.
+- [x] Criar endpoints para OWNER editar permissoes de GUEST.
 
 ### Critérios de aceite
 
-- [ ] GUEST sem permissao recebe `403`.
-- [ ] OWNER sempre tem acesso total no workspace.
-- [ ] SUPER_ADMIN ignora regras internas.
+- [x] GUEST sem permissao recebe `403`.
+- [x] OWNER sempre tem acesso total no workspace.
+- [x] SUPER_ADMIN ignora regras internas.
 
 ---
 
@@ -262,11 +262,11 @@ Entrar em producao com seguranca.
 ### Tarefas tecnicas
 
 - [ ] Criar testes automatizados:
-  - isolamento A vs B
-  - GUEST sem edit/delete
+  - [x] isolamento A vs B
+  - [x] GUEST sem edit/delete
   - bloqueio de workspace no login e nas rotas
-  - OWNER full dentro do workspace
-  - SUPER_ADMIN com bypass
+  - [x] OWNER full dentro do workspace
+  - [x] SUPER_ADMIN com bypass
 - [ ] Auditar queries com `EXPLAIN` em pontos criticos.
 - [ ] Monitorar erros `403/401` e tentativas cross-workspace.
 - [ ] Definir cutover:
@@ -310,5 +310,5 @@ Entrar em producao com seguranca.
 
 - [x] Sprint 1: Fase A + Fase B (schema/backfill)
 - [ ] Sprint 2: Fase C + Fase D (auth/contexto/papeis)
-- [ ] Sprint 3: Fase E + Fase F (repos/permissoes)
+- [x] Sprint 3: Fase E + Fase F (repos/permissoes)
 - [ ] Sprint 4: Fase G + Fase H (ui/testes/rollout)

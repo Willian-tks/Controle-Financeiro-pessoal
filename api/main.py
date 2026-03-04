@@ -6,7 +6,7 @@ from typing import Any
 from datetime import date as _date
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import auth
@@ -18,6 +18,7 @@ import invest_reports
 import invest_quotes
 import repo
 import reports
+import permissions_service
 from db import get_conn, init_db
 from tenant import (
     clear_tenant_context,
@@ -40,6 +41,9 @@ from .schemas import (
     CommitmentSettleRequest,
     LoginRequest,
     LoginResponse,
+    WorkspaceMemberCreateRequest,
+    WorkspacePermissionItemRequest,
+    WorkspacePermissionsUpdateRequest,
     WorkspaceSwitchRequest,
     IncomeCreateRequest,
     IndexRatesSyncRequest,
@@ -476,7 +480,44 @@ def _is_super_admin(user: dict | None) -> bool:
     return _global_role_from_user(user) == "SUPER_ADMIN"
 
 
+def _permission_from_request(method: str, path: str) -> tuple[str, str] | None:
+    p = str(path or "").strip().lower().strip("/")
+    if not p:
+        return None
+
+    if p in {"workspaces", "workspaces/switch"}:
+        return None
+
+    if p.startswith("dashboard"):
+        module = "dashboard"
+    elif p.startswith("transactions") or p.startswith("credit-commitments"):
+        module = "lancamentos"
+    elif p.startswith("invest"):
+        module = "investimentos"
+    elif p.startswith("accounts") or p.startswith("categories") or p.startswith("cards") or p.startswith("card-invoices"):
+        module = "contas"
+    elif p.startswith("workspaces/members"):
+        module = "usuarios"
+    else:
+        return None
+
+    m = str(method or "GET").strip().upper()
+    if m == "GET":
+        action = "view"
+    elif m == "POST":
+        action = "add"
+    elif m in {"PUT", "PATCH"}:
+        action = "edit"
+    elif m == "DELETE":
+        action = "delete"
+    else:
+        action = "view"
+
+    return module, action
+
+
 def _current_user(
+    request: Request,
     payload: dict = Depends(_auth_payload),
     x_workspace_id: int | None = Header(default=None, alias="X-Workspace-Id"),
 ) -> dict:
@@ -542,12 +583,37 @@ def _current_user(
     out["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() if member else None
     out["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() if member else None
     out["workspace_name"] = member.get("workspace_name") if member else None
+
+    perm = _permission_from_request(request.method, request.url.path)
+    if perm:
+        module, action = perm
+        if not permissions_service.can_access(out, module=module, action=action):
+            raise HTTPException(status_code=403, detail=f"Sem permissão para {action} em {module}")
+
     return out
 
 
 def _require_admin(user: dict) -> None:
     if not _is_super_admin(user):
         raise HTTPException(status_code=403, detail="Somente admin pode executar esta operação")
+
+
+def _current_workspace_id_from_user(user: dict) -> int:
+    workspace_id = user.get("workspace_id")
+    if workspace_id is None:
+        raise HTTPException(status_code=400, detail="Workspace não definido no contexto atual.")
+    wid = int(workspace_id)
+    if wid <= 0:
+        raise HTTPException(status_code=400, detail="Workspace inválido.")
+    return wid
+
+
+def _require_workspace_owner(user: dict) -> None:
+    if _is_super_admin(user):
+        return
+    role = str(user.get("workspace_role") or "").strip().upper()
+    if role != "OWNER":
+        raise HTTPException(status_code=403, detail="Somente OWNER pode gerenciar usuários do workspace.")
 
 
 @app.get("/health")
@@ -689,6 +755,166 @@ def switch_workspace(body: WorkspaceSwitchRequest, user: dict = Depends(_current
     out_user["workspace_status"] = workspace_status
     out_user["workspace_name"] = workspace_name
     return LoginResponse(token=token, user=out_user)
+
+
+@app.get("/workspaces/members")
+def list_workspace_members(user: dict = Depends(_current_user)) -> list[dict]:
+    _require_workspace_owner(user)
+    workspace_id = _current_workspace_id_from_user(user)
+    members = auth.list_workspace_members(workspace_id)
+    out: list[dict] = []
+    for m in members:
+        item = dict(m)
+        role = str(item.get("workspace_role") or "").strip().upper()
+        if role == "GUEST":
+            item["permissions"] = permissions_service.list_permissions_by_workspace_user(int(item["workspace_user_id"]))
+        else:
+            item["permissions"] = []
+        out.append(item)
+    return out
+
+
+@app.post("/workspaces/members")
+def create_workspace_member(
+    body: WorkspaceMemberCreateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_workspace_owner(user)
+    workspace_id = _current_workspace_id_from_user(user)
+    email = (body.email or "").strip().lower()
+    role = str(body.role or "GUEST").strip().upper() or "GUEST"
+    if role != "GUEST":
+        raise HTTPException(status_code=400, detail="Neste fluxo, apenas role GUEST é permitido.")
+    if not email:
+        raise HTTPException(status_code=400, detail="E-mail é obrigatório.")
+
+    target = auth.get_user_by_email(email)
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado para este e-mail.")
+    if not bool(target.get("is_active", True)):
+        raise HTTPException(status_code=400, detail="Usuário inativo não pode ser adicionado.")
+
+    target_user_id = int(target["id"])
+    if target_user_id == int(user["id"]):
+        raise HTTPException(status_code=400, detail="Usuário já pertence ao workspace atual como OWNER.")
+
+    existing = auth.get_user_workspace_membership(target_user_id, workspace_id)
+    if existing:
+        existing_role = str(existing.get("workspace_role") or "").strip().upper()
+        if existing_role == "OWNER":
+            raise HTTPException(status_code=400, detail="Usuário já é OWNER deste workspace.")
+        ws_user_id = int(existing.get("workspace_user_id") or 0)
+        if ws_user_id > 0:
+            permissions_service.seed_default_guest_permissions(ws_user_id)
+            perms = permissions_service.list_permissions_by_workspace_user(ws_user_id)
+        else:
+            perms = []
+        return {
+            "ok": True,
+            "created": False,
+            "member": {
+                **dict(existing),
+                "email": target.get("email"),
+                "display_name": target.get("display_name"),
+                "is_active": target.get("is_active"),
+                "permissions": perms,
+            },
+        }
+
+    created = auth.upsert_workspace_member(
+        workspace_id=workspace_id,
+        user_id=target_user_id,
+        role="GUEST",
+        created_by=int(user["id"]),
+    )
+    if not created:
+        raise HTTPException(status_code=500, detail="Falha ao incluir membro no workspace.")
+
+    ws_user_id = int(created.get("workspace_user_id") or 0)
+    if ws_user_id <= 0:
+        raise HTTPException(status_code=500, detail="Falha ao resolver vínculo do membro no workspace.")
+
+    permissions_service.seed_default_guest_permissions(ws_user_id)
+    perms = permissions_service.list_permissions_by_workspace_user(ws_user_id)
+    member = auth.get_user_workspace_membership(target_user_id, workspace_id) or {}
+
+    return {
+        "ok": True,
+        "created": True,
+        "member": {
+            **dict(member),
+            "email": target.get("email"),
+            "display_name": target.get("display_name"),
+            "is_active": target.get("is_active"),
+            "permissions": perms,
+        },
+    }
+
+
+@app.put("/workspaces/members/{member_user_id}/permissions")
+def update_workspace_member_permissions(
+    member_user_id: int,
+    body: WorkspacePermissionsUpdateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_workspace_owner(user)
+    workspace_id = _current_workspace_id_from_user(user)
+
+    member = auth.get_user_workspace_membership(int(member_user_id), workspace_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Membro não encontrado no workspace atual.")
+
+    role = str(member.get("workspace_role") or "").strip().upper()
+    if role != "GUEST":
+        raise HTTPException(status_code=400, detail="Permissões granulares só podem ser editadas para GUEST.")
+
+    ws_user_id = int(member.get("workspace_user_id") or 0)
+    if ws_user_id <= 0:
+        raise HTTPException(status_code=500, detail="Vínculo do membro inválido.")
+
+    payload = [
+        {
+            "module": str(item.module),
+            "can_view": bool(item.can_view),
+            "can_add": bool(item.can_add),
+            "can_edit": bool(item.can_edit),
+            "can_delete": bool(item.can_delete),
+        }
+        for item in (body.permissions or [])
+    ]
+    try:
+        updated = permissions_service.replace_permissions(ws_user_id, payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "workspace_user_id": ws_user_id, "permissions": updated}
+
+
+@app.delete("/workspaces/members/{member_user_id}")
+def delete_workspace_member(
+    member_user_id: int,
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_workspace_owner(user)
+    workspace_id = _current_workspace_id_from_user(user)
+    target_user_id = int(member_user_id)
+    if target_user_id == int(user["id"]):
+        raise HTTPException(status_code=400, detail="Não é permitido remover o próprio usuário deste workspace.")
+
+    member = auth.get_user_workspace_membership(target_user_id, workspace_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Membro não encontrado no workspace atual.")
+
+    role = str(member.get("workspace_role") or "").strip().upper()
+    if role == "OWNER":
+        raise HTTPException(status_code=400, detail="Não é permitido remover OWNER por este endpoint.")
+
+    ws_user_id = int(member.get("workspace_user_id") or 0)
+    if ws_user_id > 0:
+        permissions_service.delete_permissions_for_workspace_user(ws_user_id)
+    deleted = auth.delete_workspace_member(workspace_id, target_user_id)
+    if deleted <= 0:
+        raise HTTPException(status_code=404, detail="Membro não encontrado no workspace atual.")
+    return {"ok": True}
 
 
 @app.get("/accounts")
@@ -1170,7 +1396,12 @@ def create_card(
         )
     except Exception as e:
         msg = str(e)
-        if "UNIQUE constraint failed" in msg and "credit_cards.user_id" in msg and "credit_cards.name" in msg and "credit_cards.card_type" in msg:
+        if (
+            "UNIQUE constraint failed" in msg
+            and ("credit_cards.user_id" in msg or "credit_cards.workspace_id" in msg)
+            and "credit_cards.name" in msg
+            and "credit_cards.card_type" in msg
+        ):
             raise HTTPException(status_code=400, detail="Já existe um cartão com este nome, tipo e conta banco.")
         raise HTTPException(status_code=400, detail=f"Erro ao cadastrar cartão: {e}")
     return {"ok": True}
@@ -1220,7 +1451,12 @@ def update_card(
         )
     except Exception as e:
         msg = str(e)
-        if "UNIQUE constraint failed" in msg and "credit_cards.user_id" in msg and "credit_cards.name" in msg and "credit_cards.card_type" in msg:
+        if (
+            "UNIQUE constraint failed" in msg
+            and ("credit_cards.user_id" in msg or "credit_cards.workspace_id" in msg)
+            and "credit_cards.name" in msg
+            and "credit_cards.card_type" in msg
+        ):
             raise HTTPException(status_code=400, detail="Já existe um cartão com este nome, tipo e conta banco.")
         raise HTTPException(status_code=400, detail=f"Erro ao atualizar cartão: {e}")
     return {"ok": True}
@@ -1443,13 +1679,14 @@ def invest_list_index_rates(
     limit: int = Query(default=1000, ge=1, le=10000),
     user: dict = Depends(_current_user),
 ) -> list[dict]:
-    _ = user
+    uid = int(user["id"])
     try:
         rows = invest_index_rates.list_index_rates(
             index_name=index_name,
             date_from=date_from,
             date_to=date_to,
             limit=limit,
+            user_id=uid,
         )
         return rows
     except ValueError as e:
@@ -1937,24 +2174,8 @@ def invest_list_prices(
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
-    conn = get_conn()
-    try:
-        q = """
-            SELECT p.id, p.asset_id, p.date, p.price, p.source, a.symbol, a.asset_class
-            FROM prices p
-            JOIN assets a ON a.id = p.asset_id AND a.user_id = p.user_id
-            WHERE p.user_id = ?
-        """
-        params: list[Any] = [uid]
-        if asset_id is not None:
-            q += " AND p.asset_id = ?"
-            params.append(int(asset_id))
-        q += " ORDER BY p.date DESC, p.id DESC LIMIT ?"
-        params.append(int(limit))
-        rows = conn.execute(q, params).fetchall()
-        return [_row_to_dict(r) for r in rows]
-    finally:
-        conn.close()
+    rows = invest_repo.list_prices(asset_id=asset_id, limit=int(limit), user_id=uid) or []
+    return [_row_to_dict(r) for r in rows]
 
 
 @app.post("/invest/prices")

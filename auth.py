@@ -138,6 +138,28 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     return user
 
 
+def get_user_by_email(email: str) -> dict[str, Any] | None:
+    email_n = _norm_email(email)
+    if not email_n:
+        return None
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id, email, display_name, role, global_role, is_active, created_at
+        FROM users
+        WHERE email = ?
+        """,
+        (email_n,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    user = dict(row)
+    user["global_role"] = _effective_global_role(user)
+    user["role"] = _legacy_role_from_global(user["global_role"])
+    return user
+
+
 def get_workspace_by_id(workspace_id: int) -> dict[str, Any] | None:
     conn = get_conn()
     row = conn.execute(
@@ -157,6 +179,7 @@ def get_user_workspace_membership(user_id: int, workspace_id: int) -> dict[str, 
     row = conn.execute(
         """
         SELECT
+            wu.id AS workspace_user_id,
             wu.workspace_id,
             wu.user_id,
             wu.role AS workspace_role,
@@ -218,6 +241,7 @@ def ensure_default_workspace_for_user(user_id: int) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT
+            wu.id AS workspace_user_id,
             wu.workspace_id,
             wu.user_id,
             wu.role AS workspace_role,
@@ -298,6 +322,7 @@ def ensure_default_workspace_for_user(user_id: int) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT
+            wu.id AS workspace_user_id,
             wu.workspace_id,
             wu.user_id,
             wu.role AS workspace_role,
@@ -318,6 +343,98 @@ def ensure_default_workspace_for_user(user_id: int) -> dict[str, Any] | None:
     member["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() or "OWNER"
     member["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() or "active"
     return member
+
+
+def list_workspace_members(workspace_id: int) -> list[dict[str, Any]]:
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT
+            wu.id AS workspace_user_id,
+            wu.workspace_id,
+            wu.user_id,
+            wu.role AS workspace_role,
+            wu.created_by,
+            wu.created_at,
+            u.email,
+            u.display_name,
+            u.is_active
+        FROM workspace_users wu
+        JOIN users u ON u.id = wu.user_id
+        WHERE wu.workspace_id = ?
+        ORDER BY
+            CASE WHEN UPPER(COALESCE(wu.role, '')) = 'OWNER' THEN 0 ELSE 1 END,
+            LOWER(COALESCE(u.email, '')),
+            wu.user_id
+        """,
+        (int(workspace_id),),
+    ).fetchall()
+    conn.close()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        d["workspace_role"] = str(d.get("workspace_role") or "").strip().upper() or "GUEST"
+        out.append(d)
+    return out
+
+
+def upsert_workspace_member(
+    workspace_id: int,
+    user_id: int,
+    role: str = "GUEST",
+    created_by: int | None = None,
+) -> dict[str, Any] | None:
+    ws_id = int(workspace_id)
+    uid = int(user_id)
+    role_n = str(role or "").strip().upper() or "GUEST"
+    if role_n not in {"OWNER", "GUEST"}:
+        raise ValueError("Role de workspace inválida.")
+
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO workspace_users(workspace_id, user_id, role, created_by)
+        VALUES (?, ?, ?, ?)
+        """,
+        (ws_id, uid, role_n, int(created_by) if created_by is not None else None),
+    )
+    conn.execute(
+        """
+        UPDATE workspace_users
+        SET role = ?
+        WHERE workspace_id = ? AND user_id = ?
+        """,
+        (role_n, ws_id, uid),
+    )
+    conn.commit()
+    row = conn.execute(
+        """
+        SELECT
+            wu.id AS workspace_user_id,
+            wu.workspace_id,
+            wu.user_id,
+            wu.role AS workspace_role,
+            wu.created_by,
+            wu.created_at
+        FROM workspace_users wu
+        WHERE wu.workspace_id = ? AND wu.user_id = ?
+        LIMIT 1
+        """,
+        (ws_id, uid),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_workspace_member(workspace_id: int, user_id: int) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        "DELETE FROM workspace_users WHERE workspace_id = ? AND user_id = ?",
+        (int(workspace_id), int(user_id)),
+    )
+    conn.commit()
+    conn.close()
+    return int(cur.rowcount or 0)
 
 
 def _load_invite(token: str) -> dict[str, Any] | None:

@@ -1,13 +1,15 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from datetime import date as _date
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP, getcontext
+import re
+from contextvars import ContextVar
 from typing import Any
 
 from db import get_conn
-from tenant import get_current_user_id
+from tenant import get_current_user_id, get_current_workspace_id
 
 getcontext().prec = 40
 
@@ -16,10 +18,56 @@ _INTERMEDIATE_Q = Decimal("0.000001")
 _CURRENT_Q = Decimal("0.000001")
 _BUSINESS_DAYS_YEAR = Decimal("252")
 _FIXED_INCOME_CLASSES = {"renda_fixa", "tesouro_direto", "coe", "fundos"}
+_USE_WORKSPACE_SCOPE: ContextVar[bool] = ContextVar("invest_rentability_use_workspace_scope", default=False)
 
 
 def _uid(user_id: int | None = None) -> int:
-    return int(user_id) if user_id is not None else int(get_current_user_id())
+    wid = get_current_workspace_id(required=False)
+    if wid is not None:
+        _USE_WORKSPACE_SCOPE.set(True)
+        return int(wid)
+
+    uid = int(user_id) if user_id is not None else int(get_current_user_id())
+    conn = get_conn()
+    try:
+        row = _exec(conn, 
+            """
+            SELECT wu.workspace_id
+            FROM workspace_users wu
+            JOIN workspaces w ON w.id = wu.workspace_id
+            WHERE wu.user_id = ?
+            ORDER BY
+                CASE WHEN LOWER(COALESCE(w.status, 'active')) = 'active' THEN 0 ELSE 1 END,
+                CASE WHEN UPPER(COALESCE(wu.role, '')) = 'OWNER' THEN 0 ELSE 1 END,
+                wu.workspace_id
+            LIMIT 1
+            """,
+            (uid,),
+            rewrite_scope=False,
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+
+    if not row:
+        _USE_WORKSPACE_SCOPE.set(False)
+        return uid
+    _USE_WORKSPACE_SCOPE.set(True)
+    try:
+        return int(row["workspace_id"])
+    except Exception:
+        return int(row[0])
+
+
+def _scope_sql(query: str) -> str:
+    return re.sub(r"(?<![A-Za-z0-9_])user_id(?![A-Za-z0-9_])", "workspace_id", str(query))
+
+
+def _exec(conn, query: str, params: tuple | list | None = None, rewrite_scope: bool | None = None):
+    use_workspace = _USE_WORKSPACE_SCOPE.get() if rewrite_scope is None else bool(rewrite_scope)
+    q = _scope_sql(query) if use_workspace else str(query)
+    return conn.execute(q, tuple(params or ()))
 
 
 def _norm_text(value: str | None) -> str:
@@ -120,7 +168,7 @@ def _factor_from_rate(rate_decimal: Decimal) -> Decimal:
 
 
 def _resolve_base_date(conn, asset_row: dict[str, Any]) -> _date:
-    trade_row = conn.execute(
+    trade_row = _exec(conn, 
         """
         SELECT MIN(date) AS min_buy_date
         FROM trades
@@ -128,7 +176,10 @@ def _resolve_base_date(conn, asset_row: dict[str, Any]) -> _date:
           AND COALESCE(user_id, 0) = COALESCE(?, 0)
           AND UPPER(COALESCE(side, '')) = 'BUY'
         """,
-        (int(asset_row["id"]), asset_row.get("user_id")),
+        (
+            int(asset_row["id"]),
+            asset_row.get("workspace_id", asset_row.get("user_id")),
+        ),
     ).fetchone()
     buy_date = _optional_date((trade_row["min_buy_date"] if trade_row else None))
     if buy_date:
@@ -138,7 +189,7 @@ def _resolve_base_date(conn, asset_row: dict[str, Any]) -> _date:
 
 
 def _load_daily_index_map(conn, index_name: str, date_from: _date, date_to: _date) -> dict[_date, Decimal]:
-    rows = conn.execute(
+    rows = _exec(conn, 
         """
         SELECT ref_date, value
         FROM index_rates
@@ -160,7 +211,7 @@ def _load_daily_index_map(conn, index_name: str, date_from: _date, date_to: _dat
 
 def _load_monthly_ipca_map(conn, date_from: _date, date_to: _date) -> dict[str, Decimal]:
     fetch_from = _date(int(date_from.year), int(date_from.month), 1)
-    rows = conn.execute(
+    rows = _exec(conn, 
         """
         SELECT ref_date, value
         FROM index_rates
@@ -341,7 +392,7 @@ def update_investment_value(asset_id: int, as_of_date: str | None = None, user_i
     as_of = _parse_date(as_of_date, "as_of_date") if as_of_date else _date.today()
 
     with get_conn() as conn:
-        row = conn.execute(
+        row = _exec(conn, 
             """
             SELECT
                 id, user_id, created_at, asset_class, rentability_type, index_name,
@@ -369,7 +420,7 @@ def update_investment_value(asset_id: int, as_of_date: str | None = None, user_i
                 out["last_update"] = sim.get("last_update")
             return out
 
-        conn.execute(
+        _exec(conn, 
             """
             UPDATE assets
             SET current_value = ?, last_update = ?
@@ -399,7 +450,7 @@ def update_fixed_income_assets(
     as_of = _parse_date(as_of_date, "as_of_date") if as_of_date else _date.today()
 
     with get_conn() as conn:
-        rows = conn.execute(
+        rows = _exec(conn, 
             """
             SELECT
                 id, user_id, created_at, asset_class, rentability_type, principal_amount
@@ -430,7 +481,7 @@ def update_fixed_income_assets(
                 if principal is None:
                     continue
                 base_date = _resolve_base_date(conn, asset)
-                conn.execute(
+                _exec(conn, 
                     """
                     UPDATE assets
                     SET current_value = ?, last_update = ?
@@ -480,7 +531,7 @@ def preview_divergence_report(
     max_rows = max(1, int(limit or 200))
 
     with get_conn() as conn:
-        rows = conn.execute(
+        rows = _exec(conn, 
             """
             SELECT
                 id, symbol, name, user_id, created_at, asset_class, rentability_type, index_name,
@@ -556,3 +607,4 @@ def preview_divergence_report(
             "total_rows": len(trimmed),
             "rows": trimmed,
         }
+

@@ -15,6 +15,23 @@ class WorkspaceSwitchRequest(BaseModel):
     workspace_id: int
 
 
+class WorkspaceMemberCreateRequest(BaseModel):
+    email: str
+    role: str = "GUEST"
+
+
+class WorkspacePermissionItemRequest(BaseModel):
+    module: str
+    can_view: bool = False
+    can_add: bool = False
+    can_edit: bool = False
+    can_delete: bool = False
+
+
+class WorkspacePermissionsUpdateRequest(BaseModel):
+    permissions: list[WorkspacePermissionItemRequest]
+
+
 class TransactionCreateRequest(BaseModel):
     date: str
     description: str

@@ -1,18 +1,61 @@
 import pandas as pd
+import re
+from contextvars import ContextVar
 
 from db import get_conn
-from tenant import get_current_user_id
+from tenant import get_current_user_id, get_current_workspace_id
 
 _FIXED_INCOME_CLASSES = {"renda_fixa", "tesouro_direto", "coe", "fundos"}
+_USE_WORKSPACE_SCOPE: ContextVar[bool] = ContextVar("invest_reports_use_workspace_scope", default=False)
 
 
 def _uid(user_id: int | None = None) -> int:
-    return int(user_id) if user_id is not None else int(get_current_user_id())
+    wid = get_current_workspace_id(required=False)
+    if wid is not None:
+        _USE_WORKSPACE_SCOPE.set(True)
+        return int(wid)
+
+    uid = int(user_id) if user_id is not None else int(get_current_user_id())
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT wu.workspace_id
+            FROM workspace_users wu
+            JOIN workspaces w ON w.id = wu.workspace_id
+            WHERE wu.user_id = ?
+            ORDER BY
+                CASE WHEN LOWER(COALESCE(w.status, 'active')) = 'active' THEN 0 ELSE 1 END,
+                CASE WHEN UPPER(COALESCE(wu.role, '')) = 'OWNER' THEN 0 ELSE 1 END,
+                wu.workspace_id
+            LIMIT 1
+            """,
+            (uid,),
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+
+    if not row:
+        _USE_WORKSPACE_SCOPE.set(False)
+        return uid
+    _USE_WORKSPACE_SCOPE.set(True)
+    try:
+        return int(row["workspace_id"])
+    except Exception:
+        return int(row[0])
+
+
+def _scope_sql(query: str) -> str:
+    return re.sub(r"(?<![A-Za-z0-9_])user_id(?![A-Za-z0-9_])", "workspace_id", str(query))
 
 
 def _query_df(query: str, params: list | tuple | None = None) -> pd.DataFrame:
     conn = get_conn()
-    rows = conn.execute(query, params or ()).fetchall()
+    use_workspace = _USE_WORKSPACE_SCOPE.get()
+    q = _scope_sql(query) if use_workspace else str(query)
+    rows = conn.execute(q, params or ()).fetchall()
     conn.close()
     return pd.DataFrame([dict(r) for r in rows])
 

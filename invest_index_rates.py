@@ -1,15 +1,67 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date as _date
 from datetime import datetime
+from contextvars import ContextVar
 from typing import Any
 
 import requests
 
 from db import get_conn
+from tenant import get_current_user_id, get_current_workspace_id
 
 SUPPORTED_INDEX_NAMES = ("CDI", "SELIC", "IPCA")
+_USE_WORKSPACE_SCOPE: ContextVar[bool] = ContextVar("invest_index_rates_use_workspace_scope", default=False)
+
+
+def _wid(user_id: int | None = None) -> int:
+    wid = get_current_workspace_id(required=False)
+    if wid is not None:
+        _USE_WORKSPACE_SCOPE.set(True)
+        return int(wid)
+
+    uid = int(user_id) if user_id is not None else int(get_current_user_id())
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT wu.workspace_id
+            FROM workspace_users wu
+            JOIN workspaces w ON w.id = wu.workspace_id
+            WHERE wu.user_id = ?
+            ORDER BY
+                CASE WHEN LOWER(COALESCE(w.status, 'active')) = 'active' THEN 0 ELSE 1 END,
+                CASE WHEN UPPER(COALESCE(wu.role, '')) = 'OWNER' THEN 0 ELSE 1 END,
+                wu.workspace_id
+            LIMIT 1
+            """,
+            (uid,),
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+
+    if not row:
+        _USE_WORKSPACE_SCOPE.set(False)
+        return uid
+    _USE_WORKSPACE_SCOPE.set(True)
+    try:
+        return int(row["workspace_id"])
+    except Exception:
+        return int(row[0])
+
+
+def _scope_sql(query: str) -> str:
+    return re.sub(r"(?<![A-Za-z0-9_])user_id(?![A-Za-z0-9_])", "workspace_id", str(query))
+
+
+def _exec(conn, query: str, params: tuple | list | None = None, rewrite_scope: bool | None = None):
+    use_workspace = _USE_WORKSPACE_SCOPE.get() if rewrite_scope is None else bool(rewrite_scope)
+    q = _scope_sql(query) if use_workspace else str(query)
+    return conn.execute(q, tuple(params or ()))
 
 
 def norm_index_name(value: str | None) -> str:
@@ -136,6 +188,7 @@ def list_index_rates(
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = 2000,
+    user_id: int | None = None,
 ) -> list[dict[str, Any]]:
     idx = norm_index_name(index_name) if index_name else None
     if idx and idx not in SUPPORTED_INDEX_NAMES:
@@ -144,13 +197,14 @@ def list_index_rates(
     d_from = _parse_iso_date(date_from) if date_from else None
     d_to = _parse_iso_date(date_to) if date_to else None
     lim = max(1, min(int(limit or 2000), 10000))
+    wid = _wid(user_id)
 
     sql = """
         SELECT id, index_name, ref_date, value, source, created_at, updated_at, user_id
         FROM index_rates
-        WHERE 1=1
+        WHERE user_id = ?
     """
-    params: list[Any] = []
+    params: list[Any] = [wid]
     if idx:
         sql += " AND index_name = ?"
         params.append(idx)
@@ -164,7 +218,7 @@ def list_index_rates(
     params.append(lim)
 
     with get_conn() as conn:
-        rows = conn.execute(sql, params).fetchall()
+        rows = _exec(conn, sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -186,25 +240,25 @@ def bulk_upsert_index_rates(
         normalized.append((ref_date, value, src))
 
     normalized.sort(key=lambda item: item[0])
-    uid = int(user_id) if user_id is not None else None
+    wid = _wid(user_id)
     inserted = 0
     updated = 0
     unchanged = 0
 
     with get_conn() as conn:
         for ref_date, value, src in normalized:
-            existing = conn.execute(
-                "SELECT value, source FROM index_rates WHERE index_name = ? AND ref_date = ?",
-                (idx, ref_date),
+            existing = _exec(conn, 
+                "SELECT value, source FROM index_rates WHERE user_id = ? AND index_name = ? AND ref_date = ?",
+                (wid, idx, ref_date),
             ).fetchone()
 
             if existing is None:
-                conn.execute(
+                _exec(conn, 
                     """
                     INSERT INTO index_rates(index_name, ref_date, value, source, user_id)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (idx, ref_date, value, src, uid),
+                    (idx, ref_date, value, src, wid),
                 )
                 inserted += 1
                 continue
@@ -215,13 +269,13 @@ def bulk_upsert_index_rates(
                 unchanged += 1
                 continue
 
-            conn.execute(
+            _exec(conn, 
                 """
                 UPDATE index_rates
                 SET value = ?, source = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE index_name = ? AND ref_date = ?
+                WHERE user_id = ? AND index_name = ? AND ref_date = ?
                 """,
-                (value, src, idx, ref_date),
+                (value, src, wid, idx, ref_date),
             )
             updated += 1
 
