@@ -18,6 +18,8 @@ class WorkspaceSwitchRequest(BaseModel):
 class WorkspaceMemberCreateRequest(BaseModel):
     email: str
     role: str = "GUEST"
+    password: str | None = None
+    display_name: str | None = None
 
 
 class WorkspacePermissionItemRequest(BaseModel):
@@ -35,6 +37,8 @@ class WorkspacePermissionsUpdateRequest(BaseModel):
 class WorkspaceAdminCreateRequest(BaseModel):
     workspace_name: str
     owner_email: str
+    owner_password: str | None = None
+    owner_display_name: str | None = None
 
 
 class WorkspaceStatusUpdateRequest(BaseModel):

@@ -137,6 +137,34 @@ class MultiWorkspacePermissionsTests(unittest.TestCase):
         self.assertEqual(1, len(guest_rows))
         self.assertEqual("GUEST", str(guest_rows[0]["workspace_role"]).upper())
 
+    def test_owner_can_create_guest_user_when_email_not_exists(self):
+        headers = self._headers(1, "owner@example.com", 101, workspace_role="OWNER")
+        resp = self.client.post(
+            "/workspaces/members",
+            json={
+                "email": "novo.convidado@example.com",
+                "role": "GUEST",
+                "password": "abc12345",
+                "display_name": "Convidado Novo",
+            },
+            headers=headers,
+        )
+        self.assertEqual(200, resp.status_code, resp.text)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["created"])
+        member = data.get("member") or {}
+        self.assertEqual("novo.convidado@example.com", str(member.get("email") or "").lower())
+        self.assertEqual("GUEST", str(member.get("workspace_role") or "").upper())
+
+        with db_module.get_conn() as conn:
+            row = conn.execute(
+                "SELECT id, global_role FROM users WHERE email = ?",
+                ("novo.convidado@example.com",),
+            ).fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual("USER", str(row["global_role"]))
+
     def test_guest_cannot_access_users_module(self):
         with db_module.get_conn() as conn:
             conn.execute(
@@ -273,6 +301,44 @@ class MultiWorkspacePermissionsTests(unittest.TestCase):
         owner_headers = self._headers(1, "owner@example.com", 101, workspace_role="OWNER", global_role="USER")
         forbidden_resp = self.client.get("/admin/workspaces", headers=owner_headers)
         self.assertEqual(403, forbidden_resp.status_code)
+
+    def test_super_admin_can_create_workspace_with_new_owner_user(self):
+        super_headers = self._headers(
+            9,
+            "admin@example.com",
+            101,
+            workspace_role="SUPER_ADMIN",
+            global_role="SUPER_ADMIN",
+        )
+        resp = self.client.post(
+            "/admin/workspaces",
+            json={
+                "workspace_name": "WS Novo Owner",
+                "owner_email": "owner.novo@example.com",
+                "owner_display_name": "Owner Novo",
+                "owner_password": "abc12345",
+            },
+            headers=super_headers,
+        )
+        self.assertEqual(200, resp.status_code, resp.text)
+        ws = resp.json().get("workspace") or {}
+        ws_id = int(ws.get("workspace_id") or 0)
+        self.assertGreater(ws_id, 0)
+        self.assertEqual("owner.novo@example.com", str(ws.get("owner_email") or "").lower())
+
+        with db_module.get_conn() as conn:
+            user_row = conn.execute(
+                "SELECT id, global_role FROM users WHERE email = ?",
+                ("owner.novo@example.com",),
+            ).fetchone()
+            self.assertIsNotNone(user_row)
+            self.assertEqual("USER", str(user_row["global_role"]))
+            wu = conn.execute(
+                "SELECT role FROM workspace_users WHERE workspace_id = ? AND user_id = ?",
+                (ws_id, int(user_row["id"])),
+            ).fetchone()
+            self.assertIsNotNone(wu)
+            self.assertEqual("OWNER", str(wu["role"]).upper())
 
     def test_login_blocked_workspace_is_denied_for_non_admin(self):
         with db_module.get_conn() as conn:

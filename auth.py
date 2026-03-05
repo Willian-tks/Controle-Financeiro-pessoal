@@ -160,6 +160,45 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
     return user
 
 
+def create_user(
+    *,
+    email: str,
+    password: str,
+    display_name: str | None = None,
+    global_role: str = "USER",
+) -> dict[str, Any]:
+    email_n = _norm_email(email)
+    if "@" not in email_n or "." not in email_n:
+        raise ValueError("Informe um e-mail válido.")
+    if len(password or "") < 6:
+        raise ValueError("A senha deve ter pelo menos 6 caracteres.")
+
+    role_n = str(global_role or "").strip().upper() or "USER"
+    if role_n not in {"USER", "SUPER_ADMIN"}:
+        raise ValueError("Global role inválido.")
+
+    existing = get_user_by_email(email_n)
+    if existing:
+        raise ValueError("Este e-mail já está cadastrado.")
+
+    display = (display_name or "").strip() or None
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO users(email, password_hash, display_name, role, global_role, is_active)
+        VALUES (?, ?, ?, ?, ?, TRUE)
+        """,
+        (email_n, _hash_password(password), display, _legacy_role_from_global(role_n), role_n),
+    )
+    conn.commit()
+    conn.close()
+
+    created = get_user_by_email(email_n)
+    if not created:
+        raise ValueError("Falha ao criar usuário.")
+    return created
+
+
 def get_workspace_by_id(workspace_id: int) -> dict[str, Any] | None:
     conn = get_conn()
     row = conn.execute(

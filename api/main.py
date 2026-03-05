@@ -905,7 +905,22 @@ def create_workspace_member(
 
     target = auth.get_user_by_email(email)
     if not target:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado para este e-mail.")
+        raw_password = str(body.password or "")
+        display_name = (body.display_name or "").strip() or None
+        if len(raw_password) < 6:
+            raise HTTPException(
+                status_code=400,
+                detail="Usuário não encontrado. Informe senha inicial (mín. 6) para criar o convidado.",
+            )
+        try:
+            target = auth.create_user(
+                email=email,
+                password=raw_password,
+                display_name=display_name,
+                global_role="USER",
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if not bool(target.get("is_active", True)):
         raise HTTPException(status_code=400, detail="Usuário inativo não pode ser adicionado.")
 
@@ -1047,6 +1062,8 @@ def admin_create_workspace(
     _require_admin(user)
     owner_email = str(body.owner_email or "").strip().lower()
     workspace_name = str(body.workspace_name or "").strip()
+    owner_password = str(body.owner_password or "")
+    owner_display_name = (body.owner_display_name or "").strip() or None
     if not owner_email:
         raise HTTPException(status_code=400, detail="E-mail do owner é obrigatório.")
     if not workspace_name:
@@ -1054,7 +1071,20 @@ def admin_create_workspace(
 
     owner = auth.get_user_by_email(owner_email)
     if not owner:
-        raise HTTPException(status_code=404, detail="Usuário owner não encontrado.")
+        if len(owner_password) < 6:
+            raise HTTPException(
+                status_code=400,
+                detail="Owner não encontrado. Informe senha inicial (mín. 6) para criar o usuário owner.",
+            )
+        try:
+            owner = auth.create_user(
+                email=owner_email,
+                password=owner_password,
+                display_name=owner_display_name,
+                global_role="USER",
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if not bool(owner.get("is_active", True)):
         raise HTTPException(status_code=400, detail="Usuário owner está inativo.")
     try:

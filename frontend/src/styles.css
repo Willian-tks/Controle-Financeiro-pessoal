@@ -445,7 +445,7 @@ body {
 .workspace-invite-form,
 .workspace-create-form {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) 180px;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.8fr) minmax(220px, 1fr) 200px;
   gap: 10px;
 }
 
@@ -459,7 +459,13 @@ body {
 }
 
 .workspace-create-form {
-  grid-template-columns: repeat(3, minmax(200px, 1fr));
+  grid-template-columns: repeat(5, minmax(170px, 1fr));
+}
+
+.workspace-helper-text {
+  margin: 10px 0 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .workspace-invite-form button,
@@ -614,6 +620,10 @@ body {
 }
 
 .main-dashboard .workspace-msg {
+  color: #9fb3e1;
+}
+
+.main-dashboard .workspace-helper-text {
   color: #9fb3e1;
 }
 
