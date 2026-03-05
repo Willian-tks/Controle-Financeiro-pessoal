@@ -410,8 +410,6 @@ def set_user_global_role(user_id: int, global_role: str) -> dict[str, Any] | Non
 def ensure_default_workspace_for_user(user_id: int) -> dict[str, Any] | None:
     uid = int(user_id)
     conn = get_conn()
-    user_row = conn.execute("SELECT email FROM users WHERE id = ?", (uid,)).fetchone()
-    user_email = str(user_row["email"]) if user_row and user_row["email"] else None
 
     row = conn.execute(
         """
@@ -440,84 +438,8 @@ def ensure_default_workspace_for_user(user_id: int) -> dict[str, Any] | None:
         member["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() or "GUEST"
         member["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() or "active"
         return member
-
-    ws = conn.execute(
-        """
-        SELECT id, name, status, owner_user_id
-        FROM workspaces
-        WHERE owner_user_id = ?
-        ORDER BY id
-        LIMIT 1
-        """,
-        (uid,),
-    ).fetchone()
-    ws_id = int(ws["id"]) if ws else 0
-
-    if ws_id <= 0:
-        conn.execute(
-            """
-            INSERT INTO workspaces(name, owner_user_id, status)
-            VALUES (?, ?, 'active')
-            """,
-            (_workspace_default_name(user_email, uid), uid),
-        )
-        ws = conn.execute(
-            """
-            SELECT id, name, status, owner_user_id
-            FROM workspaces
-            WHERE owner_user_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (uid,),
-        ).fetchone()
-        ws_id = int(ws["id"]) if ws else 0
-
-    if ws_id <= 0:
-        conn.close()
-        return None
-
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO workspace_users(workspace_id, user_id, role, created_by)
-        VALUES (?, ?, 'OWNER', ?)
-        """,
-        (ws_id, uid, uid),
-    )
-    conn.execute(
-        """
-        UPDATE workspace_users
-        SET role = 'OWNER'
-        WHERE workspace_id = ? AND user_id = ?
-        """,
-        (ws_id, uid),
-    )
-    conn.commit()
-
-    row = conn.execute(
-        """
-        SELECT
-            wu.id AS workspace_user_id,
-            wu.workspace_id,
-            wu.user_id,
-            wu.role AS workspace_role,
-            w.name AS workspace_name,
-            w.status AS workspace_status,
-            w.owner_user_id
-        FROM workspace_users wu
-        JOIN workspaces w ON w.id = wu.workspace_id
-        WHERE wu.user_id = ? AND wu.workspace_id = ?
-        LIMIT 1
-        """,
-        (uid, ws_id),
-    ).fetchone()
     conn.close()
-    if not row:
-        return None
-    member = dict(row)
-    member["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() or "OWNER"
-    member["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() or "active"
-    return member
+    return None
 
 
 def list_workspace_members(workspace_id: int) -> list[dict[str, Any]]:
