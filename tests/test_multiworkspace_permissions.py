@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import auth as auth_module
 import db as db_module
 from api.main import app
 from api.security import create_token
@@ -35,6 +36,7 @@ class MultiWorkspacePermissionsTests(unittest.TestCase):
         cls._tmpdir.cleanup()
 
     def setUp(self):
+        pwd = auth_module._hash_password("secret123")
         with db_module.get_conn() as conn:
             tables = [
                 "permissions",
@@ -58,16 +60,19 @@ class MultiWorkspacePermissionsTests(unittest.TestCase):
             for t in tables:
                 conn.execute(f"DELETE FROM {t}")
 
-            conn.execute(
-                """
-                INSERT INTO users(id, email, password_hash, display_name, role, global_role, is_active)
-                VALUES
-                    (1, 'owner@example.com', 'x', 'Owner', 'user', 'USER', 1),
-                    (2, 'guest@example.com', 'x', 'Guest', 'user', 'USER', 1),
-                    (3, 'other@example.com', 'x', 'Other', 'user', 'USER', 1),
-                    (9, 'admin@example.com', 'x', 'Admin', 'admin', 'SUPER_ADMIN', 1)
-                """
-            )
+            for row in [
+                (1, "owner@example.com", pwd, "Owner", "user", "USER", 1),
+                (2, "guest@example.com", pwd, "Guest", "user", "USER", 1),
+                (3, "other@example.com", pwd, "Other", "user", "USER", 1),
+                (9, "admin@example.com", pwd, "Admin", "admin", "SUPER_ADMIN", 1),
+            ]:
+                conn.execute(
+                    """
+                    INSERT INTO users(id, email, password_hash, display_name, role, global_role, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    row,
+                )
             conn.execute(
                 """
                 INSERT INTO workspaces(id, name, owner_user_id, status)
@@ -268,6 +273,37 @@ class MultiWorkspacePermissionsTests(unittest.TestCase):
         owner_headers = self._headers(1, "owner@example.com", 101, workspace_role="OWNER", global_role="USER")
         forbidden_resp = self.client.get("/admin/workspaces", headers=owner_headers)
         self.assertEqual(403, forbidden_resp.status_code)
+
+    def test_login_blocked_workspace_is_denied_for_non_admin(self):
+        with db_module.get_conn() as conn:
+            conn.execute("UPDATE workspaces SET status = 'blocked' WHERE id = 101")
+        resp = self.client.post(
+            "/auth/login",
+            json={"email": "owner@example.com", "password": "secret123"},
+        )
+        self.assertEqual(403, resp.status_code, resp.text)
+
+    def test_security_summary_tracks_unauthorized_and_forbidden(self):
+        bad = self.client.get("/accounts")
+        self.assertEqual(401, bad.status_code)
+
+        owner_headers = self._headers(1, "owner@example.com", 101, workspace_role="OWNER", global_role="USER")
+        forbidden = self.client.get("/admin/workspaces", headers=owner_headers)
+        self.assertEqual(403, forbidden.status_code)
+
+        super_headers = self._headers(
+            9,
+            "admin@example.com",
+            101,
+            workspace_role="SUPER_ADMIN",
+            global_role="SUPER_ADMIN",
+        )
+        summary = self.client.get("/admin/security/summary", headers=super_headers)
+        self.assertEqual(200, summary.status_code, summary.text)
+        data = summary.json()
+        self.assertIn("counts_by_status", data)
+        self.assertGreaterEqual(int(data["counts_by_status"].get("401", 0)), 1)
+        self.assertGreaterEqual(int(data["counts_by_status"].get("403", 0)), 1)
 
 
 if __name__ == "__main__":

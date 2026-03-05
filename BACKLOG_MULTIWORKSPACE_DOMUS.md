@@ -255,29 +255,29 @@ Entrar em producao com seguranca.
 
 ### Entregaveis
 
-- [ ] Suite de testes de isolamento/permissao/bloqueio
-- [ ] Check de performance por indices e plano de consulta
-- [ ] Plano de rollout com fallback
+- [x] Suite de testes de isolamento/permissao/bloqueio
+- [x] Check de performance por indices e plano de consulta
+- [x] Plano de rollout com fallback
 
 ### Tarefas tecnicas
 
-- [ ] Criar testes automatizados:
+- [x] Criar testes automatizados:
   - [x] isolamento A vs B
   - [x] GUEST sem edit/delete
   - [x] bloqueio de workspace no login e nas rotas
   - [x] OWNER full dentro do workspace
   - [x] SUPER_ADMIN com bypass
-- [ ] Auditar queries com `EXPLAIN` em pontos criticos.
-- [ ] Monitorar erros `403/401` e tentativas cross-workspace.
-- [ ] Definir cutover:
+- [x] Auditar queries com `EXPLAIN` em pontos criticos.
+- [x] Monitorar erros `403/401` e tentativas cross-workspace.
+- [x] Definir cutover:
   - release 1: dual mode
   - release 2: enforce `workspace_id NOT NULL` + remoção de fallback
 
 ### Critérios de aceite
 
-- [ ] Testes obrigatorios passando.
-- [ ] Sem regressao funcional nos modulos atuais.
-- [ ] Sem vazamento entre workspaces em homologacao.
+- [x] Testes obrigatorios passando.
+- [x] Sem regressao funcional nos modulos atuais.
+- [x] Sem vazamento entre workspaces em homologacao.
 
 ---
 
@@ -296,19 +296,19 @@ Entrar em producao com seguranca.
 
 ## 6. Definition of Done (DoD) do projeto
 
-- [ ] Todas as tabelas de dominio com `workspace_id` e indice.
-- [ ] 100% das rotas protegidas por escopo de workspace.
-- [ ] 100% das queries de dominio com filtro por workspace.
-- [ ] Papel global separado de papel por workspace.
-- [ ] Permissoes granulares ativas para GUEST.
-- [ ] Bloqueio de workspace aplicado em login e uso.
-- [ ] Suite de seguranca/permissao/isolamento passando.
+- [x] Todas as tabelas de dominio com `workspace_id` e indice.
+- [x] 100% das rotas protegidas por escopo de workspace.
+- [x] 100% das queries de dominio com filtro por workspace.
+- [x] Papel global separado de papel por workspace.
+- [x] Permissoes granulares ativas para GUEST.
+- [x] Bloqueio de workspace aplicado em login e uso.
+- [x] Suite de seguranca/permissao/isolamento passando.
 
 ---
 
 ## 7. Backlog de execucao imediata (proxima sprint)
 
 - [x] Sprint 1: Fase A + Fase B (schema/backfill)
-- [ ] Sprint 2: Fase C + Fase D (auth/contexto/papeis)
+- [x] Sprint 2: Fase C + Fase D (auth/contexto/papeis)
 - [x] Sprint 3: Fase E + Fase F (repos/permissoes)
-- [ ] Sprint 4: Fase G + Fase H (ui/testes/rollout)
+- [x] Sprint 4: Fase G + Fase H (ui/testes/rollout)

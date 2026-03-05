@@ -19,6 +19,7 @@ import invest_quotes
 import repo
 import reports
 import permissions_service
+import security_monitor
 from db import get_conn, init_db
 from tenant import (
     clear_tenant_context,
@@ -459,12 +460,36 @@ def _norm_card_model(value: Any) -> str:
     return model if model in allowed else "Black"
 
 
-def _auth_payload(authorization: str | None = Header(default=None)) -> dict:
+def _request_ip(request: Request | None) -> str | None:
+    try:
+        return request.client.host if request and request.client else None
+    except Exception:
+        return None
+
+
+def _auth_payload(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
+        security_monitor.record_event(
+            event_type="auth_missing_bearer",
+            status_code=401,
+            path=str(request.url.path),
+            detail="Missing bearer token",
+            ip=_request_ip(request),
+        )
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
     payload = verify_token(token)
     if not payload:
+        security_monitor.record_event(
+            event_type="auth_invalid_token",
+            status_code=401,
+            path=str(request.url.path),
+            detail="Invalid token",
+            ip=_request_ip(request),
+        )
         raise HTTPException(status_code=401, detail="Invalid token")
     return dict(payload)
 
@@ -527,6 +552,14 @@ def _current_user(
     uid = int(payload["uid"])
     user = auth.get_user_by_id(uid)
     if not user or not user.get("is_active", True):
+        security_monitor.record_event(
+            event_type="auth_invalid_user",
+            status_code=401,
+            path=str(request.url.path),
+            detail="Invalid user",
+            user_id=uid,
+            ip=_request_ip(request),
+        )
         raise HTTPException(status_code=401, detail="Invalid user")
 
     global_role = _global_role_from_user(user)
@@ -537,6 +570,14 @@ def _current_user(
             try:
                 requested_workspace_id = int(wid_claim)
             except Exception:
+                security_monitor.record_event(
+                    event_type="auth_invalid_workspace_claim",
+                    status_code=401,
+                    path=str(request.url.path),
+                    detail="Invalid workspace claim in token",
+                    user_id=uid,
+                    ip=_request_ip(request),
+                )
                 raise HTTPException(status_code=401, detail="Invalid workspace claim in token")
 
     member: dict | None = None
@@ -565,11 +606,37 @@ def _current_user(
                 }
     else:
         if workspace_id is None:
+            security_monitor.record_event(
+                event_type="workspace_missing",
+                status_code=403,
+                path=str(request.url.path),
+                detail="Usuário sem workspace associado",
+                user_id=uid,
+                ip=_request_ip(request),
+            )
             raise HTTPException(status_code=403, detail="Usuário sem workspace associado")
         member = auth.get_user_workspace_membership(uid, workspace_id)
         if not member:
+            security_monitor.record_event(
+                event_type="cross_workspace_denied",
+                status_code=403,
+                path=str(request.url.path),
+                detail="Usuário não pertence ao workspace informado",
+                user_id=uid,
+                workspace_id=workspace_id,
+                ip=_request_ip(request),
+            )
             raise HTTPException(status_code=403, detail="Usuário não pertence ao workspace informado")
         if str(member.get("workspace_status") or "").strip().lower() != "active":
+            security_monitor.record_event(
+                event_type="workspace_blocked",
+                status_code=403,
+                path=str(request.url.path),
+                detail="Workspace bloqueado",
+                user_id=uid,
+                workspace_id=workspace_id,
+                ip=_request_ip(request),
+            )
             raise HTTPException(status_code=403, detail="Workspace bloqueado")
 
     set_current_user_id(uid)
@@ -591,6 +658,15 @@ def _current_user(
     if perm:
         module, action = perm
         if not permissions_service.can_access(out, module=module, action=action):
+            security_monitor.record_event(
+                event_type="permission_denied",
+                status_code=403,
+                path=str(request.url.path),
+                detail=f"Sem permissão para {action} em {module}",
+                user_id=uid,
+                workspace_id=int(workspace_id) if workspace_id is not None else None,
+                ip=_request_ip(request),
+            )
             raise HTTPException(status_code=403, detail=f"Sem permissão para {action} em {module}")
 
     return out
@@ -673,9 +749,16 @@ async def import_trades_csv_endpoint(
 
 
 @app.post("/auth/login", response_model=LoginResponse)
-def login(body: LoginRequest) -> LoginResponse:
+def login(body: LoginRequest, request: Request) -> LoginResponse:
     user = auth.authenticate_user(body.email, body.password)
     if not user:
+        security_monitor.record_event(
+            event_type="login_invalid_credentials",
+            status_code=401,
+            path=str(request.url.path),
+            detail="Credenciais inválidas",
+            ip=_request_ip(request),
+        )
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
 
     uid = int(user["id"])
@@ -684,11 +767,32 @@ def login(body: LoginRequest) -> LoginResponse:
     workspace_id = int(member["workspace_id"]) if member else None
 
     if global_role != "SUPER_ADMIN" and workspace_id is None:
+        security_monitor.record_event(
+            event_type="login_without_workspace",
+            status_code=403,
+            path=str(request.url.path),
+            detail="Usuário sem workspace associado",
+            user_id=uid,
+            ip=_request_ip(request),
+        )
         raise HTTPException(status_code=403, detail="Usuário sem workspace associado")
 
     workspace_role = None
     if member:
         workspace_role = str(member.get("workspace_role") or "").strip().upper() or None
+        if global_role != "SUPER_ADMIN":
+            workspace_status = str(member.get("workspace_status") or "").strip().lower() or "active"
+            if workspace_status != "active":
+                security_monitor.record_event(
+                    event_type="login_blocked_workspace",
+                    status_code=403,
+                    path=str(request.url.path),
+                    detail="Workspace bloqueado",
+                    user_id=uid,
+                    workspace_id=workspace_id,
+                    ip=_request_ip(request),
+                )
+                raise HTTPException(status_code=403, detail="Workspace bloqueado")
 
     token = create_token(
         uid,
@@ -1003,6 +1107,15 @@ def admin_update_global_role(
     if not updated:
         raise HTTPException(status_code=404, detail="Usuário não encontrado.")
     return {"ok": True, "user": dict(updated)}
+
+
+@app.get("/admin/security/summary")
+def admin_security_summary(
+    limit: int = Query(default=50, ge=1, le=300),
+    user: dict = Depends(_current_user),
+) -> dict:
+    _require_admin(user)
+    return security_monitor.snapshot(limit=limit)
 
 
 @app.get("/accounts")
