@@ -508,6 +508,72 @@ def _is_super_admin(user: dict | None) -> bool:
     return _global_role_from_user(user) == "SUPER_ADMIN"
 
 
+_PERMISSION_MODULE_ORDER = ("dashboard", "lancamentos", "investimentos", "relatorios", "contas", "usuarios")
+
+
+def _empty_permissions_payload() -> list[dict[str, Any]]:
+    return [
+        {
+            "module": module,
+            "can_view": False,
+            "can_add": False,
+            "can_edit": False,
+            "can_delete": False,
+        }
+        for module in _PERMISSION_MODULE_ORDER
+    ]
+
+
+def _full_permissions_payload() -> list[dict[str, Any]]:
+    return [
+        {
+            "module": module,
+            "can_view": True,
+            "can_add": True,
+            "can_edit": True,
+            "can_delete": True,
+        }
+        for module in _PERMISSION_MODULE_ORDER
+    ]
+
+
+def _effective_permissions_for_user(user: dict[str, Any], member: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    global_role = _global_role_from_user(user)
+    workspace_role = str((member or {}).get("workspace_role") or user.get("workspace_role") or "").strip().upper()
+
+    if global_role == "SUPER_ADMIN" or workspace_role in {"OWNER", "SUPER_ADMIN"}:
+        return _full_permissions_payload()
+
+    base = {row["module"]: dict(row) for row in _empty_permissions_payload()}
+    if workspace_role != "GUEST":
+        return list(base.values())
+
+    uid = int(user.get("id") or 0)
+    workspace_id = int((member or {}).get("workspace_id") or user.get("workspace_id") or 0)
+    if uid <= 0 or workspace_id <= 0:
+        return list(base.values())
+
+    workspace_user_id = int((member or {}).get("workspace_user_id") or 0)
+    if workspace_user_id <= 0:
+        workspace_user = permissions_service.get_workspace_user(workspace_id, uid)
+        workspace_user_id = int((workspace_user or {}).get("id") or 0)
+
+    if workspace_user_id <= 0:
+        return list(base.values())
+
+    rows = permissions_service.list_permissions_by_workspace_user(workspace_user_id)
+    for item in rows:
+        module = str((item or {}).get("module") or "").strip().lower()
+        if module not in base:
+            continue
+        base[module]["can_view"] = bool((item or {}).get("can_view"))
+        base[module]["can_add"] = bool((item or {}).get("can_add"))
+        base[module]["can_edit"] = bool((item or {}).get("can_edit"))
+        base[module]["can_delete"] = bool((item or {}).get("can_delete"))
+
+    return list(base.values())
+
+
 def _permission_from_request(method: str, path: str) -> tuple[str, str] | None:
     p = str(path or "").strip().lower().strip("/")
     if not p:
@@ -518,12 +584,16 @@ def _permission_from_request(method: str, path: str) -> tuple[str, str] | None:
 
     if p.startswith("dashboard"):
         module = "dashboard"
+    elif p == "kpis":
+        module = "dashboard"
     elif p.startswith("transactions") or p.startswith("credit-commitments"):
         module = "lancamentos"
     elif p.startswith("invest"):
         module = "investimentos"
     elif p.startswith("accounts") or p.startswith("categories") or p.startswith("cards") or p.startswith("card-invoices"):
         module = "contas"
+    elif p.startswith("import"):
+        module = "relatorios"
     elif p.startswith("workspaces/members"):
         module = "usuarios"
     else:
@@ -653,6 +723,7 @@ def _current_user(
     out["workspace_role"] = str(member.get("workspace_role") or "").strip().upper() if member else None
     out["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() if member else None
     out["workspace_name"] = member.get("workspace_name") if member else None
+    out["permissions"] = _effective_permissions_for_user(out, member=member)
 
     perm = _permission_from_request(request.method, request.url.path)
     if perm:
@@ -809,6 +880,7 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
     out_user["workspace_role"] = workspace_role
     out_user["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() if member else None
     out_user["workspace_name"] = member.get("workspace_name") if member else None
+    out_user["permissions"] = _effective_permissions_for_user(out_user, member=member)
     return LoginResponse(token=token, user=out_user)
 
 
@@ -837,6 +909,7 @@ def switch_workspace(body: WorkspaceSwitchRequest, user: dict = Depends(_current
     uid = int(user["id"])
     target_workspace_id = int(body.workspace_id)
     global_role = _global_role_from_user(user)
+    member: dict | None = None
 
     if global_role == "SUPER_ADMIN":
         ws = auth.get_workspace_by_id(target_workspace_id)
@@ -869,6 +942,7 @@ def switch_workspace(body: WorkspaceSwitchRequest, user: dict = Depends(_current
     out_user["workspace_role"] = workspace_role
     out_user["workspace_status"] = workspace_status
     out_user["workspace_name"] = workspace_name
+    out_user["permissions"] = _effective_permissions_for_user(out_user, member=member)
     return LoginResponse(token=token, user=out_user)
 
 

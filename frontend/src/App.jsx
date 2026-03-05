@@ -1,5 +1,5 @@
 import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import brandLogo from "./icons/domus.png";
+import brandLogo from "./icons/DOMUS2.png";
 import icDashboard from "./icons/dashboard.png";
 import icContas from "./icons/contas.png";
 import icLancamentos from "./icons/lancamentos.png";
@@ -7,6 +7,9 @@ import icInvestimento from "./icons/investimento.png";
 import icGerenciador from "./icons/gerenciador.png";
 import icImportarCsv from "./icons/importar-CSV.png";
 import icUsuario from "./icons/usuario.png";
+import icDespesa from "./icons/despesa_2.png";
+import icReceita from "./icons/receita_2.png";
+import icSaldo from "./icons/saldo_2.png";
 import bankInterLogo from "./banks/banco-inter-logo.svg";
 import bankBradescoLogo from "./banks/bradesco-logo.svg";
 import bankItauLogo from "./banks/itau-logo.svg";
@@ -91,6 +94,14 @@ const PAGES = [
   "Gerenciador",
   "Importar CSV",
 ];
+const PAGE_PERMISSION_MODULE = {
+  Dashboard: "dashboard",
+  Contas: "contas",
+  "Lançamentos": "lancamentos",
+  Investimentos: "investimentos",
+  Gerenciador: "contas",
+  "Importar CSV": "relatorios",
+};
 
 const PAGE_SUBTITLES = {
   Gerenciador: "Cadastros e manutenção de contas, categorias e cartões",
@@ -131,12 +142,19 @@ const WORKSPACE_PERMISSION_MODULES = [
   "relatorios",
   "contas",
 ];
+const WORKSPACE_PERMISSION_ALL_MODULES = [...WORKSPACE_PERMISSION_MODULES, "usuarios"];
 const WORKSPACE_PERMISSION_LABELS = {
   dashboard: "Dashboard",
   lancamentos: "Lançamentos",
   investimentos: "Investimentos",
   relatorios: "Relatórios",
   contas: "Contas",
+};
+const PERMISSION_ACTION_FIELD = {
+  view: "can_view",
+  add: "can_add",
+  edit: "can_edit",
+  delete: "can_delete",
 };
 
 function getCurrentMonthRange() {
@@ -191,6 +209,55 @@ function buildPermissionsDraft(member) {
       can_delete: Boolean(src.can_delete),
     };
   });
+}
+
+function buildEffectivePermissionMap(user) {
+  const map = {};
+  for (const module of WORKSPACE_PERMISSION_ALL_MODULES) {
+    map[module] = {
+      can_view: false,
+      can_add: false,
+      can_edit: false,
+      can_delete: false,
+    };
+  }
+
+  const globalRole = String(user?.global_role || "").trim().toUpperCase();
+  const workspaceRole = String(user?.workspace_role || "").trim().toUpperCase();
+  if (globalRole === "SUPER_ADMIN" || workspaceRole === "OWNER" || workspaceRole === "SUPER_ADMIN") {
+    for (const module of Object.keys(map)) {
+      map[module] = {
+        can_view: true,
+        can_add: true,
+        can_edit: true,
+        can_delete: true,
+      };
+    }
+    return map;
+  }
+
+  const rows = Array.isArray(user?.permissions) ? user.permissions : [];
+  for (const row of rows) {
+    const module = String(row?.module || "").trim().toLowerCase();
+    if (!map[module]) continue;
+    map[module] = {
+      can_view: Boolean(row?.can_view),
+      can_add: Boolean(row?.can_add),
+      can_edit: Boolean(row?.can_edit),
+      can_delete: Boolean(row?.can_delete),
+    };
+  }
+  return map;
+}
+
+function hasPermission(permissionMap, module, action = "view") {
+  const mod = String(module || "").trim().toLowerCase();
+  const act = String(action || "view").trim().toLowerCase();
+  const row = permissionMap?.[mod];
+  if (!row) return false;
+  const field = PERMISSION_ACTION_FIELD[act];
+  if (!field) return false;
+  return Boolean(row[field]);
 }
 
 function pct(part, total) {
@@ -550,14 +617,48 @@ export default function App() {
       try {
         await reloadWorkspaces();
         await reloadAllData();
-        await reloadCardsData();
-        await reloadDashboard({
-          date_from: defaultMonthRange.from,
-          date_to: defaultMonthRange.to,
-          account: "",
-          view: dashView,
-        });
-        await reloadInvestData();
+        if (canViewContas) {
+          await reloadCardsData();
+        } else {
+          setCards([]);
+          setCardInvoices([]);
+        }
+        if (canViewDashboard) {
+          await reloadDashboard({
+            date_from: defaultMonthRange.from,
+            date_to: defaultMonthRange.to,
+            account: "",
+            view: dashView,
+          });
+        } else {
+          setDashKpis(null);
+          setDashMonthly([]);
+          setDashExpenses([]);
+          setDashAccountBalance([]);
+          setDashCommitments({ a_vencer: 0, vencidos: 0 });
+          setDashMsg("");
+        }
+        if (canViewInvestimentos) {
+          await reloadInvestData();
+        } else {
+          setInvestMeta({ asset_classes: [], asset_sectors: [], income_types: [] });
+          setInvestAssets([]);
+          setInvestTrades([]);
+          setInvestIncomes([]);
+          setInvestPrices([]);
+          setInvestPortfolio({ positions: [] });
+          setInvestSummaryData({
+            assets_count: 0,
+            total_invested: 0,
+            total_market: 0,
+            total_income: 0,
+            total_realized: 0,
+            total_unrealized: 0,
+            total_return: 0,
+            total_return_pct: 0,
+            broker_balance: 0,
+          });
+        }
         if (canManageWorkspaceUsers) {
           await reloadWorkspaceMembers();
         } else {
@@ -734,6 +835,27 @@ export default function App() {
   const isSuperAdmin = String(user?.global_role || "").toUpperCase() === "SUPER_ADMIN";
   const isWorkspaceOwner = String(user?.workspace_role || "").toUpperCase() === "OWNER";
   const canManageWorkspaceUsers = isSuperAdmin || isWorkspaceOwner;
+  const permissionMap = useMemo(() => buildEffectivePermissionMap(user), [user]);
+  const canViewDashboard = hasPermission(permissionMap, "dashboard", "view");
+  const canViewContas = hasPermission(permissionMap, "contas", "view");
+  const canViewLancamentos = hasPermission(permissionMap, "lancamentos", "view");
+  const canViewInvestimentos = hasPermission(permissionMap, "investimentos", "view");
+  const canViewRelatorios = hasPermission(permissionMap, "relatorios", "view");
+  const canViewGerenciador = canViewContas;
+  const canAddContas = hasPermission(permissionMap, "contas", "add");
+  const canEditContas = hasPermission(permissionMap, "contas", "edit");
+  const canDeleteContas = hasPermission(permissionMap, "contas", "delete");
+  const canAddLancamentos = hasPermission(permissionMap, "lancamentos", "add");
+  const canDeleteLancamentos = hasPermission(permissionMap, "lancamentos", "delete");
+  const canAddInvestimentos = hasPermission(permissionMap, "investimentos", "add");
+  const canEditInvestimentos = hasPermission(permissionMap, "investimentos", "edit");
+  const canDeleteInvestimentos = hasPermission(permissionMap, "investimentos", "delete");
+  const canAddRelatorios = hasPermission(permissionMap, "relatorios", "add");
+  const visiblePages = useMemo(
+    () =>
+      PAGES.filter((p) => hasPermission(permissionMap, PAGE_PERMISSION_MODULE[p], "view")),
+    [permissionMap]
+  );
   const managerTabs = useMemo(() => {
     if (!canManageWorkspaceUsers) return MANAGER_TABS;
     return [...MANAGER_TABS, "Usuários e workspaces"];
@@ -768,6 +890,12 @@ export default function App() {
     if (managerTabs.includes(managerTab)) return;
     setManagerTab(managerTabs[0] || "Cadastro de contas");
   }, [managerTabs, managerTab]);
+
+  useEffect(() => {
+    if (!visiblePages.length) return;
+    if (visiblePages.includes(page)) return;
+    setPage(visiblePages[0]);
+  }, [visiblePages, page]);
 
   const txCategory = useMemo(
     () => categories.find((c) => String(c.id) === String(txCategoryId)) || null,
@@ -1495,25 +1623,62 @@ export default function App() {
   }
 
   async function reloadAllData() {
-    const [acc, cat, dash, tx] = await Promise.all([
-      getAccounts(),
-      getCategories(),
-      getKpis(),
-      getTransactions({ view: txView }),
-    ]);
-    setAccounts(acc);
-    setCategories(cat);
-    setKpis(dash);
-    setTransactions(tx);
+    const jobs = [];
+    if (canViewContas) {
+      jobs.push(
+        getAccounts()
+          .then((rows) => setAccounts(Array.isArray(rows) ? rows : []))
+          .catch(() => setAccounts([]))
+      );
+      jobs.push(
+        getCategories()
+          .then((rows) => setCategories(Array.isArray(rows) ? rows : []))
+          .catch(() => setCategories([]))
+      );
+    } else {
+      setAccounts([]);
+      setCategories([]);
+    }
+
+    if (canViewDashboard) {
+      jobs.push(
+        getKpis()
+          .then((dash) => setKpis(dash || null))
+          .catch(() => setKpis(null))
+      );
+    } else {
+      setKpis(null);
+    }
+
+    if (canViewLancamentos) {
+      jobs.push(
+        getTransactions({ view: txView })
+          .then((tx) => setTransactions(Array.isArray(tx) ? tx : []))
+          .catch(() => setTransactions([]))
+      );
+    } else {
+      setTransactions([]);
+      setCommitmentEdit(null);
+    }
+    await Promise.all(jobs);
   }
 
   async function reloadCardsData() {
+    if (!canViewContas) {
+      setCards([]);
+      setCardInvoices([]);
+      return;
+    }
     const [cardRows, invoiceRows] = await Promise.all([getCards(), getCardInvoices({ status: "OPEN" })]);
-    setCards(cardRows || []);
-    setCardInvoices(invoiceRows || []);
+    setCards(Array.isArray(cardRows) ? cardRows : []);
+    setCardInvoices(Array.isArray(invoiceRows) ? invoiceRows : []);
   }
 
   async function reloadDashboard(params = {}) {
+    if (!canViewDashboard) {
+      setDashMsg("");
+      return;
+    }
     const monthRange = getCurrentMonthRange();
     const rawFrom = params.date_from ?? dashDateFrom;
     const rawTo = params.date_to ?? dashDateTo;
@@ -1544,12 +1709,20 @@ export default function App() {
   }
 
   async function reloadTransactions(params = {}) {
+    if (!canViewLancamentos) {
+      setTransactions([]);
+      setCommitmentEdit(null);
+      return;
+    }
     const tx = await getTransactions({ view: params.view ?? txView });
     setTransactions(tx);
     setCommitmentEdit(null);
   }
 
   async function syncInvestRentabilityBeforeLoad({ force = false } = {}) {
+    if (!canAddInvestimentos) {
+      return null;
+    }
     const now = Date.now();
     if (!force && now - investRentabilityLastSyncRef.current < INVEST_RENTABILITY_MIN_SYNC_INTERVAL_MS) {
       return null;
@@ -1575,6 +1748,11 @@ export default function App() {
   }
 
   async function onLoadInvestDivergenceReport() {
+    if (!canAddInvestimentos) {
+      setInvestDivergenceReport([]);
+      setInvestDivergenceMsg("Sem permissão para gerar o relatório de divergência.");
+      return;
+    }
     setInvestDivergenceRunning(true);
     setInvestDivergenceMsg("");
     try {
@@ -1599,6 +1777,26 @@ export default function App() {
   }
 
   async function reloadInvestData(options = {}) {
+    if (!canViewInvestimentos) {
+      setInvestMeta({ asset_classes: [], asset_sectors: [], income_types: [] });
+      setInvestAssets([]);
+      setInvestTrades([]);
+      setInvestIncomes([]);
+      setInvestPrices([]);
+      setInvestPortfolio({ positions: [] });
+      setInvestSummaryData({
+        assets_count: 0,
+        total_invested: 0,
+        total_market: 0,
+        total_income: 0,
+        total_realized: 0,
+        total_unrealized: 0,
+        total_return: 0,
+        total_return_pct: 0,
+        broker_balance: 0,
+      });
+      return;
+    }
     const { syncRentability = false, forceRentabilitySync = false } = options || {};
     if (syncRentability) {
       await syncInvestRentabilityBeforeLoad({ force: forceRentabilitySync });
@@ -1636,6 +1834,10 @@ export default function App() {
   async function onCreateTransaction(e) {
     e.preventDefault();
     setTxMsg("");
+    if (!canAddLancamentos) {
+      setTxMsg("Sem permissão para incluir lançamentos.");
+      return;
+    }
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const description = String(form.get("description") || "").trim();
@@ -1757,8 +1959,10 @@ export default function App() {
       }
       await reloadTransactions();
       await reloadCardsData();
-      const dash = await getKpis();
-      setKpis(dash);
+      if (canViewDashboard) {
+        const dash = await getKpis();
+        setKpis(dash);
+      }
       await reloadDashboard();
       await reloadInvestData();
     } catch (err) {
@@ -1767,11 +1971,17 @@ export default function App() {
   }
 
   async function onDeleteTransaction(id, scope = "single") {
+    if (!canDeleteLancamentos) {
+      setTxMsg("Sem permissão para excluir lançamentos.");
+      return;
+    }
     try {
       await deleteTransaction(id, { scope });
       await reloadTransactions();
-      const dash = await getKpis();
-      setKpis(dash);
+      if (canViewDashboard) {
+        const dash = await getKpis();
+        setKpis(dash);
+      }
       await reloadDashboard();
       await reloadInvestData();
     } catch (err) {
@@ -1785,6 +1995,10 @@ export default function App() {
   }
 
   function onStartPayCommitment(tx) {
+    if (!canAddLancamentos) {
+      setTxMsg("Sem permissão para liquidar compromissos.");
+      return;
+    }
     const accountByName = (accounts || []).find((a) => String(a.name || "") === String(tx?.account || ""));
     const fallback = (accounts || []).find((a) => {
       const t = normalizeAccountType(a.type);
@@ -1801,6 +2015,10 @@ export default function App() {
   }
 
   async function onDeleteCommitment(tx) {
+    if (!canDeleteLancamentos) {
+      setTxMsg("Sem permissão para excluir compromissos.");
+      return;
+    }
     const deleteFuture = window.confirm(
       "Excluir este compromisso e todos os próximos da mesma série?\n\nOK = este e próximos\nCancelar = somente este mês"
     );
@@ -1809,6 +2027,10 @@ export default function App() {
   }
 
   async function onDeleteCreditCommitment(tx) {
+    if (!canDeleteLancamentos) {
+      setTxMsg("Sem permissão para excluir compromissos no cartão.");
+      return;
+    }
     const rawId = String(tx?.id || "");
     const match = rawId.match(/^ccf-(\d+)$/i);
     if (!match) {
@@ -1824,8 +2046,10 @@ export default function App() {
       await reloadTransactions();
       await reloadCardsData();
       await reloadDashboard();
-      const dash = await getKpis();
-      setKpis(dash);
+      if (canViewDashboard) {
+        const dash = await getKpis();
+        setKpis(dash);
+      }
       setTxMsg("Compromisso no cartão excluído.");
     } catch (err) {
       setTxMsg(String(err.message || err));
@@ -1833,6 +2057,10 @@ export default function App() {
   }
 
   async function onConfirmPayCommitment() {
+    if (!canAddLancamentos) {
+      setTxMsg("Sem permissão para confirmar pagamentos de compromissos.");
+      return;
+    }
     if (!commitmentEdit?.id) return;
     const amountVal = Number(String(commitmentEdit.amount || "").replace(",", "."));
     const accountId = Number(commitmentEdit.account_id || 0);
@@ -1860,8 +2088,10 @@ export default function App() {
       setTxMsg("Compromisso pago e convertido em lançamento real de caixa.");
       await reloadTransactions();
       await reloadCardsData();
-      const dash = await getKpis();
-      setKpis(dash);
+      if (canViewDashboard) {
+        const dash = await getKpis();
+        setKpis(dash);
+      }
       await reloadDashboard();
       await reloadInvestData();
     } catch (err) {
@@ -1872,6 +2102,10 @@ export default function App() {
   async function onCreateInvestAsset(e) {
     e.preventDefault();
     setInvestMsg("");
+    if (!canAddInvestimentos) {
+      setInvestMsg("Sem permissão para cadastrar ativos.");
+      return;
+    }
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const symbol = String(form.get("symbol") || "").trim().toUpperCase();
@@ -1919,6 +2153,10 @@ export default function App() {
   }
 
   async function onUpdateInvestAsset() {
+    if (!canEditInvestimentos) {
+      setInvestMsg("Sem permissão para editar ativos.");
+      return;
+    }
     if (!assetEditId || !assetEditSymbol.trim() || !assetEditName.trim() || !assetEditClass) {
       setInvestMsg("Selecione e preencha os dados do ativo.");
       return;
@@ -1952,6 +2190,10 @@ export default function App() {
   }
 
   async function onDeleteInvestAsset(id) {
+    if (!canDeleteInvestimentos) {
+      setInvestMsg("Sem permissão para excluir ativos.");
+      return;
+    }
     try {
       await deleteInvestAsset(Number(id));
       setInvestMsg("Ativo excluído.");
@@ -1964,6 +2206,10 @@ export default function App() {
   async function onCreateInvestTrade(e) {
     e.preventDefault();
     setInvestMsg("");
+    if (!canAddInvestimentos) {
+      setInvestMsg("Sem permissão para registrar operações.");
+      return;
+    }
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const assetId = Number(tradeAssetId || form.get("asset_id"));
@@ -2030,8 +2276,10 @@ export default function App() {
       setTradeExchangeRate("");
       setInvestMsg("Operação salva.");
       await reloadInvestData();
-      const dash = await getKpis();
-      setKpis(dash);
+      if (canViewDashboard) {
+        const dash = await getKpis();
+        setKpis(dash);
+      }
       await reloadDashboard();
       await reloadTransactions();
     } catch (err) {
@@ -2040,12 +2288,18 @@ export default function App() {
   }
 
   async function onDeleteInvestTrade(id) {
+    if (!canDeleteInvestimentos) {
+      setInvestMsg("Sem permissão para excluir operações.");
+      return;
+    }
     try {
       await deleteInvestTrade(Number(id));
       setInvestMsg("Operação excluída.");
       await reloadInvestData();
-      const dash = await getKpis();
-      setKpis(dash);
+      if (canViewDashboard) {
+        const dash = await getKpis();
+        setKpis(dash);
+      }
       await reloadDashboard();
       await reloadTransactions();
     } catch (err) {
@@ -2056,6 +2310,10 @@ export default function App() {
   async function onCreateInvestIncome(e) {
     e.preventDefault();
     setInvestMsg("");
+    if (!canAddInvestimentos) {
+      setInvestMsg("Sem permissão para registrar proventos.");
+      return;
+    }
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const assetId = Number(form.get("asset_id"));
@@ -2078,8 +2336,10 @@ export default function App() {
       formEl.reset();
       setInvestMsg("Provento salvo.");
       await reloadInvestData();
-      const dash = await getKpis();
-      setKpis(dash);
+      if (canViewDashboard) {
+        const dash = await getKpis();
+        setKpis(dash);
+      }
       await reloadDashboard();
       await reloadTransactions();
     } catch (err) {
@@ -2088,6 +2348,10 @@ export default function App() {
   }
 
   async function onDeleteInvestIncome(id) {
+    if (!canDeleteInvestimentos) {
+      setInvestMsg("Sem permissão para excluir proventos.");
+      return;
+    }
     try {
       await deleteInvestIncome(Number(id));
       setInvestMsg("Provento excluído.");
@@ -2100,6 +2364,10 @@ export default function App() {
   async function onUpsertInvestPrice(e) {
     e.preventDefault();
     setInvestMsg("");
+    if (!canAddInvestimentos) {
+      setInvestMsg("Sem permissão para registrar cotações.");
+      return;
+    }
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const assetId = Number(form.get("asset_id"));
@@ -2126,6 +2394,10 @@ export default function App() {
   }
 
   async function onUpdateAllInvestPrices() {
+    if (!canAddInvestimentos) {
+      setInvestMsg("Sem permissão para atualizar cotações.");
+      return;
+    }
     setInvestMsg("");
     setInvestPriceUpdateReport([]);
     setInvestPriceUpdateRunning(true);
@@ -2157,6 +2429,10 @@ export default function App() {
   async function onCreateAccount(e) {
     e.preventDefault();
     setManageMsg("");
+    if (!canAddContas) {
+      setManageMsg("Sem permissão para cadastrar contas.");
+      return;
+    }
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const name = String(form.get("name") || "").trim();
@@ -2179,6 +2455,10 @@ export default function App() {
   }
 
   async function onUpdateAccount() {
+    if (!canEditContas) {
+      setManageMsg("Sem permissão para editar contas.");
+      return;
+    }
     if (!accEditId || !accEditName.trim()) {
       setManageMsg("Selecione uma conta e informe nome.");
       return;
@@ -2199,6 +2479,10 @@ export default function App() {
   }
 
   async function onDeleteAccount() {
+    if (!canDeleteContas) {
+      setManageMsg("Sem permissão para excluir contas.");
+      return;
+    }
     if (!accEditId) return;
     try {
       await deleteAccount(Number(accEditId));
@@ -2213,6 +2497,10 @@ export default function App() {
   async function onCreateCategory(e) {
     e.preventDefault();
     setManageMsg("");
+    if (!canAddContas) {
+      setManageMsg("Sem permissão para cadastrar categorias.");
+      return;
+    }
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const name = String(form.get("name") || "").trim();
@@ -2232,6 +2520,10 @@ export default function App() {
   }
 
   async function onUpdateCategory() {
+    if (!canEditContas) {
+      setManageMsg("Sem permissão para editar categorias.");
+      return;
+    }
     if (!catEditId || !catEditName.trim()) {
       setManageMsg("Selecione uma categoria e informe nome.");
       return;
@@ -2246,6 +2538,10 @@ export default function App() {
   }
 
   async function onDeleteCategory() {
+    if (!canDeleteContas) {
+      setManageMsg("Sem permissão para excluir categorias.");
+      return;
+    }
     if (!catEditId) return;
     try {
       await deleteCategory(Number(catEditId));
@@ -2259,6 +2555,10 @@ export default function App() {
   async function onCreateCard(e) {
     e.preventDefault();
     setCardMsg("");
+    if (!canAddContas) {
+      setCardMsg("Sem permissão para cadastrar cartões.");
+      return;
+    }
     const name = String(cardCreateName || "").trim();
     const brand = String(cardCreateBrand || "").trim();
     const model = String(cardCreateModel || "").trim();
@@ -2319,6 +2619,10 @@ export default function App() {
 
   async function onUpdateCard() {
     setCardMsg("");
+    if (!canEditContas) {
+      setCardMsg("Sem permissão para editar cartões.");
+      return;
+    }
     const id = Number(cardEditId);
     const name = String(cardName || "").trim();
     const brand = String(cardBrand || "").trim();
@@ -2371,6 +2675,10 @@ export default function App() {
 
   async function onDeleteCard() {
     setCardMsg("");
+    if (!canDeleteContas) {
+      setCardMsg("Sem permissão para excluir cartões.");
+      return;
+    }
     const id = Number(cardEditId);
     if (!Number.isFinite(id)) return;
     try {
@@ -2410,6 +2718,10 @@ export default function App() {
 
   async function onPayInvoice(invoice, sourceAccountId = null, paymentDateValue = "") {
     setCardMsg("");
+    if (!canAddContas) {
+      setCardMsg("Sem permissão para pagar faturas.");
+      return;
+    }
     const invoiceId = Number(invoice?.id);
     const paymentDate = String(paymentDateValue || "").trim() || new Date().toISOString().slice(0, 10);
     try {
@@ -2482,6 +2794,10 @@ export default function App() {
   }
 
   async function onPreviewTransactionsCsv() {
+    if (!canAddRelatorios) {
+      setImportMsg("Sem permissão para pré-visualizar importações.");
+      return;
+    }
     if (!txCsvFile) {
       setImportMsg("Selecione um CSV de transações.");
       return;
@@ -2497,6 +2813,10 @@ export default function App() {
   }
 
   async function onImportTransactionsCsv() {
+    if (!canAddRelatorios) {
+      setImportMsg("Sem permissão para importar transações.");
+      return;
+    }
     if (!txCsvFile) {
       setImportMsg("Selecione um CSV de transações.");
       return;
@@ -2515,6 +2835,10 @@ export default function App() {
   }
 
   async function onPreviewAssetsCsv() {
+    if (!canAddRelatorios) {
+      setImportMsg("Sem permissão para pré-visualizar importações.");
+      return;
+    }
     if (!assetCsvFile) {
       setImportMsg("Selecione um CSV de ativos.");
       return;
@@ -2530,6 +2854,10 @@ export default function App() {
   }
 
   async function onImportAssetsCsv() {
+    if (!canAddRelatorios) {
+      setImportMsg("Sem permissão para importar ativos.");
+      return;
+    }
     if (!assetCsvFile) {
       setImportMsg("Selecione um CSV de ativos.");
       return;
@@ -2547,6 +2875,10 @@ export default function App() {
   }
 
   async function onPreviewTradesCsv() {
+    if (!canAddRelatorios) {
+      setImportMsg("Sem permissão para pré-visualizar importações.");
+      return;
+    }
     if (!tradeCsvFile) {
       setImportMsg("Selecione um CSV de operações.");
       return;
@@ -2562,6 +2894,10 @@ export default function App() {
   }
 
   async function onImportTradesCsv() {
+    if (!canAddRelatorios) {
+      setImportMsg("Sem permissão para importar operações.");
+      return;
+    }
     if (!tradeCsvFile) {
       setImportMsg("Selecione um CSV de operações.");
       return;
@@ -2605,7 +2941,7 @@ export default function App() {
           <span className="brand-name">DOMUS</span>
         </div>
         <nav>
-          {PAGES.map((p) => (
+          {visiblePages.map((p) => (
             <button
               key={p}
               className={`nav-item ${p === page ? "active" : ""}`}
@@ -2628,7 +2964,7 @@ export default function App() {
                   className="user-popover-item"
                   onClick={() => {
                     setUserMenuOpen(false);
-                    setPage("Dashboard");
+                    setPage(visiblePages.includes("Dashboard") ? "Dashboard" : (visiblePages[0] || "Dashboard"));
                   }}
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2637,19 +2973,21 @@ export default function App() {
                   </svg>
                   Perfil
                 </button>
-                <button
-                  className="user-popover-item"
-                  onClick={() => {
-                    setUserMenuOpen(false);
-                    setPage("Gerenciador");
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M4 17.2V20h2.8l8.3-8.3-2.8-2.8L4 17.2z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                    <path d="M13.7 7.4l2.8 2.8 1.7-1.7a2 2 0 0 0 0-2.8l0 0a2 2 0 0 0-2.8 0l-1.7 1.7z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                  </svg>
-                  Editar
-                </button>
+                {canViewGerenciador ? (
+                  <button
+                    className="user-popover-item"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      setPage("Gerenciador");
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 17.2V20h2.8l8.3-8.3-2.8-2.8L4 17.2z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                      <path d="M13.7 7.4l2.8 2.8 1.7-1.7a2 2 0 0 0 0-2.8l0 0a2 2 0 0 0-2.8 0l-1.7 1.7z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    </svg>
+                    Editar
+                  </button>
+                ) : null}
                 <button
                   className="user-popover-item danger"
                   onClick={() => {
@@ -2693,6 +3031,12 @@ export default function App() {
           </div>
         </header>
 
+        {!visiblePages.length ? (
+          <section className="card">
+            <p>Seu usuário não possui módulos habilitados neste workspace.</p>
+          </section>
+        ) : null}
+
         {page === "Dashboard" && kpis ? (
           <>
             <section className="card dash-filter-card">
@@ -2728,15 +3072,24 @@ export default function App() {
 
             <section className="dash-kpis">
               <article className="card dash-kpi-card dash-kpi-expense">
-                <h3>Despesas</h3>
+                <h3 className="dash-kpi-title">
+                  <img src={icDespesa} alt="" className="dash-kpi-icon" />
+                  <span>Despesas</span>
+                </h3>
                 <strong>{brl.format(Number(currentKpi.despesas || 0))}</strong>
               </article>
               <article className="card dash-kpi-card dash-kpi-income">
-                <h3>Receitas</h3>
+                <h3 className="dash-kpi-title">
+                  <img src={icReceita} alt="" className="dash-kpi-icon" />
+                  <span>Receitas</span>
+                </h3>
                 <strong>{brl.format(Number(currentKpi.receitas || 0))}</strong>
               </article>
               <article className="card dash-kpi-card">
-                <h3>Saldo</h3>
+                <h3 className="dash-kpi-title">
+                  <img src={icSaldo} alt="" className="dash-kpi-icon" />
+                  <span>Saldo</span>
+                </h3>
                 <strong>{brl.format(Number(currentKpi.saldo || 0))}</strong>
               </article>
             </section>
@@ -2908,7 +3261,7 @@ export default function App() {
           </>
         ) : null}
 
-        {page === "Contas" ? (
+        {page === "Contas" && canViewContas ? (
           <>
             <section className="card">
               <h3>Contas cadastradas</h3>
@@ -2971,7 +3324,7 @@ export default function App() {
                         <td>{brl.format(Number(i.paid_amount || 0))}</td>
                         <td>{i.status}</td>
                         <td>
-                          {i.status === "OPEN" ? (
+                          {i.status === "OPEN" && canAddContas ? (
                             <button onClick={() => openPayInvoiceModal(i)}>Pagar fatura</button>
                           ) : (
                             "-"
@@ -2991,7 +3344,7 @@ export default function App() {
           </>
         ) : null}
 
-        {page === "Gerenciador" ? (
+        {page === "Gerenciador" && canViewGerenciador ? (
           <>
             <section className="card tabs-card">
               <div className="mini-tabs">
@@ -3017,25 +3370,29 @@ export default function App() {
               <>
                 <section className="card">
                   <h3>Nova conta</h3>
-                  <form className="tx-form" onSubmit={onCreateAccount}>
-                    <input name="name" type="text" placeholder="Digite o nome da conta" required />
-                    <select name="type" defaultValue="" required>
-                      <option value="" disabled>Selecione o tipo da conta</option>
-                      <option value="Banco">Banco</option>
-                      <option value="Dinheiro">Dinheiro</option>
-                      <option value="Corretora">Corretora</option>
-                    </select>
-                    <select name="currency" defaultValue="" required>
-                      <option value="" disabled>Selecione a moeda</option>
-                      <option value="BRL">BRL</option>
-                      <option value="USD">USD</option>
-                    </select>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <input type="checkbox" name="show_on_dashboard" />
-                      Fixar no Dashboard (saldo 0)
-                    </label>
-                    <button type="submit">Salvar conta</button>
-                  </form>
+                  {canAddContas ? (
+                    <form className="tx-form" onSubmit={onCreateAccount}>
+                      <input name="name" type="text" placeholder="Digite o nome da conta" required />
+                      <select name="type" defaultValue="" required>
+                        <option value="" disabled>Selecione o tipo da conta</option>
+                        <option value="Banco">Banco</option>
+                        <option value="Dinheiro">Dinheiro</option>
+                        <option value="Corretora">Corretora</option>
+                      </select>
+                      <select name="currency" defaultValue="" required>
+                        <option value="" disabled>Selecione a moeda</option>
+                        <option value="BRL">BRL</option>
+                        <option value="USD">USD</option>
+                      </select>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <input type="checkbox" name="show_on_dashboard" />
+                        Fixar no Dashboard (saldo 0)
+                      </label>
+                      <button type="submit">Salvar conta</button>
+                    </form>
+                  ) : (
+                    <p>Sem permissão para cadastrar contas.</p>
+                  )}
                 </section>
 
                 <section className="card">
@@ -3043,6 +3400,7 @@ export default function App() {
                   <div className="mgr-grid">
                     <select
                       value={accEditId}
+                      disabled={!canEditContas && !canDeleteContas}
                       onChange={(e) => {
                         const id = e.target.value;
                         setAccEditId(id);
@@ -3059,13 +3417,13 @@ export default function App() {
                         <option key={a.id} value={a.id}>{a.id} - {a.name} ({a.type}, {a.currency || "BRL"})</option>
                       ))}
                     </select>
-                    <input value={accEditName} onChange={(e) => setAccEditName(e.target.value)} placeholder="Nome" />
-                    <select value={accEditType} onChange={(e) => setAccEditType(e.target.value)}>
+                    <input value={accEditName} onChange={(e) => setAccEditName(e.target.value)} placeholder="Nome" disabled={!canEditContas} />
+                    <select value={accEditType} onChange={(e) => setAccEditType(e.target.value)} disabled={!canEditContas}>
                       <option value="Banco">Banco</option>
                       <option value="Dinheiro">Dinheiro</option>
                       <option value="Corretora">Corretora</option>
                     </select>
-                    <select value={accEditCurrency} onChange={(e) => setAccEditCurrency(e.target.value)}>
+                    <select value={accEditCurrency} onChange={(e) => setAccEditCurrency(e.target.value)} disabled={!canEditContas}>
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
                     </select>
@@ -3073,12 +3431,13 @@ export default function App() {
                       <input
                         type="checkbox"
                         checked={Boolean(accEditShowOnDashboard)}
+                        disabled={!canEditContas}
                         onChange={(e) => setAccEditShowOnDashboard(e.target.checked)}
                       />
                       Fixar no Dashboard (saldo 0)
                     </label>
-                    <button onClick={onUpdateAccount}>Atualizar conta</button>
-                    <button className="danger" onClick={onDeleteAccount}>Excluir conta</button>
+                    <button onClick={onUpdateAccount} disabled={!canEditContas}>Atualizar conta</button>
+                    <button className="danger" onClick={onDeleteAccount} disabled={!canDeleteContas}>Excluir conta</button>
                   </div>
                 </section>
               </>
@@ -3088,16 +3447,20 @@ export default function App() {
               <>
                 <section className="card">
                   <h3>Nova categoria</h3>
-                  <form className="tx-form" onSubmit={onCreateCategory}>
-                    <input name="name" type="text" placeholder="Digite o nome da categoria" required />
-                    <select name="kind" defaultValue="" required>
-                      <option value="" disabled>Selecione o tipo da categoria</option>
-                      <option value="Despesa">Despesa</option>
-                      <option value="Receita">Receita</option>
-                      <option value="Transferencia">Transferência</option>
-                    </select>
-                    <button type="submit">Salvar categoria</button>
-                  </form>
+                  {canAddContas ? (
+                    <form className="tx-form" onSubmit={onCreateCategory}>
+                      <input name="name" type="text" placeholder="Digite o nome da categoria" required />
+                      <select name="kind" defaultValue="" required>
+                        <option value="" disabled>Selecione o tipo da categoria</option>
+                        <option value="Despesa">Despesa</option>
+                        <option value="Receita">Receita</option>
+                        <option value="Transferencia">Transferência</option>
+                      </select>
+                      <button type="submit">Salvar categoria</button>
+                    </form>
+                  ) : (
+                    <p>Sem permissão para cadastrar categorias.</p>
+                  )}
                 </section>
 
                 <section className="card">
@@ -3105,6 +3468,7 @@ export default function App() {
                   <div className="mgr-grid">
                     <select
                       value={catEditId}
+                      disabled={!canEditContas && !canDeleteContas}
                       onChange={(e) => {
                         const id = e.target.value;
                         setCatEditId(id);
@@ -3119,14 +3483,14 @@ export default function App() {
                         <option key={c.id} value={c.id}>{c.id} - {c.name} ({c.kind})</option>
                       ))}
                     </select>
-                    <input value={catEditName} onChange={(e) => setCatEditName(e.target.value)} placeholder="Nome" />
-                    <select value={catEditKind} onChange={(e) => setCatEditKind(e.target.value)}>
+                    <input value={catEditName} onChange={(e) => setCatEditName(e.target.value)} placeholder="Nome" disabled={!canEditContas} />
+                    <select value={catEditKind} onChange={(e) => setCatEditKind(e.target.value)} disabled={!canEditContas}>
                       <option value="Despesa">Despesa</option>
                       <option value="Receita">Receita</option>
                       <option value="Transferencia">Transferência</option>
                     </select>
-                    <button onClick={onUpdateCategory}>Atualizar categoria</button>
-                    <button className="danger" onClick={onDeleteCategory}>Excluir categoria</button>
+                    <button onClick={onUpdateCategory} disabled={!canEditContas}>Atualizar categoria</button>
+                    <button className="danger" onClick={onDeleteCategory} disabled={!canDeleteContas}>Excluir categoria</button>
                   </div>
                 </section>
               </>
@@ -3136,73 +3500,77 @@ export default function App() {
               <>
                 <section className="card">
                   <h3>Cadastro de cartões</h3>
-                  <div className="mgr-grid">
-                    <input
-                      type="text"
-                      placeholder="Digite o nome do cartão"
-                      value={cardCreateName}
-                      onChange={(e) => setCardCreateName(e.target.value)}
-                    />
-                    <select value={cardCreateBrand} onChange={(e) => setCardCreateBrand(e.target.value)}>
-                      <option value="" disabled>Selecione a bandeira</option>
-                      <option value="Visa">Visa</option>
-                      <option value="Master">Master</option>
-                    </select>
-                    <select value={cardCreateModel} onChange={(e) => setCardCreateModel(e.target.value)}>
-                      <option value="" disabled>Selecione o modelo do cartão</option>
-                      {CARD_MODELS.map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                    <select value={cardCreateType} onChange={(e) => setCardCreateType(e.target.value)}>
-                      <option value="" disabled>Selecione o tipo do cartão</option>
-                      <option value="Credito">Credito</option>
-                      <option value="Debito">Debito</option>
-                    </select>
-                    <select value={cardCreateAccountId} onChange={(e) => setCardCreateAccountId(e.target.value)}>
-                      <option value="" disabled>Selecione a conta banco vinculada</option>
-                      {bankAccountsOnly.map((a) => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
-                      ))}
-                    </select>
-                    {!bankAccountsOnly.length ? (
-                      <input type="text" value="Sem conta Banco cadastrada." disabled />
-                    ) : null}
-                    {!hasCreateCardTypeSelected ? (
-                      <input type="text" value="Selecione primeiro o tipo do cartão" disabled />
-                    ) : isCreateCreditCardType ? (
-                      <>
-                        <input
-                          type="number"
-                          min="1"
-                          max="31"
-                          placeholder="Dia de fechamento (1-31)"
-                          value={cardCreateCloseDay}
-                          onChange={(e) => setCardCreateCloseDay(e.target.value)}
-                        />
-                        <input
-                          type="number"
-                          min="1"
-                          max="31"
-                          placeholder="Dia do vencimento (1-31)"
-                          value={cardCreateDueDay}
-                          onChange={(e) => setCardCreateDueDay(e.target.value)}
-                        />
-                        <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
-                          Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
-                        </small>
-                      </>
-                    ) : (
-                      <input type="text" value="Débito imediato na conta banco" disabled />
-                    )}
-                    <button type="button" onClick={onCreateCard}>Cadastrar cartão</button>
-                  </div>
+                  {canAddContas ? (
+                    <div className="mgr-grid">
+                      <input
+                        type="text"
+                        placeholder="Digite o nome do cartão"
+                        value={cardCreateName}
+                        onChange={(e) => setCardCreateName(e.target.value)}
+                      />
+                      <select value={cardCreateBrand} onChange={(e) => setCardCreateBrand(e.target.value)}>
+                        <option value="" disabled>Selecione a bandeira</option>
+                        <option value="Visa">Visa</option>
+                        <option value="Master">Master</option>
+                      </select>
+                      <select value={cardCreateModel} onChange={(e) => setCardCreateModel(e.target.value)}>
+                        <option value="" disabled>Selecione o modelo do cartão</option>
+                        {CARD_MODELS.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                      <select value={cardCreateType} onChange={(e) => setCardCreateType(e.target.value)}>
+                        <option value="" disabled>Selecione o tipo do cartão</option>
+                        <option value="Credito">Credito</option>
+                        <option value="Debito">Debito</option>
+                      </select>
+                      <select value={cardCreateAccountId} onChange={(e) => setCardCreateAccountId(e.target.value)}>
+                        <option value="" disabled>Selecione a conta banco vinculada</option>
+                        {bankAccountsOnly.map((a) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                      {!bankAccountsOnly.length ? (
+                        <input type="text" value="Sem conta Banco cadastrada." disabled />
+                      ) : null}
+                      {!hasCreateCardTypeSelected ? (
+                        <input type="text" value="Selecione primeiro o tipo do cartão" disabled />
+                      ) : isCreateCreditCardType ? (
+                        <>
+                          <input
+                            type="number"
+                            min="1"
+                            max="31"
+                            placeholder="Dia de fechamento (1-31)"
+                            value={cardCreateCloseDay}
+                            onChange={(e) => setCardCreateCloseDay(e.target.value)}
+                          />
+                          <input
+                            type="number"
+                            min="1"
+                            max="31"
+                            placeholder="Dia do vencimento (1-31)"
+                            value={cardCreateDueDay}
+                            onChange={(e) => setCardCreateDueDay(e.target.value)}
+                          />
+                          <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                            Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
+                          </small>
+                        </>
+                      ) : (
+                        <input type="text" value="Débito imediato na conta banco" disabled />
+                      )}
+                      <button type="button" onClick={onCreateCard}>Cadastrar cartão</button>
+                    </div>
+                  ) : (
+                    <p>Sem permissão para cadastrar cartões.</p>
+                  )}
                 </section>
 
                 <section className="card">
                   <h3>Cartões cadastrados</h3>
                   <div className="mgr-grid">
-                    <select value={cardEditId} onChange={(e) => onSelectCardEdit(e.target.value)}>
+                    <select value={cardEditId} onChange={(e) => onSelectCardEdit(e.target.value)} disabled={!canEditContas && !canDeleteContas}>
                       <option value="">Selecione um cartão</option>
                       {cards.map((c) => (
                         <option key={c.id} value={c.id}>
@@ -3210,24 +3578,24 @@ export default function App() {
                         </option>
                       ))}
                     </select>
-                    <input value={cardName} onChange={(e) => setCardName(e.target.value)} placeholder="Digite o nome do cartão" />
-                    <select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)}>
+                    <input value={cardName} onChange={(e) => setCardName(e.target.value)} placeholder="Digite o nome do cartão" disabled={!canEditContas} />
+                    <select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)} disabled={!canEditContas}>
                       <option value="" disabled>Selecione a bandeira</option>
                       <option value="Visa">Visa</option>
                       <option value="Master">Master</option>
                     </select>
-                    <select value={cardModel} onChange={(e) => setCardModel(e.target.value)}>
+                    <select value={cardModel} onChange={(e) => setCardModel(e.target.value)} disabled={!canEditContas}>
                       <option value="" disabled>Selecione o modelo do cartão</option>
                       {CARD_MODELS.map((m) => (
                         <option key={m} value={m}>{m}</option>
                       ))}
                     </select>
-                    <select value={cardType} onChange={(e) => setCardType(e.target.value)}>
+                    <select value={cardType} onChange={(e) => setCardType(e.target.value)} disabled={!canEditContas}>
                       <option value="" disabled>Selecione o tipo do cartão</option>
                       <option value="Credito">Credito</option>
                       <option value="Debito">Debito</option>
                     </select>
-                    <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)}>
+                    <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)} disabled={!canEditContas}>
                       <option value="" disabled>Selecione a conta banco vinculada</option>
                       {bankAccountsOnly.map((a) => (
                         <option key={a.id} value={a.id}>{a.name}</option>
@@ -3243,6 +3611,7 @@ export default function App() {
                           max="31"
                           placeholder="Dia de fechamento (1-31)"
                           value={cardCloseDay}
+                          disabled={!canEditContas}
                           onChange={(e) => setCardCloseDay(e.target.value)}
                         />
                         <input
@@ -3251,6 +3620,7 @@ export default function App() {
                           max="31"
                           placeholder="Dia do vencimento (1-31)"
                           value={cardDueDay}
+                          disabled={!canEditContas}
                           onChange={(e) => setCardDueDay(e.target.value)}
                         />
                         <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
@@ -3260,8 +3630,8 @@ export default function App() {
                     ) : (
                       <input type="text" value="Débito imediato na conta banco" disabled />
                     )}
-                    <button type="button" onClick={onUpdateCard}>Atualizar cartão</button>
-                    <button type="button" className="danger" onClick={onDeleteCard}>Excluir cartão</button>
+                    <button type="button" onClick={onUpdateCard} disabled={!canEditContas}>Atualizar cartão</button>
+                    <button type="button" className="danger" onClick={onDeleteCard} disabled={!canDeleteContas}>Excluir cartão</button>
                   </div>
                   {cardMsg ? <p>{cardMsg}</p> : null}
                 </section>
@@ -3518,7 +3888,7 @@ export default function App() {
           </>
         ) : null}
 
-        {page === "Lançamentos" ? (
+        {page === "Lançamentos" && canViewLancamentos ? (
           <>
             <section className="card">
               <h3>Novo lançamento</h3>
@@ -3566,6 +3936,7 @@ export default function App() {
                 </>
               ) : null}
               {txView !== "competencia" ? (
+                canAddLancamentos ? (
                 <form className="tx-form" onSubmit={onCreateTransaction}>
                 {txIsTransfer ? (
                   <div className="transfer-hint">
@@ -3817,6 +4188,9 @@ export default function App() {
                 ) : null}
                 <button type="submit">Salvar lançamento</button>
               </form>
+                ) : (
+                  <p>Sem permissão para incluir lançamentos.</p>
+                )
               ) : null}
               {txView !== "competencia" && txMsg ? <p>{txMsg}</p> : null}
             </section>
@@ -3926,33 +4300,48 @@ export default function App() {
                           {String(t.source_type || "") === "credit_charge" ? (
                             "-"
                           ) : String(t.source_type || "") === "credit_commitment" ? (
-                            <button type="button" className="danger" onClick={() => onDeleteCreditCommitment(t)}>Excluir</button>
+                            canDeleteLancamentos ? (
+                              <button type="button" className="danger" onClick={() => onDeleteCreditCommitment(t)}>Excluir</button>
+                            ) : (
+                              "-"
+                            )
                           ) : commitmentEdit?.id === t.id ? (
                             <>
-                              <button type="button" className="tx-action-primary" onClick={onConfirmPayCommitment}>Confirmar</button>
+                              {canAddLancamentos ? (
+                                <button type="button" className="tx-action-primary" onClick={onConfirmPayCommitment}>Confirmar</button>
+                              ) : null}
                               <button
                                 type="button"
                                 className="tx-action-neutral"
                                 onClick={() => setCommitmentEdit(null)}
-                                style={{ marginLeft: 8 }}
+                                style={{ marginLeft: canAddLancamentos ? 8 : 0 }}
                               >
                                 Cancelar
                               </button>
                             </>
                           ) : isCommitmentTx(t) ? (
                             <>
-                              <button type="button" className="tx-action-pay" onClick={() => onStartPayCommitment(t)}>Pagar</button>
-                              <button
-                                type="button"
-                                className="danger"
-                                onClick={() => onDeleteCommitment(t)}
-                                style={{ marginLeft: 8 }}
-                              >
-                                Excluir
-                              </button>
+                              {canAddLancamentos ? (
+                                <button type="button" className="tx-action-pay" onClick={() => onStartPayCommitment(t)}>Pagar</button>
+                              ) : null}
+                              {canDeleteLancamentos ? (
+                                <button
+                                  type="button"
+                                  className="danger"
+                                  onClick={() => onDeleteCommitment(t)}
+                                  style={{ marginLeft: canAddLancamentos ? 8 : 0 }}
+                                >
+                                  Excluir
+                                </button>
+                              ) : null}
+                              {!canAddLancamentos && !canDeleteLancamentos ? "-" : null}
                             </>
                           ) : (
-                            <button type="button" onClick={() => onDeleteTransaction(t.id)}>Excluir</button>
+                            canDeleteLancamentos ? (
+                              <button type="button" onClick={() => onDeleteTransaction(t.id)}>Excluir</button>
+                            ) : (
+                              "-"
+                            )
                           )}
                         </td>
                       </tr>
@@ -3969,7 +4358,7 @@ export default function App() {
           </>
         ) : null}
 
-        {page === "Importar CSV" ? (
+        {page === "Importar CSV" && canViewRelatorios ? (
           <>
             <section className="card">
               <h3>Importar lançamentos (CSV)</h3>
@@ -3978,10 +4367,11 @@ export default function App() {
                 <input
                   type="file"
                   accept=".csv,text/csv"
+                  disabled={!canAddRelatorios}
                   onChange={(e) => setTxCsvFile(e.target.files?.[0] || null)}
                 />
-                <button onClick={onPreviewTransactionsCsv}>Prévia lançamentos</button>
-                <button onClick={onImportTransactionsCsv}>Importar lançamentos</button>
+                <button onClick={onPreviewTransactionsCsv} disabled={!canAddRelatorios}>Prévia lançamentos</button>
+                <button onClick={onImportTransactionsCsv} disabled={!canAddRelatorios}>Importar lançamentos</button>
               </div>
             </section>
 
@@ -3992,10 +4382,11 @@ export default function App() {
                 <input
                   type="file"
                   accept=".csv,text/csv"
+                  disabled={!canAddRelatorios}
                   onChange={(e) => setAssetCsvFile(e.target.files?.[0] || null)}
                 />
-                <button onClick={onPreviewAssetsCsv}>Prévia ativos</button>
-                <button onClick={onImportAssetsCsv}>Importar ativos</button>
+                <button onClick={onPreviewAssetsCsv} disabled={!canAddRelatorios}>Prévia ativos</button>
+                <button onClick={onImportAssetsCsv} disabled={!canAddRelatorios}>Importar ativos</button>
               </div>
             </section>
 
@@ -4006,10 +4397,11 @@ export default function App() {
                 <input
                   type="file"
                   accept=".csv,text/csv"
+                  disabled={!canAddRelatorios}
                   onChange={(e) => setTradeCsvFile(e.target.files?.[0] || null)}
                 />
-                <button onClick={onPreviewTradesCsv}>Prévia operações</button>
-                <button onClick={onImportTradesCsv}>Importar operações</button>
+                <button onClick={onPreviewTradesCsv} disabled={!canAddRelatorios}>Prévia operações</button>
+                <button onClick={onImportTradesCsv} disabled={!canAddRelatorios}>Importar operações</button>
               </div>
             </section>
 
@@ -4044,7 +4436,7 @@ export default function App() {
           </>
         ) : null}
 
-        {page === "Investimentos" ? (
+        {page === "Investimentos" && canViewInvestimentos ? (
           <>
             <section className="card tabs-card">
               <div className="mini-tabs">

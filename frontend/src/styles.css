@@ -103,8 +103,8 @@ body {
 }
 
 .brand img {
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
   object-fit: contain;
   border-radius: 0;
   box-shadow: none;
@@ -767,6 +767,18 @@ body {
   font-size: 33px;
   font-size: clamp(20px, 2.1vw, 33px);
   margin-bottom: 12px;
+}
+
+.dash-kpi-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dash-kpi-icon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
 }
 
 .dash-kpi-card strong {
