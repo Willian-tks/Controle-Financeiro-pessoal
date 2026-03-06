@@ -411,6 +411,23 @@ def upsert_price(asset_id: int, date: str, price: float, source: str | None = No
     conn.close()
 
 
+def upsert_asset_snapshot(asset_id: int, px_date: str, price: float, source: str | None = None, user_id: int | None = None):
+    uid = _uid(user_id)
+    conn = get_conn()
+    _exec(conn,
+        """
+        INSERT INTO asset_prices(asset_id, px_date, price, source, user_id)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(asset_id, px_date) DO UPDATE SET
+            price=excluded.price,
+            source=excluded.source
+        """,
+        (int(asset_id), str(px_date), float(price), source, uid),
+    )
+    conn.commit()
+    conn.close()
+
+
 def latest_price(asset_id: int, up_to_date: str | None = None, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()

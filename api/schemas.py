@@ -140,6 +140,12 @@ class AssetUpdateRequest(BaseModel):
     last_update: str | None = None
 
 
+class ManualAssetValueUpdateRequest(BaseModel):
+    mode: str
+    value: float
+    ref_date: str | None = None
+
+
 class TradeCreateRequest(BaseModel):
     asset_id: int
     date: str

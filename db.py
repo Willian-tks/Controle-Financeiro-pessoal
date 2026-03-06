@@ -501,6 +501,17 @@ def _postgres_schema(cur):
         user_id BIGINT
     );
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS sync_runs (
+        id BIGSERIAL PRIMARY KEY,
+        scope_kind TEXT NOT NULL,
+        scope_id BIGINT NOT NULL,
+        sync_type TEXT NOT NULL,
+        sync_key TEXT NOT NULL,
+        ref_date TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS asset_prices (
@@ -814,6 +825,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_prices_user_asset_date ON prices(user_id, asset_id, date)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_prices_user_asset_date ON asset_prices(user_id, asset_id, px_date)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_sync_runs_scope_type_key_date ON sync_runs(scope_kind, scope_id, sync_type, sync_key, ref_date)")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")
@@ -828,6 +840,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sync_runs_ref_date ON sync_runs(ref_date)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_workspace_users_workspace ON workspace_users(workspace_id)")
@@ -967,6 +980,17 @@ def _migrate_multitenant_sqlite(cur):
         user_id INTEGER
     );
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS sync_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope_kind TEXT NOT NULL,
+        scope_id INTEGER NOT NULL,
+        sync_type TEXT NOT NULL,
+        sync_key TEXT NOT NULL,
+        ref_date TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)")
@@ -981,7 +1005,9 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_sync_runs_scope_type_key_date ON sync_runs(scope_kind, scope_id, sync_type, sync_key, ref_date)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sync_runs_ref_date ON sync_runs(ref_date)")
     _rebuild_sqlite_unique_tables(cur)
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_user_name ON accounts(user_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_user_name ON categories(user_id, name)")

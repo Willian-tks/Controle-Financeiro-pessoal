@@ -238,6 +238,10 @@ def _norm_rentability_type(value: str | None) -> str:
         "pct_cdi": "PCT_CDI",
         "pct_di": "PCT_CDI",
         "pct_selic": "PCT_SELIC",
+        "cdi_spread": "CDI_SPREAD",
+        "cdi_x": "CDI_SPREAD",
+        "selic_spread": "SELIC_SPREAD",
+        "selic_x": "SELIC_SPREAD",
         "ipca_spread": "IPCA_SPREAD",
         "ipca_x": "IPCA_SPREAD",
         "manual": "MANUAL",
@@ -247,7 +251,7 @@ def _norm_rentability_type(value: str | None) -> str:
 
 def _is_auto_rentability_type(value: str | None) -> bool:
     rt = _norm_rentability_type(value)
-    return rt in {"PREFIXADO", "PCT_CDI", "PCT_SELIC", "IPCA_SPREAD"}
+    return rt in {"PREFIXADO", "PCT_CDI", "PCT_SELIC", "CDI_SPREAD", "SELIC_SPREAD", "IPCA_SPREAD"}
 
 
 def _norm_index_name(value: str | None) -> str:
@@ -336,6 +340,32 @@ def _simulate_asset_value(conn, asset: dict[str, Any], as_of: _date) -> dict[str
         for d in applicable_dates:
             base_rate = _daily_rate_from_index_value(idx_map[d])
             eff_rate = _q_rate((base_rate * pct_multiplier) + spread_daily_rate)
+            current *= _factor_from_rate(eff_rate)
+            processed_days += 1
+            effective_last_date = d
+
+    elif rent_type in {"CDI_SPREAD", "SELIC_SPREAD"}:
+        idx_name = _norm_index_name(asset.get("index_name") or ("CDI" if rent_type == "CDI_SPREAD" else "SELIC"))
+        spread_rate = _to_decimal(asset.get("spread_rate"))
+        if spread_rate is None:
+            return {"ok": False, "updated": False, "reason": "missing_spread_rate"}
+        spread_daily_rate = _annual_pct_to_daily_rate(spread_rate)
+
+        idx_map = _load_daily_index_map(conn, idx_name, start_date, as_of)
+        applicable_dates = sorted([d for d in idx_map.keys() if d >= start_date and d <= as_of])
+        if not applicable_dates:
+            return {
+                "ok": True,
+                "updated": False,
+                "reason": "missing_index_data",
+                "current_value": float(current),
+                "last_update": last_update.isoformat(),
+                "rentability_type": rent_type,
+                "processed_steps": 0,
+            }
+        for d in applicable_dates:
+            base_rate = _daily_rate_from_index_value(idx_map[d])
+            eff_rate = _q_rate(base_rate + spread_daily_rate)
             current *= _factor_from_rate(eff_rate)
             processed_days += 1
             effective_last_date = d
@@ -445,6 +475,7 @@ def update_fixed_income_assets(
     only_auto: bool = True,
     reset_from_principal: bool = False,
     asset_ids: list[int] | None = None,
+    exclude_asset_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     uid = _uid(user_id)
     as_of = _parse_date(as_of_date, "as_of_date") if as_of_date else _date.today()
@@ -467,9 +498,12 @@ def update_fixed_income_assets(
 
         selected_assets: list[dict[str, Any]] = []
         filter_ids = {int(x) for x in (asset_ids or []) if int(x) > 0}
+        excluded_ids = {int(x) for x in (exclude_asset_ids or []) if int(x) > 0}
         for row in rows:
             item = dict(row)
             if filter_ids and int(item["id"]) not in filter_ids:
+                continue
+            if excluded_ids and int(item["id"]) in excluded_ids:
                 continue
             if only_auto and not _is_auto_rentability_type(item.get("rentability_type")):
                 continue
@@ -510,6 +544,7 @@ def update_fixed_income_assets(
         "as_of_date": as_of.isoformat(),
         "only_auto": bool(only_auto),
         "reset_from_principal": bool(reset_from_principal),
+        "excluded_assets": sorted(excluded_ids),
         "total_assets": len(selected_assets),
         "updated": updated,
         "skipped": skipped,

@@ -265,6 +265,9 @@ def bulk_upsert_index_rates(
 
             old_value = float(existing["value"])
             old_source = (str(existing["source"]).strip() if existing["source"] is not None else None)
+            if old_source and old_source.upper().startswith("MANUAL") and (not src or not src.upper().startswith("MANUAL")):
+                unchanged += 1
+                continue
             if abs(old_value - value) < 1e-12 and old_source == src:
                 unchanged += 1
                 continue

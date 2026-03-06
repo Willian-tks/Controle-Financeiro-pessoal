@@ -156,6 +156,24 @@ def df_latest_prices(user_id: int | None = None):
     )
 
 
+def df_latest_asset_snapshots(user_id: int | None = None):
+    uid = _uid(user_id)
+    return _query_df(
+        """
+        SELECT p.asset_id, p.px_date AS snapshot_date, p.price AS snapshot_price, p.source AS snapshot_source
+        FROM asset_prices p
+        JOIN (
+            SELECT asset_id, MAX(px_date) AS max_date
+            FROM asset_prices
+            WHERE user_id = ?
+            GROUP BY asset_id
+        ) m ON m.asset_id = p.asset_id AND m.max_date = p.px_date
+        WHERE p.user_id = ?
+        """,
+        [uid, uid],
+    )
+
+
 def positions_avg_cost(trades_df: pd.DataFrame):
     if trades_df.empty:
         return pd.DataFrame(columns=["asset_id", "symbol", "asset_class", "qty", "avg_cost", "cost_basis", "realized_pnl"])
@@ -235,6 +253,17 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     else:
         pos["price"] = 0.0
         pos["price_date"] = None
+    snapshots = df_latest_asset_snapshots(user_id=uid)
+    if not snapshots.empty and not pos.empty:
+        pos = pos.merge(
+            snapshots[["asset_id", "snapshot_price", "snapshot_date", "snapshot_source"]],
+            on="asset_id",
+            how="left",
+        )
+    else:
+        pos["snapshot_price"] = None
+        pos["snapshot_date"] = None
+        pos["snapshot_source"] = None
 
     pos["price"] = pd.to_numeric(pos.get("price", 0.0), errors="coerce").fillna(0.0)
     cls_norm = pos.get("asset_class", "").astype(str).map(_norm_asset_class)
@@ -272,10 +301,23 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
     fx_factor = fx.where(is_usd_asset, 1.0)
     pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
-    # Para renda fixa, prioriza current_value calculado pelo motor quando disponível.
+    pos["value_origin"] = "cotacao"
+    pos["value_ref_date"] = pos.get("price_date")
+    # Para renda fixa, prioriza ajuste manual histórico; depois current_value calculado.
+    snapshot_price = pd.to_numeric(pos.get("snapshot_price", 0.0), errors="coerce").fillna(0.0)
+    pos.loc[fixed_income_mask & (snapshot_price > 0), "market_value"] = snapshot_price[fixed_income_mask & (snapshot_price > 0)]
+    pos.loc[fixed_income_mask & (snapshot_price > 0), "value_origin"] = "ajuste_manual"
+    pos.loc[fixed_income_mask & (snapshot_price > 0), "value_ref_date"] = pos.loc[fixed_income_mask & (snapshot_price > 0), "snapshot_date"]
     cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
     rf_mask = pos.get("asset_class", "").astype(str).map(_norm_asset_class).isin(_FIXED_INCOME_CLASSES)
-    pos.loc[rf_mask & (cv > 0), "market_value"] = cv[rf_mask & (cv > 0)]
+    auto_mask = rf_mask & (snapshot_price <= 0) & (cv > 0)
+    pos.loc[auto_mask, "market_value"] = cv[auto_mask]
+    pos.loc[auto_mask, "value_origin"] = "motor"
+    pos.loc[auto_mask, "value_ref_date"] = pos.loc[auto_mask, "last_update"]
+    pos["market_value_gross"] = pos["market_value"]
+    # Sem uma regra fiscal configurada por ativo, o líquido estimado replica o bruto.
+    pos["estimated_discount"] = 0.0
+    pos["estimated_net_value"] = pos["market_value_gross"] - pos["estimated_discount"]
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
 
     inc = df_income(date_from, date_to, user_id=uid)
@@ -309,6 +351,24 @@ def df_prices_upto(up_to_date: str, user_id: int | None = None) -> pd.DataFrame:
     )
 
 
+def df_asset_snapshots_upto(up_to_date: str, user_id: int | None = None) -> pd.DataFrame:
+    uid = _uid(user_id)
+    return _query_df(
+        """
+        SELECT p.asset_id, p.px_date AS snapshot_date, p.price AS snapshot_price, p.source AS snapshot_source
+        FROM asset_prices p
+        JOIN (
+            SELECT asset_id, MAX(px_date) AS max_date
+            FROM asset_prices
+            WHERE user_id = ? AND px_date <= ?
+            GROUP BY asset_id
+        ) m ON m.asset_id = p.asset_id AND m.max_date = p.px_date
+        WHERE p.user_id = ?
+        """,
+        [uid, up_to_date, uid],
+    )
+
+
 def investments_value_timeseries(date_from: str, date_to: str, user_id: int | None = None) -> pd.DataFrame:
     uid = _uid(user_id)
     tdf = df_trades(None, date_to, user_id=uid)
@@ -334,8 +394,14 @@ def investments_value_timeseries(date_from: str, date_to: str, user_id: int | No
             pos = pos.merge(prices[["asset_id", "price"]], on="asset_id", how="left")
         else:
             pos["price"] = 0.0
+        snapshots = df_asset_snapshots_upto(d_str, user_id=uid)
+        if not snapshots.empty:
+            pos = pos.merge(snapshots[["asset_id", "snapshot_price"]], on="asset_id", how="left")
+        else:
+            pos["snapshot_price"] = 0.0
 
         pos["price"] = pd.to_numeric(pos["price"], errors="coerce").fillna(0.0)
+        pos["snapshot_price"] = pd.to_numeric(pos.get("snapshot_price", 0.0), errors="coerce").fillna(0.0)
         cls_norm = pos.get("asset_class", "").astype(str).map(_norm_asset_class)
         fixed_income_mask = cls_norm.isin(_FIXED_INCOME_CLASSES)
         missing_price_mask = pos["price"] <= 0
@@ -343,6 +409,9 @@ def investments_value_timeseries(date_from: str, date_to: str, user_id: int | No
             pos.get("avg_cost", 0.0), errors="coerce"
         ).fillna(0.0)
         pos["market_value"] = pos["qty"] * pos["price"]
+        pos.loc[fixed_income_mask & (pos["snapshot_price"] > 0), "market_value"] = pos.loc[
+            fixed_income_mask & (pos["snapshot_price"] > 0), "snapshot_price"
+        ]
         out.append({"date": d, "invest_market_value": float(pos["market_value"].sum())})
 
     return pd.DataFrame(out)

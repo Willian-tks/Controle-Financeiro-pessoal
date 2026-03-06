@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 import calendar
 from typing import Any
-from datetime import date as _date
+from datetime import date as _date, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
@@ -42,6 +43,7 @@ from .schemas import (
     CommitmentSettleRequest,
     LoginRequest,
     LoginResponse,
+    ManualAssetValueUpdateRequest,
     UserGlobalRoleUpdateRequest,
     WorkspaceAdminCreateRequest,
     WorkspaceMemberCreateRequest,
@@ -226,6 +228,10 @@ def _norm_rentability_type(value: Any) -> str | None:
         "PCT_CDI": "PCT_CDI",
         "PCT_DI": "PCT_CDI",
         "PCT_SELIC": "PCT_SELIC",
+        "CDI_SPREAD": "CDI_SPREAD",
+        "CDI_X": "CDI_SPREAD",
+        "SELIC_SPREAD": "SELIC_SPREAD",
+        "SELIC_X": "SELIC_SPREAD",
         "IPCA_SPREAD": "IPCA_SPREAD",
         "IPCA_X": "IPCA_SPREAD",
         "MANUAL": "MANUAL",
@@ -284,7 +290,7 @@ def _validate_asset_rentability(
         else:
             raise HTTPException(status_code=400, detail="Informe rentability_type quando enviar parâmetros de taxa.")
 
-    valid_types = {"PREFIXADO", "PCT_CDI", "PCT_SELIC", "IPCA_SPREAD", "MANUAL"}
+    valid_types = {"PREFIXADO", "PCT_CDI", "PCT_SELIC", "CDI_SPREAD", "SELIC_SPREAD", "IPCA_SPREAD", "MANUAL"}
     if rt not in valid_types:
         raise HTTPException(status_code=400, detail=f"rentability_type inválido: {rt}")
 
@@ -342,7 +348,36 @@ def _validate_asset_rentability(
             "fixed_rate": None,
         }
 
-    # IPCA_SPREAD
+    if rt == "CDI_SPREAD":
+        if idx != "CDI":
+            raise HTTPException(status_code=400, detail="CDI_SPREAD exige index_name=CDI.")
+        if sr is None:
+            raise HTTPException(status_code=400, detail="CDI_SPREAD exige spread_rate.")
+        if any(v is not None for v in [ip, fr]):
+            raise HTTPException(status_code=400, detail="CDI_SPREAD não permite index_pct/fixed_rate.")
+        return {
+            "rentability_type": "CDI_SPREAD",
+            "index_name": "CDI",
+            "index_pct": None,
+            "spread_rate": sr,
+            "fixed_rate": None,
+        }
+
+    if rt == "SELIC_SPREAD":
+        if idx != "SELIC":
+            raise HTTPException(status_code=400, detail="SELIC_SPREAD exige index_name=SELIC.")
+        if sr is None:
+            raise HTTPException(status_code=400, detail="SELIC_SPREAD exige spread_rate.")
+        if any(v is not None for v in [ip, fr]):
+            raise HTTPException(status_code=400, detail="SELIC_SPREAD não permite index_pct/fixed_rate.")
+        return {
+            "rentability_type": "SELIC_SPREAD",
+            "index_name": "SELIC",
+            "index_pct": None,
+            "spread_rate": sr,
+            "fixed_rate": None,
+        }
+
     if idx != "IPCA":
         raise HTTPException(status_code=400, detail="IPCA_SPREAD exige index_name=IPCA.")
     if sr is None:
@@ -355,6 +390,82 @@ def _validate_asset_rentability(
         "index_pct": None,
         "spread_rate": sr,
         "fixed_rate": None,
+    }
+
+
+_CURRENT_VALUE_Q = Decimal("0.000001")
+
+
+def _to_decimal_or_none(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _resolve_manual_rentability_updates(
+    *,
+    rentability_type: str | None,
+    rate_value: Any,
+    current_value: Any = None,
+    principal_amount: Any,
+    existing_rate_type: Any = None,
+    existing_current_value: Any = None,
+    existing_principal_amount: Any = None,
+) -> dict[str, Any]:
+    rt = _norm_rentability_type(rentability_type)
+    parsed_rate = _to_decimal_or_none(rate_value)
+    if parsed_rate is not None and parsed_rate < Decimal("-100"):
+        raise HTTPException(status_code=400, detail="Rentabilidade manual não pode ser menor que -100%.")
+
+    if rt != "MANUAL":
+        if (existing_rate_type or "") == "MANUAL_RETURN":
+            return {"rate_type": None, "rate_value": None}
+        return {}
+
+    if parsed_rate is None:
+        return {}
+
+    base_value = _to_decimal_or_none(current_value)
+    if base_value is None:
+        base_value = _to_decimal_or_none(existing_current_value)
+    if base_value is None:
+        base_value = _to_decimal_or_none(principal_amount)
+    if base_value is None:
+        base_value = _to_decimal_or_none(existing_principal_amount)
+    if base_value is None or base_value <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Rentabilidade manual exige um valor base no ativo. Informe valor atual ou registre a aplicação primeiro.",
+        )
+
+    current_value = (base_value * (Decimal("1") + (parsed_rate / Decimal("100")))).quantize(
+        _CURRENT_VALUE_Q,
+        rounding=ROUND_HALF_UP,
+    )
+    return {
+        "rate_type": "MANUAL_RETURN",
+        "rate_value": float(parsed_rate),
+        "current_value": float(current_value),
+        "last_update": _date.today().isoformat(),
+    }
+
+
+def _resolve_manual_current_value_update(
+    *,
+    current_value: Any,
+    ref_date: str | None = None,
+) -> dict[str, Any]:
+    parsed_current = _to_decimal_or_none(current_value)
+    if parsed_current is None or parsed_current <= 0:
+        raise HTTPException(status_code=400, detail="Informe um valor atual válido.")
+    return {
+        "rate_type": None,
+        "rate_value": None,
+        "current_value": float(parsed_current.quantize(_CURRENT_VALUE_Q, rounding=ROUND_HALF_UP)),
+        "last_update": (ref_date or "").strip() or _date.today().isoformat(),
     }
 
 
@@ -748,6 +859,158 @@ def _require_admin(user: dict) -> None:
         raise HTTPException(status_code=403, detail="Somente admin pode executar esta operação")
 
 
+def _latest_index_ref_date(index_name: str, user_id: int, workspace_id: int | None = None) -> str | None:
+    try:
+        if workspace_id is not None:
+            set_current_workspace_id(int(workspace_id))
+        set_current_user_id(int(user_id))
+        rows = invest_index_rates.list_index_rates(index_name=index_name, limit=1, user_id=int(user_id))
+        if not rows:
+            return None
+        return str(rows[0].get("ref_date") or "").strip() or None
+    finally:
+        clear_tenant_context()
+
+
+def _sync_scope(user_id: int, workspace_id: int | None = None) -> tuple[str, int]:
+    if workspace_id is not None:
+        return "workspace", int(workspace_id)
+    return "user", int(user_id)
+
+
+def _has_sync_run_today(
+    sync_type: str,
+    sync_key: str,
+    user_id: int,
+    workspace_id: int | None = None,
+    ref_date: str | None = None,
+) -> bool:
+    scope_kind, scope_id = _sync_scope(user_id=user_id, workspace_id=workspace_id)
+    target_date = str(ref_date or _date.today().isoformat())
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM sync_runs
+            WHERE scope_kind = ? AND scope_id = ? AND sync_type = ? AND sync_key = ? AND ref_date = ?
+            LIMIT 1
+            """,
+            (scope_kind, scope_id, str(sync_type), str(sync_key), target_date),
+        ).fetchone()
+    return bool(row)
+
+
+def _mark_sync_run_today(
+    sync_type: str,
+    sync_key: str,
+    user_id: int,
+    workspace_id: int | None = None,
+    ref_date: str | None = None,
+) -> None:
+    scope_kind, scope_id = _sync_scope(user_id=user_id, workspace_id=workspace_id)
+    target_date = str(ref_date or _date.today().isoformat())
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO sync_runs(scope_kind, scope_id, sync_type, sync_key, ref_date)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(scope_kind, scope_id, sync_type, sync_key, ref_date) DO NOTHING
+            """,
+            (scope_kind, scope_id, str(sync_type), str(sync_key), target_date),
+        )
+
+
+def _manual_asset_updates_today(user_id: int, workspace_id: int | None = None, ref_date: str | None = None) -> set[int]:
+    target_date = str(ref_date or _date.today().isoformat())
+    params: list[object] = [target_date]
+    where_scope = "workspace_id = ?" if workspace_id is not None else "user_id = ?"
+    params.append(int(workspace_id) if workspace_id is not None else int(user_id))
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT asset_id
+            FROM asset_prices
+            WHERE px_date = ?
+              AND {where_scope}
+              AND LOWER(COALESCE(source, '')) IN ('manual_current_value', 'manual_rentability')
+            """,
+            tuple(params),
+        ).fetchall()
+    out: set[int] = set()
+    for row in rows:
+        try:
+            out.add(int(row["asset_id"]))
+        except Exception:
+            out.add(int(row[0]))
+    return out
+
+
+def _sync_indexes_on_login(user_id: int, workspace_id: int | None = None) -> None:
+    today = _date.today()
+    today_iso = today.isoformat()
+    plans: list[tuple[str, str, str]] = []
+
+    for idx in ("CDI", "SELIC"):
+        if _has_sync_run_today("index_rate_sync", idx, user_id=user_id, workspace_id=workspace_id, ref_date=today_iso):
+            continue
+        latest = _latest_index_ref_date(idx, user_id=user_id, workspace_id=workspace_id)
+        if latest:
+            start = (_date.fromisoformat(latest) + timedelta(days=1)).isoformat()
+        else:
+            start = f"{today.year}-01-01"
+        if start <= today_iso:
+            plans.append((idx, start, today_iso))
+
+    if today.day >= 12:
+        if not _has_sync_run_today("index_rate_sync", "IPCA", user_id=user_id, workspace_id=workspace_id, ref_date=today_iso):
+            latest_ipca = _latest_index_ref_date("IPCA", user_id=user_id, workspace_id=workspace_id)
+            if latest_ipca:
+                start = (_date.fromisoformat(latest_ipca) + timedelta(days=1)).isoformat()
+            else:
+                start = f"{today.year}-01-01"
+            if start <= today_iso:
+                plans.append(("IPCA", start, today_iso))
+
+    try:
+        if workspace_id is not None:
+            set_current_workspace_id(int(workspace_id))
+        set_current_user_id(int(user_id))
+        for idx, start, end in plans:
+            invest_index_rates.sync_from_bcb(
+                index_names=[idx],
+                date_from=start,
+                date_to=end,
+                timeout_s=10.0,
+                user_id=int(user_id),
+            )
+            _mark_sync_run_today("index_rate_sync", idx, user_id=user_id, workspace_id=workspace_id, ref_date=today_iso)
+    except Exception:
+        # Falhas de sincronização de índices não devem bloquear o login.
+        pass
+    finally:
+        clear_tenant_context()
+
+
+def _refresh_fixed_income_on_login(user_id: int, workspace_id: int | None = None) -> None:
+    today_iso = _date.today().isoformat()
+    manual_asset_ids = sorted(_manual_asset_updates_today(user_id=user_id, workspace_id=workspace_id, ref_date=today_iso))
+    try:
+        if workspace_id is not None:
+            set_current_workspace_id(int(workspace_id))
+        set_current_user_id(int(user_id))
+        invest_rentability.update_fixed_income_assets(
+            as_of_date=today_iso,
+            user_id=int(user_id),
+            only_auto=True,
+            exclude_asset_ids=manual_asset_ids,
+        )
+    except Exception:
+        # Falhas de atualização automática não devem bloquear o login.
+        pass
+    finally:
+        clear_tenant_context()
+
+
 def _current_workspace_id_from_user(user: dict) -> int:
     workspace_id = user.get("workspace_id")
     if workspace_id is None:
@@ -864,6 +1127,9 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
                     ip=_request_ip(request),
                 )
                 raise HTTPException(status_code=403, detail="Workspace bloqueado")
+
+    _sync_indexes_on_login(uid, workspace_id=workspace_id)
+    _refresh_fixed_income_on_login(uid, workspace_id=workspace_id)
 
     token = create_token(
         uid,
@@ -2165,6 +2431,31 @@ def invest_create_asset(
         last_update=(body.last_update or "").strip() or None,
         user_id=uid,
     )
+    manual_updates = _resolve_manual_rentability_updates(
+        rentability_type=rent_cfg["rentability_type"],
+        rate_value=body.rate_value,
+        current_value=body.current_value,
+        principal_amount=body.principal_amount,
+    )
+    if created and manual_updates:
+        created_asset = next(
+            (
+                item
+                for item in (invest_repo.list_assets(user_id=uid) or [])
+                if (item.get("symbol") or "").strip().upper() == symbol
+            ),
+            None,
+        )
+        if not created_asset:
+            raise HTTPException(status_code=500, detail="Ativo criado, mas a rentabilidade manual não pôde ser aplicada.")
+        invest_repo.update_asset(
+            asset_id=int(created_asset["id"]),
+            user_id=uid,
+            rate_type=manual_updates.get("rate_type"),
+            rate_value=manual_updates.get("rate_value"),
+            current_value=manual_updates.get("current_value"),
+            last_update=manual_updates.get("last_update"),
+        )
     return {"ok": True, "created": bool(created)}
 
 
@@ -2218,6 +2509,17 @@ def invest_update_asset(
     optional_updates["index_pct"] = rent_cfg["index_pct"]
     optional_updates["spread_rate"] = rent_cfg["spread_rate"]
     optional_updates["fixed_rate"] = rent_cfg["fixed_rate"]
+    optional_updates.update(
+        _resolve_manual_rentability_updates(
+            rentability_type=optional_updates.get("rentability_type", asset.get("rentability_type")),
+            rate_value=optional_updates.get("rate_value", asset.get("rate_value")),
+            current_value=optional_updates.get("current_value"),
+            principal_amount=optional_updates.get("principal_amount"),
+            existing_rate_type=asset.get("rate_type"),
+            existing_current_value=asset.get("current_value"),
+            existing_principal_amount=asset.get("principal_amount"),
+        )
+    )
 
     invest_repo.update_asset(
         asset_id=asset_id,
@@ -2231,6 +2533,68 @@ def invest_update_asset(
         **optional_updates,
     )
     return {"ok": True}
+
+
+@app.post("/invest/assets/{asset_id}/manual-update")
+def invest_manual_update_asset_value(
+    asset_id: int,
+    body: ManualAssetValueUpdateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    asset = invest_repo.get_asset_by_id(asset_id, user_id=uid)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Ativo não encontrado")
+    if not _is_fixed_income_asset(asset):
+        raise HTTPException(status_code=400, detail="Atualização manual está disponível apenas para renda fixa/fundos/tesouro/COE.")
+    is_manual_asset = _norm_rentability_type(asset.get("rentability_type")) == "MANUAL"
+
+    mode = (body.mode or "").strip().lower()
+    if mode == "rentability":
+        if not is_manual_asset:
+            raise HTTPException(status_code=400, detail="Ativos com rentabilidade automática aceitam apenas ajuste por valor atual.")
+        updates = _resolve_manual_rentability_updates(
+            rentability_type="MANUAL",
+            rate_value=body.value,
+            current_value=None,
+            principal_amount=None,
+            existing_rate_type=asset.get("rate_type"),
+            existing_current_value=asset.get("current_value"),
+            existing_principal_amount=asset.get("principal_amount"),
+        )
+        if body.ref_date:
+            updates["last_update"] = body.ref_date.strip()
+    elif mode == "current_value":
+        updates = _resolve_manual_current_value_update(
+            current_value=body.value,
+            ref_date=body.ref_date,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Modo inválido. Use 'rentability' ou 'current_value'.")
+
+    invest_repo.update_asset(
+        asset_id=asset_id,
+        symbol=(asset.get("symbol") or "").strip().upper(),
+        name=(asset.get("name") or "").strip(),
+        asset_class=asset.get("asset_class"),
+        sector=(asset.get("sector") or "Não definido").strip() or "Não definido",
+        currency=(asset.get("currency") or "BRL").strip().upper(),
+        broker_account_id=asset.get("broker_account_id"),
+        user_id=uid,
+        rate_type=updates.get("rate_type"),
+        rate_value=updates.get("rate_value"),
+        current_value=updates.get("current_value"),
+        last_update=updates.get("last_update"),
+    )
+    invest_repo.upsert_asset_snapshot(
+        asset_id=asset_id,
+        px_date=updates.get("last_update") or _date.today().isoformat(),
+        price=updates.get("current_value"),
+        source="manual_rentability" if mode == "rentability" else "manual_current_value",
+        user_id=uid,
+    )
+    updated = invest_repo.get_asset_by_id(asset_id, user_id=uid)
+    return {"ok": True, "asset": _row_to_dict(updated) if updated else None}
 
 
 @app.delete("/invest/assets/{asset_id}")

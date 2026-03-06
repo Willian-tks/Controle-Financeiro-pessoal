@@ -288,6 +288,13 @@ export function updateInvestAsset(id, payload) {
   });
 }
 
+export function updateInvestManualAssetValue(id, payload) {
+  return req(`/invest/assets/${id}/manual-update`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function deleteInvestAsset(id) {
   return req(`/invest/assets/${id}`, {
     method: "DELETE",

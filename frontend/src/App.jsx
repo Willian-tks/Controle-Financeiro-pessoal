@@ -79,6 +79,7 @@ import {
   updateAllInvestRentability,
   updateAllInvestPrices,
   updateInvestAsset,
+  updateInvestManualAssetValue,
   upsertInvestPrice,
   updateCard,
   updateAccount,
@@ -122,6 +123,8 @@ const RENTABILITY_TYPE_OPTIONS = [
   { value: "PREFIXADO", label: "Prefixado" },
   { value: "PCT_CDI", label: "% do CDI" },
   { value: "PCT_SELIC", label: "% da SELIC" },
+  { value: "CDI_SPREAD", label: "CDI + X" },
+  { value: "SELIC_SPREAD", label: "SELIC + X" },
   { value: "IPCA_SPREAD", label: "IPCA + X" },
   { value: "MANUAL", label: "Manual" },
 ];
@@ -155,6 +158,15 @@ const PERMISSION_ACTION_FIELD = {
   add: "can_add",
   edit: "can_edit",
   delete: "can_delete",
+};
+const RENTABILITY_TYPE_LABELS = {
+  PREFIXADO: "Prefixado",
+  PCT_CDI: "% do CDI",
+  PCT_SELIC: "% da SELIC",
+  CDI_SPREAD: "CDI + X",
+  SELIC_SPREAD: "SELIC + X",
+  IPCA_SPREAD: "IPCA + X",
+  MANUAL: "Manual",
 };
 
 function getCurrentMonthRange() {
@@ -260,6 +272,62 @@ function hasPermission(permissionMap, module, action = "view") {
   return Boolean(row[field]);
 }
 
+function formatRentabilityTypeLabel(value) {
+  const key = String(value || "").trim().toUpperCase();
+  return RENTABILITY_TYPE_LABELS[key] || key || "-";
+}
+
+function formatRateDisplay(value, maxDecimals = 8) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return num.toFixed(maxDecimals).replace(/\.?0+$/, "");
+}
+
+function formatValueOriginLabel(value) {
+  const key = String(value || "").trim().toLowerCase();
+  if (key === "ajuste_manual") return "Ajuste manual";
+  if (key === "motor") return "Motor automático";
+  if (key === "cotacao") return "Cotação";
+  return key || "-";
+}
+
+function formatAssetRentabilitySummary(asset) {
+  const rentType = String(asset?.rentability_type || "").trim().toUpperCase();
+  if (!rentType) return "-";
+
+  if (rentType === "MANUAL") {
+    const manualRate = String(asset?.rate_type || "").trim().toUpperCase() === "MANUAL_RETURN"
+      ? formatRateDisplay(asset?.rate_value)
+      : "";
+    return manualRate ? `Manual (${manualRate}%)` : "Manual";
+  }
+  if (rentType === "PREFIXADO") {
+    const fixed = formatRateDisplay(asset?.fixed_rate);
+    return fixed ? `${fixed}% a.a.` : "Prefixado";
+  }
+  if (rentType === "PCT_CDI") {
+    const pct = formatRateDisplay(asset?.index_pct);
+    return pct ? `${pct}% CDI` : "% do CDI";
+  }
+  if (rentType === "PCT_SELIC") {
+    const pct = formatRateDisplay(asset?.index_pct);
+    return pct ? `${pct}% SELIC` : "% da SELIC";
+  }
+  if (rentType === "CDI_SPREAD") {
+    const spread = formatRateDisplay(asset?.spread_rate);
+    return spread ? `CDI + ${spread}% a.a.` : "CDI + X";
+  }
+  if (rentType === "SELIC_SPREAD") {
+    const spread = formatRateDisplay(asset?.spread_rate);
+    return spread ? `SELIC + ${spread}% a.a.` : "SELIC + X";
+  }
+  if (rentType === "IPCA_SPREAD") {
+    const spread = formatRateDisplay(asset?.spread_rate);
+    return spread ? `IPCA + ${spread}% a.a.` : "IPCA + X";
+  }
+  return formatRentabilityTypeLabel(rentType);
+}
+
 function pct(part, total) {
   const p = Number(part || 0);
   const t = Number(total || 0);
@@ -363,6 +431,7 @@ function buildAssetRentabilityPayload({
   indexPctInput,
   spreadRateInput,
   fixedRateInput,
+  manualRateInput,
 }) {
   if (!isFixedIncome) {
     return {
@@ -373,6 +442,8 @@ function buildAssetRentabilityPayload({
         index_pct: null,
         spread_rate: null,
         fixed_rate: null,
+        rate_type: null,
+        rate_value: null,
       },
     };
   }
@@ -380,6 +451,10 @@ function buildAssetRentabilityPayload({
   const rt = String(rentabilityType || "MANUAL").trim().toUpperCase();
 
   if (rt === "MANUAL") {
+    const parsed = parseOptionalNumberInput(manualRateInput);
+    if (!parsed.empty && Number.isNaN(parsed.value)) {
+      return { ok: false, error: "Informe uma rentabilidade valida para Manual." };
+    }
     return {
       ok: true,
       payload: {
@@ -388,6 +463,8 @@ function buildAssetRentabilityPayload({
         index_pct: null,
         spread_rate: null,
         fixed_rate: null,
+        rate_type: parsed.empty ? null : "MANUAL_RETURN",
+        rate_value: parsed.empty ? null : parsed.value,
       },
     };
   }
@@ -405,6 +482,8 @@ function buildAssetRentabilityPayload({
         index_pct: null,
         spread_rate: null,
         fixed_rate: parsed.value,
+        rate_type: null,
+        rate_value: null,
       },
     };
   }
@@ -422,23 +501,28 @@ function buildAssetRentabilityPayload({
         index_pct: parsed.value,
         spread_rate: null,
         fixed_rate: null,
+        rate_type: null,
+        rate_value: null,
       },
     };
   }
 
-  if (rt === "IPCA_SPREAD") {
+  if (rt === "CDI_SPREAD" || rt === "SELIC_SPREAD" || rt === "IPCA_SPREAD") {
     const parsed = parseOptionalNumberInput(spreadRateInput);
     if (parsed.empty || Number.isNaN(parsed.value)) {
-      return { ok: false, error: "Informe o spread anual valido para IPCA + X." };
+      return { ok: false, error: "Informe o spread anual valido para a rentabilidade selecionada." };
     }
+    const indexName = rt === "CDI_SPREAD" ? "CDI" : rt === "SELIC_SPREAD" ? "SELIC" : "IPCA";
     return {
       ok: true,
       payload: {
-        rentability_type: "IPCA_SPREAD",
-        index_name: "IPCA",
+        rentability_type: rt,
+        index_name: indexName,
         index_pct: null,
         spread_rate: parsed.value,
         fixed_rate: null,
+        rate_type: null,
+        rate_value: null,
       },
     };
   }
@@ -559,6 +643,10 @@ export default function App() {
   const [assetEditIndexPct, setAssetEditIndexPct] = useState("");
   const [assetEditSpreadRate, setAssetEditSpreadRate] = useState("");
   const [assetEditFixedRate, setAssetEditFixedRate] = useState("");
+  const [manualQuoteAssetId, setManualQuoteAssetId] = useState("");
+  const [manualQuoteMode, setManualQuoteMode] = useState("rentability");
+  const [manualQuoteValue, setManualQuoteValue] = useState("");
+  const [manualQuoteDate, setManualQuoteDate] = useState("");
   const [investTab, setInvestTab] = useState("Resumo");
   const [managerTab, setManagerTab] = useState("Cadastro de contas");
   const [manageMsg, setManageMsg] = useState("");
@@ -1408,6 +1496,43 @@ export default function App() {
           ],
     [tradeAssetIsFixedIncome]
   );
+  const tradeFixedIncomeIsSell = tradeAssetIsFixedIncome && tradeSide === "SELL";
+  const tradeShowQuantityPrice = !tradeAssetIsFixedIncome;
+  const tradeShowAppliedValue = tradeAssetIsFixedIncome;
+  const tradeShowIrIof = tradeFixedIncomeIsSell;
+  const tradeShowGenericTaxes = !tradeAssetIsFixedIncome || tradeFixedIncomeIsSell;
+  const investManualQuoteAssets = useMemo(
+    () =>
+      investAssets.filter((a) => isFixedIncomeClass(a.asset_class || "")),
+    [investAssets]
+  );
+  const selectedManualQuoteAsset = useMemo(
+    () => investManualQuoteAssets.find((a) => String(a.id) === String(manualQuoteAssetId)) || null,
+    [investManualQuoteAssets, manualQuoteAssetId]
+  );
+  const selectedManualQuoteIsManual = String(selectedManualQuoteAsset?.rentability_type || "").trim().toUpperCase() === "MANUAL";
+  useEffect(() => {
+    if (!investManualQuoteAssets.length) {
+      setManualQuoteAssetId("");
+      return;
+    }
+    if (!investManualQuoteAssets.some((a) => String(a.id) === String(manualQuoteAssetId))) {
+      setManualQuoteAssetId(String(investManualQuoteAssets[0].id));
+    }
+  }, [investManualQuoteAssets, manualQuoteAssetId]);
+  useEffect(() => {
+    if (!selectedManualQuoteAsset) {
+      setManualQuoteMode("rentability");
+      return;
+    }
+    if (!selectedManualQuoteIsManual && manualQuoteMode !== "current_value") {
+      setManualQuoteMode("current_value");
+      return;
+    }
+    if (selectedManualQuoteIsManual && !["rentability", "current_value"].includes(manualQuoteMode)) {
+      setManualQuoteMode("rentability");
+    }
+  }, [selectedManualQuoteAsset, selectedManualQuoteIsManual, manualQuoteMode]);
   const donutStyle = useMemo(() => {
     if (!investmentByClass.length || investmentTotal <= 0) {
       return { background: "conic-gradient(#2f3f63 0deg 360deg)" };
@@ -2387,6 +2512,55 @@ export default function App() {
       });
       formEl.reset();
       setInvestMsg("Cotação salva.");
+      await reloadInvestData();
+    } catch (err) {
+      setInvestMsg(String(err.message || err));
+    }
+  }
+
+  async function onUpdateInvestManualQuote(e) {
+    e.preventDefault();
+    setInvestMsg("");
+    if (!canEditInvestimentos) {
+      setInvestMsg("Sem permissão para atualizar ativos.");
+      return;
+    }
+    const assetId = Number(manualQuoteAssetId || 0);
+    const value = Number(String(manualQuoteValue || "").replace(",", "."));
+    const refDate = String(manualQuoteDate || "").trim();
+    if (!assetId) {
+      setInvestMsg("Selecione um ativo para atualização manual.");
+      return;
+    }
+    if (!Number.isFinite(value)) {
+      setInvestMsg(
+        manualQuoteMode === "rentability"
+          ? "Informe uma rentabilidade válida."
+          : "Informe um valor atual válido."
+      );
+      return;
+    }
+    if (manualQuoteMode === "current_value" && value <= 0) {
+      setInvestMsg("O valor atual deve ser maior que zero.");
+      return;
+    }
+    if (!selectedManualQuoteIsManual && manualQuoteMode !== "current_value") {
+      setInvestMsg("Ativos com indexador automático aceitam apenas ajuste por valor atual.");
+      return;
+    }
+    if (manualQuoteMode === "rentability" && value < -100) {
+      setInvestMsg("A rentabilidade manual não pode ser menor que -100%.");
+      return;
+    }
+    try {
+      await updateInvestManualAssetValue(assetId, {
+        mode: manualQuoteMode,
+        value,
+        ref_date: refDate || null,
+      });
+      setManualQuoteValue("");
+      setManualQuoteDate("");
+      setInvestMsg("Atualização manual salva.");
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
@@ -4529,7 +4703,7 @@ export default function App() {
                         {investDivergenceReport.map((row) => (
                           <tr key={`${row.asset_id}-${row.symbol}`}>
                             <td>{row.symbol || row.asset_id}</td>
-                            <td>{row.rentability_type || "-"}</td>
+                            <td>{formatRentabilityTypeLabel(row.rentability_type)}</td>
                             <td>{brl.format(Number(row.stored_current_value || 0))}</td>
                             <td>{brl.format(Number(row.projected_current_value || 0))}</td>
                             <td>{brl.format(Number(row.delta_value || 0))}</td>
@@ -4596,7 +4770,8 @@ export default function App() {
                         placeholder="Percentual do índice (%)"
                       />
                     ) : null}
-                    {assetCreateIsFixedIncome && assetCreateRentabilityType === "IPCA_SPREAD" ? (
+                    {assetCreateIsFixedIncome &&
+                    ["CDI_SPREAD", "SELIC_SPREAD", "IPCA_SPREAD"].includes(assetCreateRentabilityType) ? (
                       <input
                         type="number"
                         step="0.00000001"
@@ -4697,7 +4872,8 @@ export default function App() {
                         placeholder="Percentual do índice (%)"
                       />
                     ) : null}
-                    {assetEditIsFixedIncome && assetEditRentabilityType === "IPCA_SPREAD" ? (
+                    {assetEditIsFixedIncome &&
+                    ["CDI_SPREAD", "SELIC_SPREAD", "IPCA_SPREAD"].includes(assetEditRentabilityType) ? (
                       <input
                         type="number"
                         step="0.00000001"
@@ -4738,6 +4914,7 @@ export default function App() {
                           <th>Símbolo</th>
                           <th>Nome</th>
                           <th>Classe</th>
+                          <th>Rentabilidade</th>
                           <th>Setor</th>
                           <th>Moeda</th>
                           <th>Corretora</th>
@@ -4752,6 +4929,7 @@ export default function App() {
                             <td>{a.symbol}</td>
                             <td>{a.name}</td>
                             <td>{a.asset_class}</td>
+                            <td>{formatAssetRentabilitySummary(a)}</td>
                             <td>{a.sector || "-"}</td>
                             <td>{a.currency}</td>
                             <td>{a.broker_account || "-"}</td>
@@ -4803,43 +4981,47 @@ export default function App() {
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </select>
-                    <input
-                      name="quantity"
-                      type="number"
-                      step={tradeQuantityStep}
-                      min={tradeQuantityMin}
-                      placeholder={tradeQuantityPlaceholder}
-                      required
-                      disabled={tradeAssetIsFixedIncome}
-                    />
-                    <input
-                      name="price"
-                      type="number"
-                      step="0.0001"
-                      min="0.0001"
-                      placeholder={tradeAssetIsUsStock ? "Preço (USD)" : "Preço"}
-                      required
-                      disabled={tradeAssetIsFixedIncome}
-                    />
-                    {tradeAssetIsFixedIncome ? (
+                    {tradeShowQuantityPrice ? (
+                      <>
+                        <input
+                          name="quantity"
+                          type="number"
+                          step={tradeQuantityStep}
+                          min={tradeQuantityMin}
+                          placeholder={tradeQuantityPlaceholder}
+                          required
+                        />
+                        <input
+                          name="price"
+                          type="number"
+                          step="0.0001"
+                          min="0.0001"
+                          placeholder={tradeAssetIsUsStock ? "Preço (USD)" : "Preço"}
+                          required
+                        />
+                      </>
+                    ) : null}
+                    {tradeShowAppliedValue ? (
                       <>
                         <input
                           name="applied_value"
                           type="number"
                           step="0.01"
                           min="0.01"
-                          placeholder="Valor (aplicado)"
+                          placeholder={tradeFixedIncomeIsSell ? "Valor bruto do resgate" : "Valor da aplicação"}
                           required
                         />
-                        <input
-                          name="ir_iof"
-                          type="number"
-                          step="0.0001"
-                          min="0"
-                          max="100"
-                          placeholder="IR/IOF (%)"
-                        />
                       </>
+                    ) : null}
+                    {tradeShowIrIof ? (
+                      <input
+                        name="ir_iof"
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        max="100"
+                        placeholder="IR/IOF do resgate (%)"
+                      />
                     ) : null}
                     {tradeAssetIsUsStock ? (
                       <input
@@ -4858,20 +5040,39 @@ export default function App() {
                       type="number"
                       step="0.01"
                       min="0"
-                      placeholder="Taxas (opcional, padrão 0)"
+                      placeholder={
+                        tradeAssetIsFixedIncome
+                          ? tradeFixedIncomeIsSell
+                            ? "Taxas do resgate (opcional)"
+                            : "Taxas da aplicação (opcional)"
+                          : "Taxas (opcional, padrão 0)"
+                      }
                       aria-label="Taxas"
                     />
-                    <input
-                      name="taxes"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="Impostos (opcional, padrão 0)"
-                      aria-label="Impostos"
-                    />
+                    {tradeShowGenericTaxes ? (
+                      <input
+                        name="taxes"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder={
+                          tradeAssetIsFixedIncome
+                            ? "Impostos do resgate (opcional)"
+                            : "Impostos (opcional, padrão 0)"
+                        }
+                        aria-label="Impostos"
+                      />
+                    ) : null}
                     <input name="note" type="text" placeholder="Obs (opcional)" />
                     <button type="submit">Salvar operação</button>
                   </form>
+                  {tradeAssetIsFixedIncome ? (
+                    <p className="tx-helper">
+                      {tradeFixedIncomeIsSell
+                        ? "Em resgates de renda fixa, IR/IOF, taxas e impostos reduzem o valor líquido recebido."
+                        : "Em aplicações de renda fixa, o valor atual do ativo é acompanhado em bruto; descontos fiscais entram no resgate."}
+                    </p>
+                  ) : null}
                 </section>
 
                 <section className="card">
@@ -5049,10 +5250,62 @@ export default function App() {
                     ))}
                   </select>
                   <input name="date" type="date" required />
-                  <input name="price" type="number" step="0.0001" min="0.0001" placeholder="Preço" required />
+                  <input
+                    name="price"
+                    type="number"
+                    step="0.0001"
+                    min="0.0001"
+                    placeholder="Preço unitário"
+                    title="Informe o preço por unidade do ativo, não o valor total da posição."
+                    required
+                  />
                   <input name="source" type="text" placeholder="Fonte" defaultValue="manual" />
                   <button type="submit">Salvar cotação manual</button>
                 </form>
+                <p className="tx-helper">
+                  Para ações, BDRs, FIIs, stocks e cripto, a cotação manual deve ser o preço por unidade do ativo. O valor da posição é calculado pela quantidade em carteira.
+                </p>
+                <section className="card quote-manual-fixed-card">
+                  <h3>Atualização manual de renda fixa e fundos</h3>
+                  <form className="tx-form" onSubmit={onUpdateInvestManualQuote}>
+                    <select value={manualQuoteAssetId} onChange={(e) => setManualQuoteAssetId(e.target.value)}>
+                      <option value="" disabled>Ativo manual</option>
+                      {investManualQuoteAssets.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.symbol} {String(a.rentability_type || "").trim().toUpperCase() === "MANUAL" ? "(Manual)" : "(Automático)"}
+                        </option>
+                      ))}
+                    </select>
+                    <select value={manualQuoteMode} onChange={(e) => setManualQuoteMode(e.target.value)}>
+                      {selectedManualQuoteIsManual ? (
+                        <option value="rentability">Atualizar por rentabilidade (%)</option>
+                      ) : null}
+                      <option value="current_value">Atualizar por valor atual</option>
+                    </select>
+                    <input
+                      type="date"
+                      value={manualQuoteDate}
+                      onChange={(e) => setManualQuoteDate(e.target.value)}
+                    />
+                    <input
+                      type="number"
+                      step="0.00000001"
+                      value={manualQuoteValue}
+                      onChange={(e) => setManualQuoteValue(e.target.value)}
+                      placeholder={
+                        manualQuoteMode === "rentability"
+                          ? "Rentabilidade atual (%)"
+                          : "Valor atual"
+                      }
+                    />
+                    <button type="submit">Salvar atualização manual</button>
+                  </form>
+                  <p className="tx-helper">
+                    {selectedManualQuoteIsManual
+                      ? "Ativos manuais aceitam atualização por rentabilidade (%) ou por valor atual. Ativos automáticos aceitam apenas ajuste fino por valor atual."
+                      : "Para ativos com indexador automático, use apenas valor atual como ajuste fino de carteira real. O cadastro estrutural do ativo permanece na aba Ativos."}
+                  </p>
+                </section>
                 <div className="tx-table-wrap">
                   <table className="tx-table">
                     <thead>
@@ -5090,7 +5343,10 @@ export default function App() {
                       <th>Classe</th>
                       <th>Qtd</th>
                       <th>Custo</th>
-                      <th>Mercado</th>
+                      <th>Mercado Bruto</th>
+                      <th>Líquido Estimado</th>
+                      <th>Origem</th>
+                      <th>Data Valor</th>
                       <th>P&L Não Realizado</th>
                     </tr>
                   </thead>
@@ -5101,13 +5357,19 @@ export default function App() {
                         <td>{p.asset_class}</td>
                         <td>{Number(p.qty || 0).toFixed(8)}</td>
                         <td>{brl.format(Number(p.cost_basis || 0))}</td>
-                        <td>{brl.format(Number(p.market_value || 0))}</td>
+                        <td>{brl.format(Number((p.market_value_gross ?? p.market_value) || 0))}</td>
+                        <td>{brl.format(Number((p.estimated_net_value ?? p.market_value) || 0))}</td>
+                        <td>{formatValueOriginLabel(p.value_origin)}</td>
+                        <td>{formatIsoDatePtBr(p.value_ref_date)}</td>
                         <td>{brl.format(Number(p.unrealized_pnl || 0))}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <p className="tx-helper">
+                Mercado Bruto representa o valor atual do ativo antes de descontos de saída. Líquido Estimado replica o bruto enquanto não houver regra fiscal configurada por ativo.
+              </p>
               {investMsg ? <p>{investMsg}</p> : null}
             </section>
           </>
