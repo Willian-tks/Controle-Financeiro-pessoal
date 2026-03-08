@@ -310,6 +310,7 @@ def _sqlite_schema(cur):
         date TEXT NOT NULL,
         type TEXT NOT NULL,
         amount REAL NOT NULL,
+        credit_account_id INTEGER,
         note TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY(asset_id) REFERENCES assets(id)
@@ -549,6 +550,7 @@ def _postgres_schema(cur):
         date TEXT NOT NULL,
         type TEXT NOT NULL,
         amount DOUBLE PRECISION NOT NULL,
+        credit_account_id BIGINT,
         note TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         CONSTRAINT fk_income_asset FOREIGN KEY (asset_id) REFERENCES assets(id)
@@ -610,6 +612,25 @@ def _backfill_multiworkspace_phase1(cur) -> None:
         if uid <= 0:
             continue
         email = str(_row_value(u, "email", "") or "")
+
+        # If the user already belongs to any workspace, do not auto-create
+        # a private owner workspace during backfill. This preserves guest-only
+        # users and avoids recreating deleted personal workspaces on startup.
+        membership_row = cur.execute(
+            """
+            SELECT workspace_id, role
+            FROM workspace_users
+            WHERE user_id = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (uid,),
+        ).fetchone()
+        if membership_row:
+            existing_ws_id = int(_row_value(membership_row, "workspace_id", 0) or 0)
+            if existing_ws_id > 0:
+                owner_workspace_by_user[uid] = existing_ws_id
+                continue
 
         ws_row = cur.execute(
             """
@@ -784,6 +805,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS exchange_rate DOUBLE PRECISION NOT NULL DEFAULT 1")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
+    cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS credit_account_id BIGINT")
     cur.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE asset_prices ADD COLUMN IF NOT EXISTS user_id BIGINT")
@@ -956,6 +978,7 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "trades", "user_id INTEGER")
     _add_column_sqlite(cur, "trades", "exchange_rate REAL NOT NULL DEFAULT 1")
     _add_column_sqlite(cur, "income_events", "user_id INTEGER")
+    _add_column_sqlite(cur, "income_events", "credit_account_id INTEGER")
     _add_column_sqlite(cur, "prices", "user_id INTEGER")
     _add_column_sqlite(cur, "asset_prices", "user_id INTEGER")
     _add_column_sqlite(cur, "credit_cards", "user_id INTEGER")

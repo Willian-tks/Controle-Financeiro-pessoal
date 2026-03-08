@@ -59,6 +59,7 @@ import {
   getInvestTrades,
   getKpis,
   getMe,
+  updateMeProfile,
   getWorkspaces,
   switchWorkspace,
   getWorkspaceMembers,
@@ -116,6 +117,7 @@ const PAGE_SUBTITLES = {
 const INVEST_TABS = ["Resumo", "Ativos", "Operações", "Proventos", "Cotações"];
 const MANAGER_TABS = ["Cadastro de contas", "Cadastro de categorias", "Cadastro cartão de crédito"];
 const QUOTE_GROUP_OPTIONS = ["Ações BR", "FIIs", "Stocks", "Cripto"];
+const MANUAL_PRICE_CLASS_OPTIONS = ["Ações BR", "FIIs", "Stocks US", "BDRs", "Cripto"];
 const INVEST_RENTABILITY_TIMEOUT_MS = 6000;
 const INVEST_DIVERGENCE_TIMEOUT_MS = 8000;
 const INVEST_RENTABILITY_MIN_SYNC_INTERVAL_MS = 60000;
@@ -204,6 +206,12 @@ function normalizeWorkspaceStatus(value) {
   const raw = String(value || "").trim().toLowerCase();
   if (raw === "blocked") return "blocked";
   return "active";
+}
+
+function normalizeSignedZero(value, epsilon = 1e-9) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return 0;
+  return Math.abs(num) < epsilon ? 0 : num;
 }
 
 function buildPermissionsDraft(member) {
@@ -533,10 +541,29 @@ function buildAssetRentabilityPayload({
 function formatIsoDatePtBr(value) {
   const raw = String(value || "").trim();
   if (!raw) return "-";
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) {
+    return `${compact[3]}/${compact[2]}/${compact[1]}`;
+  }
   const iso = raw.slice(0, 10);
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return raw;
   return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+function formatPortfolioQty(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return "-";
+  return num.toFixed(8).replace(/\.?0+$/, "");
+}
+
+function getCircularDistance(fromIndex, toIndex, total) {
+  const size = Number(total || 0);
+  if (!Number.isFinite(size) || size <= 0) return 0;
+  const forward = (toIndex - fromIndex + size) % size;
+  const backward = (fromIndex - toIndex + size) % size;
+  if (forward === 0) return 0;
+  return forward <= backward ? 1 : -1;
 }
 
 export default function App() {
@@ -566,6 +593,8 @@ export default function App() {
   const [txMethod, setTxMethod] = useState("PIX");
   const [txRecentCategoryFilterId, setTxRecentCategoryFilterId] = useState("");
   const [txRecentStatusFilter, setTxRecentStatusFilter] = useState("");
+  const [txRecentDateFrom, setTxRecentDateFrom] = useState(defaultMonthRange.from);
+  const [txRecentDateTo, setTxRecentDateTo] = useState(defaultMonthRange.to);
   const [txFuturePaymentMethod, setTxFuturePaymentMethod] = useState("PIX");
   const [txView, setTxView] = useState("caixa");
   const [txSourceAccountId, setTxSourceAccountId] = useState("");
@@ -575,14 +604,14 @@ export default function App() {
   const [cardCreateName, setCardCreateName] = useState("");
   const [cardCreateBrand, setCardCreateBrand] = useState("");
   const [cardCreateModel, setCardCreateModel] = useState("");
-  const [cardCreateType, setCardCreateType] = useState("");
+  const [cardCreateType, setCardCreateType] = useState("Credito");
   const [cardCreateAccountId, setCardCreateAccountId] = useState("");
   const [cardCreateDueDay, setCardCreateDueDay] = useState("");
   const [cardCreateCloseDay, setCardCreateCloseDay] = useState("");
   const [cardName, setCardName] = useState("");
   const [cardBrand, setCardBrand] = useState("");
   const [cardModel, setCardModel] = useState("");
-  const [cardType, setCardType] = useState("");
+  const [cardType, setCardType] = useState("Credito");
   const [cardAccountId, setCardAccountId] = useState("");
   const [cardSourceAccountId, setCardSourceAccountId] = useState("");
   const [cardDueDay, setCardDueDay] = useState("");
@@ -599,6 +628,7 @@ export default function App() {
   const [investDivergenceThreshold, setInvestDivergenceThreshold] = useState("0.10");
   const [investDivergenceReport, setInvestDivergenceReport] = useState([]);
   const [investDivergenceRunning, setInvestDivergenceRunning] = useState(false);
+  const [investDivergenceOpen, setInvestDivergenceOpen] = useState(false);
   const [investPriceUpdateReport, setInvestPriceUpdateReport] = useState([]);
   const [investPriceUpdateRunning, setInvestPriceUpdateRunning] = useState(false);
   const [investRentabilitySyncRunning, setInvestRentabilitySyncRunning] = useState(false);
@@ -621,10 +651,19 @@ export default function App() {
   });
   const [quoteTimeout, setQuoteTimeout] = useState("25");
   const [quoteWorkers, setQuoteWorkers] = useState("4");
-  const [quoteGroups, setQuoteGroups] = useState(QUOTE_GROUP_OPTIONS);
+  const [quoteGroup, setQuoteGroup] = useState("");
+  const [manualPriceClassFilter, setManualPriceClassFilter] = useState("");
   const [investSummaryClassFilter, setInvestSummaryClassFilter] = useState("");
+  const [investPortfolioClassFilter, setInvestPortfolioClassFilter] = useState("");
+  const [investAssetsClassFilter, setInvestAssetsClassFilter] = useState("");
+  const [investTradeDateFrom, setInvestTradeDateFrom] = useState(defaultMonthRange.from);
+  const [investTradeDateTo, setInvestTradeDateTo] = useState(defaultMonthRange.to);
+  const [investIncomeDateFrom, setInvestIncomeDateFrom] = useState(defaultMonthRange.from);
+  const [investIncomeDateTo, setInvestIncomeDateTo] = useState(defaultMonthRange.to);
   const [tradeAssetClassFilter, setTradeAssetClassFilter] = useState("");
   const [tradeAssetId, setTradeAssetId] = useState("");
+  const [incomeAssetClassFilter, setIncomeAssetClassFilter] = useState("");
+  const [incomeAssetId, setIncomeAssetId] = useState("");
   const [tradeSide, setTradeSide] = useState("BUY");
   const [tradeExchangeRate, setTradeExchangeRate] = useState("");
   const [assetCreateClass, setAssetCreateClass] = useState("");
@@ -633,6 +672,7 @@ export default function App() {
   const [assetCreateSpreadRate, setAssetCreateSpreadRate] = useState("");
   const [assetCreateFixedRate, setAssetCreateFixedRate] = useState("");
   const [assetEditId, setAssetEditId] = useState("");
+  const [assetEditClassFilter, setAssetEditClassFilter] = useState("");
   const [assetEditSymbol, setAssetEditSymbol] = useState("");
   const [assetEditName, setAssetEditName] = useState("");
   const [assetEditClass, setAssetEditClass] = useState("");
@@ -677,6 +717,14 @@ export default function App() {
   const [catEditKind, setCatEditKind] = useState("Despesa");
   const [loading, setLoading] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profileCurrentPassword, setProfileCurrentPassword] = useState("");
+  const [profileNewPassword, setProfileNewPassword] = useState("");
+  const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
+  const [profileMsg, setProfileMsg] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
   const [walletCardIndex, setWalletCardIndex] = useState(0);
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [payInvoiceTarget, setPayInvoiceTarget] = useState(null);
@@ -698,6 +746,16 @@ export default function App() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!profileModalOpen || !user) return;
+    setProfileDisplayName(String(user.display_name || ""));
+    setProfileEmail(String(user.email || ""));
+    setProfileCurrentPassword("");
+    setProfileNewPassword("");
+    setProfileConfirmPassword("");
+    setProfileMsg("");
+  }, [profileModalOpen, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -836,7 +894,7 @@ export default function App() {
       setCardName("");
       setCardBrand("");
       setCardModel("");
-      setCardType("");
+      setCardType("Credito");
       setCardAccountId("");
       setCardSourceAccountId("");
       setCardDueDay("");
@@ -850,7 +908,7 @@ export default function App() {
       setCardName("");
       setCardBrand("");
       setCardModel("");
-      setCardType("");
+      setCardType("Credito");
       setCardAccountId("");
       setCardSourceAccountId("");
       setCardDueDay("");
@@ -869,6 +927,7 @@ export default function App() {
 
   useEffect(() => {
     if (!investAssets.length) {
+      setAssetEditClassFilter("");
       setAssetEditId("");
       setAssetEditSymbol("");
       setAssetEditName("");
@@ -882,9 +941,40 @@ export default function App() {
       setAssetEditFixedRate("");
       return;
     }
-    const cur = investAssets.find((a) => String(a.id) === String(assetEditId)) || investAssets[0];
+    if (assetEditClassFilter && !investAssets.some((a) => String(a.asset_class || "") === String(assetEditClassFilter))) {
+      setAssetEditClassFilter("");
+    }
+  }, [investAssets]);
+
+  const assetEditOptions = useMemo(() => {
+    if (!assetEditClassFilter) return [];
+    return investAssets.filter((a) => String(a.asset_class || "") === String(assetEditClassFilter));
+  }, [investAssets, assetEditClassFilter]);
+
+  useEffect(() => {
+    if (!assetEditId) return;
+    if (!assetEditOptions.some((a) => String(a.id) === String(assetEditId))) {
+      setAssetEditId("");
+    }
+  }, [assetEditOptions, assetEditId]);
+
+  useEffect(() => {
+    if (!assetEditId) {
+      setAssetEditSymbol("");
+      setAssetEditName("");
+      setAssetEditClass("");
+      setAssetEditSector("Não definido");
+      setAssetEditCurrency("BRL");
+      setAssetEditBrokerId("");
+      setAssetEditRentabilityType("");
+      setAssetEditIndexPct("");
+      setAssetEditSpreadRate("");
+      setAssetEditFixedRate("");
+      return;
+    }
+    const cur = investAssets.find((a) => String(a.id) === String(assetEditId));
+    if (!cur) return;
     const isFixedIncome = isFixedIncomeClass(cur.asset_class || "");
-    setAssetEditId(String(cur.id));
     setAssetEditSymbol(cur.symbol || "");
     setAssetEditName(cur.name || "");
     setAssetEditClass(cur.asset_class || "");
@@ -895,7 +985,7 @@ export default function App() {
     setAssetEditIndexPct(cur.index_pct == null ? "" : String(cur.index_pct));
     setAssetEditSpreadRate(cur.spread_rate == null ? "" : String(cur.spread_rate));
     setAssetEditFixedRate(cur.fixed_rate == null ? "" : String(cur.fixed_rate));
-  }, [investAssets]);
+  }, [investAssets, assetEditId]);
 
   useEffect(() => {
     if (isFixedIncomeClass(assetCreateClass || "")) {
@@ -1044,7 +1134,12 @@ export default function App() {
   const transactionsVisible = useMemo(() => {
     const targetId = String(txRecentCategoryFilterId);
     const targetName = normalizeText(txRecentCategoryFilter?.name || "");
+    const from = String(txRecentDateFrom || "").trim();
+    const to = String(txRecentDateTo || "").trim();
     return (transactions || []).filter((t) => {
+      const date = String(t.date || "").trim();
+      if (from && date && date < from) return false;
+      if (to && date && date > to) return false;
       if (txRecentCategoryFilterId) {
         const categoryMatches =
           String(t.category_id || "") === targetId ||
@@ -1058,7 +1153,7 @@ export default function App() {
       }
       return true;
     });
-  }, [transactions, txRecentCategoryFilterId, txRecentCategoryFilter, txRecentStatusFilter]);
+  }, [transactions, txRecentCategoryFilterId, txRecentCategoryFilter, txRecentStatusFilter, txRecentDateFrom, txRecentDateTo]);
   const transactionsVisibleOrdered = useMemo(() => {
     if (txView !== "futuro" && txView !== "competencia") return transactionsVisible;
     const rows = [...transactionsVisible];
@@ -1223,11 +1318,6 @@ export default function App() {
       setTxAccountId(String(selectedTxCard.card_account_id || ""));
     }
   }, [txIsExpenseCredit, selectedTxCard, txAccountId]);
-  const isEditCreditCardType = cardType === "Credito";
-  const hasEditCardTypeSelected = cardType === "Credito" || cardType === "Debito";
-  const isCreateCreditCardType = cardCreateType === "Credito";
-  const hasCreateCardTypeSelected = cardCreateType === "Credito" || cardCreateType === "Debito";
-
   const brl = useMemo(
     () =>
       new Intl.NumberFormat("pt-BR", {
@@ -1291,6 +1381,21 @@ export default function App() {
     }
   }, [creditCards.length, walletCardIndex]);
   const activeCreditCard = creditCards.length ? creditCards[walletCardIndex] : null;
+  const walletVisibleCards = useMemo(() => {
+    if (!creditCards.length) return [];
+    if (creditCards.length === 1) {
+      return [{ ...creditCards[0], walletPos: "active" }];
+    }
+    return creditCards
+      .map((card, idx) => {
+        const dist = getCircularDistance(walletCardIndex, idx, creditCards.length);
+        if (dist === 0) return { ...card, walletPos: "active" };
+        if (dist === -1) return { ...card, walletPos: "prev" };
+        if (dist === 1) return { ...card, walletPos: "next" };
+        return null;
+      })
+      .filter(Boolean);
+  }, [creditCards, walletCardIndex]);
   const activeCardOpenInvoices = useMemo(() => {
     if (!activeCreditCard) return [];
     return (cardInvoices || []).filter(
@@ -1368,6 +1473,12 @@ export default function App() {
       setInvestSummaryClassFilter("");
     }
   }, [investSummaryClassFilter, investSummaryClassOptions]);
+  useEffect(() => {
+    if (!investPortfolioClassFilter) return;
+    if (!investSummaryClassOptions.includes(investPortfolioClassFilter)) {
+      setInvestPortfolioClassFilter("");
+    }
+  }, [investPortfolioClassFilter, investSummaryClassOptions]);
   const investSummaryPositionsFiltered = useMemo(() => {
     const rows = investPortfolio?.positions || [];
     if (!investSummaryClassFilter) return rows;
@@ -1405,8 +1516,10 @@ export default function App() {
     if (investTab === "Resumo" && investSummaryClassFilter) {
       return investSummaryPositionsFiltered;
     }
-    return investPortfolio.positions || [];
-  }, [investTab, investSummaryClassFilter, investSummaryPositionsFiltered, investPortfolio]);
+    const rows = investPortfolio.positions || [];
+    if (!investPortfolioClassFilter) return rows;
+    return rows.filter((p) => String(p.asset_class || "") === investPortfolioClassFilter);
+  }, [investTab, investSummaryClassFilter, investSummaryPositionsFiltered, investPortfolio, investPortfolioClassFilter]);
   const assetCreateIsFixedIncome = useMemo(
     () => isFixedIncomeClass(assetCreateClass),
     [assetCreateClass]
@@ -1449,6 +1562,38 @@ export default function App() {
     const selectedKey = classKey(tradeAssetClassFilter);
     return investAssets.filter((a) => classKey(a.asset_class) === selectedKey);
   }, [investAssets, tradeAssetClassFilter]);
+  const incomeAssetOptions = useMemo(() => {
+    if (!incomeAssetClassFilter) return [];
+    const selectedKey = classKey(incomeAssetClassFilter);
+    return investAssets.filter((a) => classKey(a.asset_class) === selectedKey);
+  }, [investAssets, incomeAssetClassFilter]);
+  const investAssetsVisible = useMemo(() => {
+    if (!investAssetsClassFilter) return investAssets;
+    const selectedKey = classKey(investAssetsClassFilter);
+    return investAssets.filter((a) => classKey(a.asset_class) === selectedKey);
+  }, [investAssets, investAssetsClassFilter]);
+  const investTradesVisible = useMemo(() => {
+    const from = String(investTradeDateFrom || "").trim();
+    const to = String(investTradeDateTo || "").trim();
+    return (investTrades || []).filter((t) => {
+      const date = String(t?.date || "").trim();
+      if (!date) return false;
+      if (from && date < from) return false;
+      if (to && date > to) return false;
+      return true;
+    });
+  }, [investTrades, investTradeDateFrom, investTradeDateTo]);
+  const investIncomesVisible = useMemo(() => {
+    const from = String(investIncomeDateFrom || "").trim();
+    const to = String(investIncomeDateTo || "").trim();
+    return (investIncomes || []).filter((i) => {
+      const date = String(i?.date || "").trim();
+      if (!date) return false;
+      if (from && date < from) return false;
+      if (to && date > to) return false;
+      return true;
+    });
+  }, [investIncomes, investIncomeDateFrom, investIncomeDateTo]);
   useEffect(() => {
     if (!tradeAssetId) return;
     const stillValid = tradeAssetOptions.some((a) => String(a.id) === String(tradeAssetId));
@@ -1464,6 +1609,24 @@ export default function App() {
     () => isFixedIncomeClass(tradeEffectiveClass),
     [tradeEffectiveClass]
   );
+  const manualPriceAssets = useMemo(() => {
+    const allowed = new Set(MANUAL_PRICE_CLASS_OPTIONS.map((item) => classKey(item)));
+    const selectedKey = classKey(manualPriceClassFilter);
+    return investAssets.filter((a) => {
+      const key = classKey(a.asset_class);
+      if (!allowed.has(key)) return false;
+      if (!selectedKey) return false;
+      return key === selectedKey;
+    });
+  }, [investAssets, manualPriceClassFilter]);
+  useEffect(() => {
+    if (!manualPriceClassFilter) return;
+    const selected = classKey(manualPriceClassFilter);
+    const stillExists = MANUAL_PRICE_CLASS_OPTIONS.some((item) => classKey(item) === selected);
+    if (!stillExists) {
+      setManualPriceClassFilter("");
+    }
+  }, [manualPriceClassFilter]);
   const tradeAssetIsUsStock = useMemo(
     () =>
       isUsStockClass(tradeEffectiveClass) ||
@@ -1516,8 +1679,8 @@ export default function App() {
       setManualQuoteAssetId("");
       return;
     }
-    if (!investManualQuoteAssets.some((a) => String(a.id) === String(manualQuoteAssetId))) {
-      setManualQuoteAssetId(String(investManualQuoteAssets[0].id));
+    if (manualQuoteAssetId && !investManualQuoteAssets.some((a) => String(a.id) === String(manualQuoteAssetId))) {
+      setManualQuoteAssetId("");
     }
   }, [investManualQuoteAssets, manualQuoteAssetId]);
   useEffect(() => {
@@ -1744,6 +1907,54 @@ export default function App() {
       setAdminMsg(String(err.message || err));
     } finally {
       setAdminStatusUpdatingId("");
+    }
+  }
+
+  async function onSaveProfile(e) {
+    e.preventDefault();
+    setProfileMsg("");
+    const email = String(profileEmail || "").trim().toLowerCase();
+    const displayName = String(profileDisplayName || "").trim();
+    const currentPassword = String(profileCurrentPassword || "");
+    const newPassword = String(profileNewPassword || "");
+    const confirmPassword = String(profileConfirmPassword || "");
+
+    if (!email) {
+      setProfileMsg("Informe um e-mail válido.");
+      return;
+    }
+    if (newPassword || confirmPassword || currentPassword) {
+      if (newPassword !== confirmPassword) {
+        setProfileMsg("A confirmação da nova senha não confere.");
+        return;
+      }
+      if (newPassword && newPassword.length < 6) {
+        setProfileMsg("A nova senha deve ter pelo menos 6 caracteres.");
+        return;
+      }
+      if (!currentPassword) {
+        setProfileMsg("Informe a senha atual para alterar a senha.");
+        return;
+      }
+    }
+
+    setProfileSaving(true);
+    try {
+      const updated = await updateMeProfile({
+        display_name: displayName || null,
+        email,
+        current_password: currentPassword || null,
+        new_password: newPassword || null,
+      });
+      setUser(updated);
+      setProfileCurrentPassword("");
+      setProfileNewPassword("");
+      setProfileConfirmPassword("");
+      setProfileMsg("Perfil atualizado.");
+    } catch (err) {
+      setProfileMsg(String(err.message || err));
+    } finally {
+      setProfileSaving(false);
     }
   }
 
@@ -2445,6 +2656,7 @@ export default function App() {
     const date = String(form.get("date") || "");
     const type = String(form.get("type") || "");
     const amount = Number(String(form.get("amount") || "0").replace(",", "."));
+    const creditAccountIdRaw = String(form.get("credit_account_id") || "").trim();
     const note = String(form.get("note") || "").trim();
     if (!assetId || !date || !type || !Number.isFinite(amount) || amount <= 0) {
       setInvestMsg("Preencha ativo, data, tipo e valor do provento.");
@@ -2456,9 +2668,12 @@ export default function App() {
         date,
         type,
         amount,
+        credit_account_id: creditAccountIdRaw ? Number(creditAccountIdRaw) : null,
         note: note || null,
       });
       formEl.reset();
+      setIncomeAssetClassFilter("");
+      setIncomeAssetId("");
       setInvestMsg("Provento salvo.");
       await reloadInvestData();
       if (canViewDashboard) {
@@ -2577,8 +2792,8 @@ export default function App() {
     setInvestPriceUpdateRunning(true);
     const timeout = Number(String(quoteTimeout || "25").replace(",", "."));
     const workers = Number(String(quoteWorkers || "4").replace(",", "."));
-    if (!quoteGroups.length) {
-      setInvestMsg("Selecione ao menos um grupo de cotação.");
+    if (!quoteGroup) {
+      setInvestMsg("Selecione uma classe para atualização.");
       setInvestPriceUpdateRunning(false);
       return;
     }
@@ -2586,7 +2801,7 @@ export default function App() {
       const out = await updateAllInvestPrices({
         timeout_s: Number.isFinite(timeout) ? timeout : 25,
         max_workers: Number.isFinite(workers) ? workers : 4,
-        include_groups: quoteGroups,
+        include_groups: [quoteGroup],
       });
       const report = Array.isArray(out.report) ? out.report : [];
       const failed = report.filter((row) => !row?.ok).length;
@@ -2736,32 +2951,23 @@ export default function App() {
     const name = String(cardCreateName || "").trim();
     const brand = String(cardCreateBrand || "").trim();
     const model = String(cardCreateModel || "").trim();
-    const type = String(cardCreateType || "").trim();
+    const type = "Credito";
     const accId = Number(cardCreateAccountId);
     const due = Number(String(cardCreateDueDay || "0"));
     const close = Number(String(cardCreateCloseDay || "0"));
-    const isCredit = type === "Credito";
     if (
       !name ||
       !brand ||
       !model ||
-      !type ||
-      !Number.isFinite(accId) ||
-      accId <= 0 ||
-      (
-        isCredit &&
-        (!Number.isFinite(due) || due < 1 || due > 31 || !Number.isFinite(close) || close < 1 || close > 31 || close >= due)
-      )
+        !Number.isFinite(accId) ||
+        accId <= 0 ||
+      (!Number.isFinite(due) || due < 1 || due > 31 || !Number.isFinite(close) || close < 1 || close > 31 || close >= due)
     ) {
       if (!Number.isFinite(accId) || accId <= 0) {
         setCardMsg("Selecione a conta banco vinculada ao cartão.");
         return;
       }
-      setCardMsg(
-        isCredit
-          ? "Preencha nome, tipo, conta banco vinculada, fechamento e vencimento."
-          : "Preencha nome, tipo e conta banco vinculada ao cartão."
-      );
+      setCardMsg("Preencha nome, conta banco vinculada, fechamento e vencimento.");
       return;
     }
     try {
@@ -2772,14 +2978,14 @@ export default function App() {
         card_type: type,
         card_account_id: accId,
         source_account_id: accId,
-        due_day: isCredit ? due : null,
-        close_day: isCredit ? close : null,
+        due_day: due,
+        close_day: close,
       });
       setCardMsg("Cartão cadastrado.");
       setCardCreateName("");
       setCardCreateBrand("");
       setCardCreateModel("");
-      setCardCreateType("");
+      setCardCreateType("Credito");
       setCardCreateAccountId("");
       setCardCreateDueDay("");
       setCardCreateCloseDay("");
@@ -2801,24 +3007,19 @@ export default function App() {
     const name = String(cardName || "").trim();
     const brand = String(cardBrand || "").trim();
     const model = String(cardModel || "").trim();
-    const type = String(cardType || "").trim();
+    const type = "Credito";
     const accId = Number(cardAccountId);
     const due = Number(String(cardDueDay || "0"));
     const close = Number(String(cardCloseDay || "0"));
-    const isCredit = type === "Credito";
     if (
       !Number.isFinite(id) ||
       id <= 0 ||
       !name ||
       !brand ||
       !model ||
-      !type ||
       !Number.isFinite(accId) ||
       accId <= 0 ||
-      (
-        isCredit &&
-        (!Number.isFinite(due) || due < 1 || due > 31 || !Number.isFinite(close) || close < 1 || close > 31 || close >= due)
-      )
+      (!Number.isFinite(due) || due < 1 || due > 31 || !Number.isFinite(close) || close < 1 || close > 31 || close >= due)
     ) {
       if (!Number.isFinite(accId) || accId <= 0) {
         setCardMsg("Selecione a conta banco vinculada ao cartão.");
@@ -2835,8 +3036,8 @@ export default function App() {
         card_type: type,
         card_account_id: accId,
         source_account_id: accId,
-        due_day: isCredit ? due : null,
-        close_day: isCredit ? close : null,
+        due_day: due,
+        close_day: close,
       });
       setCardMsg("Cartão atualizado.");
       await reloadCardsData();
@@ -2873,7 +3074,7 @@ export default function App() {
       setCardName("");
       setCardBrand("");
       setCardModel("");
-      setCardType("");
+      setCardType("Credito");
       setCardAccountId("");
       setCardSourceAccountId("");
       setCardDueDay("");
@@ -3138,7 +3339,7 @@ export default function App() {
                   className="user-popover-item"
                   onClick={() => {
                     setUserMenuOpen(false);
-                    setPage(visiblePages.includes("Dashboard") ? "Dashboard" : (visiblePages[0] || "Dashboard"));
+                    setProfileModalOpen(true);
                   }}
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -3152,14 +3353,16 @@ export default function App() {
                     className="user-popover-item"
                     onClick={() => {
                       setUserMenuOpen(false);
+                      setManagerTab("Usuários e workspaces");
                       setPage("Gerenciador");
                     }}
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M4 17.2V20h2.8l8.3-8.3-2.8-2.8L4 17.2z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                      <path d="M13.7 7.4l2.8 2.8 1.7-1.7a2 2 0 0 0 0-2.8l0 0a2 2 0 0 0-2.8 0l-1.7 1.7z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                      <path d="M4 6h16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M4 12h16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M4 18h16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                     </svg>
-                    Editar
+                    Workspace
                   </button>
                 ) : null}
                 <button
@@ -3322,30 +3525,31 @@ export default function App() {
               <article className="card dash-cards-card">
                 {creditCards.length ? (
                   <div className={`dash-wallet-stack ${creditCards.length === 1 ? "single" : ""}`}>
-                    {activeCreditCard ? (
+                    {walletVisibleCards.map((card) => (
                       <article
-                        className="wallet-card wallet-card-front"
-                        key={activeCreditCard.id}
-                        title={`${activeCreditCard.name} (${activeCreditCard.model || "Black"})`}
+                        className={`wallet-card wallet-card-${card.walletPos}`}
+                        key={card.id}
+                        title={`${card.name} (${card.model || "Black"})`}
+                        aria-hidden={card.walletPos !== "active"}
                       >
                         <img
-                          src={getCardBackground(activeCreditCard.model || "Black")}
+                          src={getCardBackground(card.model || "Black")}
                           alt=""
                           className="wallet-bg"
                         />
                         <div className="wallet-overlay" />
                         <div className="wallet-content">
-                          <div className="wallet-name">{activeCreditCard.name}</div>
+                          <div className="wallet-name">{card.name}</div>
                           <div className="wallet-brand-line">
                             <img
-                              src={getCardLogo(activeCreditCard.brand || "Visa")}
+                              src={getCardLogo(card.brand || "Visa")}
                               alt=""
                               className="wallet-brand-icon"
                             />
                           </div>
                         </div>
                       </article>
-                    ) : null}
+                    ))}
                     {creditCards.length > 1 ? (
                       <div className="wallet-controls">
                         <button
@@ -3369,6 +3573,13 @@ export default function App() {
                         >
                           ›
                         </button>
+                      </div>
+                    ) : null}
+                    {creditCards.length > 1 ? (
+                      <div className="wallet-dots" aria-hidden="true">
+                        {creditCards.map((card, idx) => (
+                          <span key={card.id} className={`wallet-dot ${idx === walletCardIndex ? "active" : ""}`} />
+                        ))}
                       </div>
                     ) : null}
                   </div>
@@ -3693,11 +3904,6 @@ export default function App() {
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>
-                      <select value={cardCreateType} onChange={(e) => setCardCreateType(e.target.value)}>
-                        <option value="" disabled>Selecione o tipo do cartão</option>
-                        <option value="Credito">Credito</option>
-                        <option value="Debito">Debito</option>
-                      </select>
                       <select value={cardCreateAccountId} onChange={(e) => setCardCreateAccountId(e.target.value)}>
                         <option value="" disabled>Selecione a conta banco vinculada</option>
                         {bankAccountsOnly.map((a) => (
@@ -3707,33 +3913,25 @@ export default function App() {
                       {!bankAccountsOnly.length ? (
                         <input type="text" value="Sem conta Banco cadastrada." disabled />
                       ) : null}
-                      {!hasCreateCardTypeSelected ? (
-                        <input type="text" value="Selecione primeiro o tipo do cartão" disabled />
-                      ) : isCreateCreditCardType ? (
-                        <>
-                          <input
-                            type="number"
-                            min="1"
-                            max="31"
-                            placeholder="Dia de fechamento (1-31)"
-                            value={cardCreateCloseDay}
-                            onChange={(e) => setCardCreateCloseDay(e.target.value)}
-                          />
-                          <input
-                            type="number"
-                            min="1"
-                            max="31"
-                            placeholder="Dia do vencimento (1-31)"
-                            value={cardCreateDueDay}
-                            onChange={(e) => setCardCreateDueDay(e.target.value)}
-                          />
-                          <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
-                            Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
-                          </small>
-                        </>
-                      ) : (
-                        <input type="text" value="Débito imediato na conta banco" disabled />
-                      )}
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        placeholder="Dia de fechamento (1-31)"
+                        value={cardCreateCloseDay}
+                        onChange={(e) => setCardCreateCloseDay(e.target.value)}
+                      />
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        placeholder="Dia do vencimento (1-31)"
+                        value={cardCreateDueDay}
+                        onChange={(e) => setCardCreateDueDay(e.target.value)}
+                      />
+                      <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                        Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
+                      </small>
                       <button type="button" onClick={onCreateCard}>Cadastrar cartão</button>
                     </div>
                   ) : (
@@ -3764,46 +3962,33 @@ export default function App() {
                         <option key={m} value={m}>{m}</option>
                       ))}
                     </select>
-                    <select value={cardType} onChange={(e) => setCardType(e.target.value)} disabled={!canEditContas}>
-                      <option value="" disabled>Selecione o tipo do cartão</option>
-                      <option value="Credito">Credito</option>
-                      <option value="Debito">Debito</option>
-                    </select>
                     <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)} disabled={!canEditContas}>
                       <option value="" disabled>Selecione a conta banco vinculada</option>
                       {bankAccountsOnly.map((a) => (
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
                     </select>
-                    {!hasEditCardTypeSelected ? (
-                      <input type="text" value="Selecione primeiro o tipo do cartão" disabled />
-                    ) : isEditCreditCardType ? (
-                      <>
-                        <input
-                          type="number"
-                          min="1"
-                          max="31"
-                          placeholder="Dia de fechamento (1-31)"
-                          value={cardCloseDay}
-                          disabled={!canEditContas}
-                          onChange={(e) => setCardCloseDay(e.target.value)}
-                        />
-                        <input
-                          type="number"
-                          min="1"
-                          max="31"
-                          placeholder="Dia do vencimento (1-31)"
-                          value={cardDueDay}
-                          disabled={!canEditContas}
-                          onChange={(e) => setCardDueDay(e.target.value)}
-                        />
-                        <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
-                          Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
-                        </small>
-                      </>
-                    ) : (
-                      <input type="text" value="Débito imediato na conta banco" disabled />
-                    )}
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      placeholder="Dia de fechamento (1-31)"
+                      value={cardCloseDay}
+                      disabled={!canEditContas}
+                      onChange={(e) => setCardCloseDay(e.target.value)}
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      placeholder="Dia do vencimento (1-31)"
+                      value={cardDueDay}
+                      disabled={!canEditContas}
+                      onChange={(e) => setCardDueDay(e.target.value)}
+                    />
+                    <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                      Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
+                    </small>
                     <button type="button" onClick={onUpdateCard} disabled={!canEditContas}>Atualizar cartão</button>
                     <button type="button" className="danger" onClick={onDeleteCard} disabled={!canDeleteContas}>Excluir cartão</button>
                   </div>
@@ -3855,8 +4040,8 @@ export default function App() {
                 <section className="card">
                   <h3>Membros e permissões</h3>
                   {workspaceMembersLoading ? <p>Carregando membros...</p> : null}
-                  <div className="tx-table-wrap">
-                    <table className="tx-table">
+                  <div className="tx-table-wrap assets-table-wrap">
+                    <table className="tx-table assets-table">
                       <thead>
                         <tr>
                           <th>Usuário</th>
@@ -4371,7 +4556,19 @@ export default function App() {
 
             <section className="card">
               <h3>Lançamentos recentes</h3>
-              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(220px, 360px))", marginBottom: 12 }}>
+              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(4, minmax(220px, 360px))", marginBottom: 12 }}>
+                <input
+                  type="date"
+                  className="invoice-filter-select"
+                  value={txRecentDateFrom}
+                  onChange={(e) => setTxRecentDateFrom(e.target.value)}
+                />
+                <input
+                  type="date"
+                  className="invoice-filter-select"
+                  value={txRecentDateTo}
+                  onChange={(e) => setTxRecentDateTo(e.target.value)}
+                />
                 <select
                   className="invoice-filter-select"
                   value={txRecentCategoryFilterId}
@@ -4632,7 +4829,7 @@ export default function App() {
             {investTab === "Resumo" ? (
               <>
                 <section className="card">
-                  <div className="tx-form" style={{ gridTemplateColumns: "repeat(3, minmax(220px, 360px))" }}>
+                  <div className="tx-form" style={{ gridTemplateColumns: "minmax(220px, 360px) auto" }}>
                     <select
                       className="invoice-filter-select"
                       value={investSummaryClassFilter}
@@ -4643,19 +4840,14 @@ export default function App() {
                         <option key={cls} value={cls}>{cls}</option>
                       ))}
                     </select>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={investDivergenceThreshold}
-                      onChange={(e) => setInvestDivergenceThreshold(e.target.value)}
-                      placeholder="Limiar de divergência (%)"
-                    />
-                    <button type="button" onClick={onLoadInvestDivergenceReport} disabled={investDivergenceRunning}>
-                      {investDivergenceRunning ? "Gerando relatório..." : "Carregar divergências"}
+                    <button
+                      type="button"
+                      className={`mini-tab ${investDivergenceOpen ? "active" : ""}`}
+                      onClick={() => setInvestDivergenceOpen((v) => !v)}
+                    >
+                      Carregar divergências
                     </button>
                   </div>
-                  {investDivergenceMsg ? <p>{investDivergenceMsg}</p> : null}
                 </section>
                 <section className="cards">
                   <article className="card">
@@ -4664,62 +4856,78 @@ export default function App() {
                   </article>
                   <article className="card">
                     <h3>Total investido</h3>
-                    <strong>{brl.format(Number(investSummaryViewData.total_invested || 0))}</strong>
+                    <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_invested))}</strong>
                   </article>
                   <article className="card">
                     <h3>Saldo na corretora</h3>
-                    <strong>{brl.format(Number(investSummaryViewData.broker_balance || 0))}</strong>
+                    <strong>{brl.format(normalizeSignedZero(investSummaryViewData.broker_balance))}</strong>
                   </article>
                   <article className="card">
                     <h3>Valor de mercado</h3>
-                    <strong>{brl.format(Number(investSummaryViewData.total_market || 0))}</strong>
+                    <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_market))}</strong>
                   </article>
                   <article className="card">
                     <h3>Retorno total</h3>
-                    <strong>{brl.format(Number(investSummaryViewData.total_return || 0))}</strong>
+                    <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_return))}</strong>
                     <p>{Number(investSummaryViewData.total_return_pct || 0).toFixed(2)}%</p>
                   </article>
                   <article className="card">
                     <h3>P&L não realizado</h3>
-                    <strong>{brl.format(Number(investSummaryViewData.total_unrealized || 0))}</strong>
+                    <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_unrealized))}</strong>
                   </article>
                 </section>
-                <section className="card">
-                  <h3>Divergência de rentabilidade</h3>
-                  <div className="tx-table-wrap">
-                    <table className="tx-table">
-                      <thead>
-                        <tr>
-                          <th>Ativo</th>
-                          <th>Tipo</th>
-                          <th>Valor salvo</th>
-                          <th>Valor projetado</th>
-                          <th>Delta</th>
-                          <th>Delta %</th>
-                          <th>Atualização proj.</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {investDivergenceReport.map((row) => (
-                          <tr key={`${row.asset_id}-${row.symbol}`}>
-                            <td>{row.symbol || row.asset_id}</td>
-                            <td>{formatRentabilityTypeLabel(row.rentability_type)}</td>
-                            <td>{brl.format(Number(row.stored_current_value || 0))}</td>
-                            <td>{brl.format(Number(row.projected_current_value || 0))}</td>
-                            <td>{brl.format(Number(row.delta_value || 0))}</td>
-                            <td>{Number(row.delta_pct || 0).toFixed(4)}%</td>
-                            <td>{formatIsoDatePtBr(row.projected_last_update)}</td>
-                          </tr>
-                        ))}
-                        {!investDivergenceReport.length ? (
+                {investDivergenceOpen ? (
+                  <section className="card">
+                    <h3>Divergência de rentabilidade</h3>
+                    <div className="tx-form" style={{ gridTemplateColumns: "minmax(220px, 360px) minmax(220px, 360px)" }}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={investDivergenceThreshold}
+                        onChange={(e) => setInvestDivergenceThreshold(e.target.value)}
+                        placeholder="Limiar de divergência (%)"
+                      />
+                      <button type="button" onClick={onLoadInvestDivergenceReport} disabled={investDivergenceRunning}>
+                        {investDivergenceRunning ? "Gerando relatório..." : "Atualizar relatório"}
+                      </button>
+                    </div>
+                    {investDivergenceMsg ? <p>{investDivergenceMsg}</p> : null}
+                    <div className="tx-table-wrap">
+                      <table className="tx-table">
+                        <thead>
                           <tr>
-                            <td colSpan={7}>Sem divergências acima do limiar selecionado.</td>
+                            <th>Ativo</th>
+                            <th>Tipo</th>
+                            <th>Valor salvo</th>
+                            <th>Valor projetado</th>
+                            <th>Delta</th>
+                            <th>Delta %</th>
+                            <th>Atualização proj.</th>
                           </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
+                        </thead>
+                        <tbody>
+                          {investDivergenceReport.map((row) => (
+                            <tr key={`${row.asset_id}-${row.symbol}`}>
+                              <td>{row.symbol || row.asset_id}</td>
+                              <td>{formatRentabilityTypeLabel(row.rentability_type)}</td>
+                              <td>{brl.format(Number(row.stored_current_value || 0))}</td>
+                              <td>{brl.format(Number(row.projected_current_value || 0))}</td>
+                              <td>{brl.format(Number(row.delta_value || 0))}</td>
+                              <td>{Number(row.delta_pct || 0).toFixed(4)}%</td>
+                              <td>{formatIsoDatePtBr(row.projected_last_update)}</td>
+                            </tr>
+                          ))}
+                          {!investDivergenceReport.length ? (
+                            <tr>
+                              <td colSpan={7}>Sem divergências acima do limiar selecionado.</td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                ) : null}
               </>
             ) : null}
 
@@ -4805,33 +5013,29 @@ export default function App() {
                   <h3>Editar ativo</h3>
                   <div className="mgr-grid">
                     <select
+                      value={assetEditClassFilter}
+                      onChange={(e) => {
+                        setAssetEditClassFilter(e.target.value);
+                        setAssetEditId("");
+                      }}
+                    >
+                      <option value="" disabled>Classe do ativo</option>
+                      {investMeta.asset_classes.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                    <select
                       value={assetEditId}
                       onChange={(e) => {
                         const id = e.target.value;
                         setAssetEditId(id);
-                        const cur = investAssets.find((a) => String(a.id) === id);
-                        if (cur) {
-                          setAssetEditSymbol(cur.symbol || "");
-                          setAssetEditName(cur.name || "");
-                          setAssetEditClass(cur.asset_class || "");
-                          setAssetEditSector(cur.sector || "Não definido");
-                          setAssetEditCurrency((cur.currency || "BRL").toUpperCase());
-                          setAssetEditBrokerId(cur.broker_account_id ? String(cur.broker_account_id) : "");
-                          if (isFixedIncomeClass(cur.asset_class || "")) {
-                            setAssetEditRentabilityType(String(cur.rentability_type || "MANUAL").toUpperCase());
-                            setAssetEditIndexPct(cur.index_pct == null ? "" : String(cur.index_pct));
-                            setAssetEditSpreadRate(cur.spread_rate == null ? "" : String(cur.spread_rate));
-                            setAssetEditFixedRate(cur.fixed_rate == null ? "" : String(cur.fixed_rate));
-                          } else {
-                            setAssetEditRentabilityType("");
-                            setAssetEditIndexPct("");
-                            setAssetEditSpreadRate("");
-                            setAssetEditFixedRate("");
-                          }
-                        }
                       }}
+                      disabled={!assetEditClassFilter}
                     >
-                      {investAssets.map((a) => (
+                      <option value="" disabled>
+                        {!assetEditClassFilter ? "Selecione a classe primeiro" : "Selecione o ativo"}
+                      </option>
+                      {assetEditOptions.map((a) => (
                         <option key={a.id} value={a.id}>{a.id} - {a.symbol} ({a.asset_class})</option>
                       ))}
                     </select>
@@ -4907,6 +5111,17 @@ export default function App() {
 
                 <section className="card">
                   <h3>Ativos cadastrados</h3>
+                  <div className="table-toolbar">
+                    <select
+                      value={investAssetsClassFilter}
+                      onChange={(e) => setInvestAssetsClassFilter(e.target.value)}
+                    >
+                      <option value="">Todas as classes</option>
+                      {tradeAssetClassOptions.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="tx-table-wrap">
                     <table className="tx-table">
                       <thead>
@@ -4924,7 +5139,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {investAssets.map((a) => (
+                        {investAssetsVisible.map((a) => (
                           <tr key={a.id}>
                             <td>{a.symbol}</td>
                             <td>{a.name}</td>
@@ -5077,6 +5292,18 @@ export default function App() {
 
                 <section className="card">
                   <h3>Operações recentes</h3>
+                  <div className="tx-form" style={{ gridTemplateColumns: "repeat(2, minmax(220px, 320px))" }}>
+                    <input
+                      type="date"
+                      value={investTradeDateFrom}
+                      onChange={(e) => setInvestTradeDateFrom(e.target.value)}
+                    />
+                    <input
+                      type="date"
+                      value={investTradeDateTo}
+                      onChange={(e) => setInvestTradeDateTo(e.target.value)}
+                    />
+                  </div>
                   <div className="tx-table-wrap">
                     <table className="tx-table">
                       <thead>
@@ -5093,7 +5320,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {investTrades.map((t) => (
+                        {investTradesVisible.map((t) => (
                           <tr key={t.id}>
                             <td>{t.id}</td>
                             <td>{t.date}</td>
@@ -5124,9 +5351,26 @@ export default function App() {
                 <section className="card">
                   <h3>Novo provento</h3>
                   <form className="tx-form" onSubmit={onCreateInvestIncome}>
-                    <select name="asset_id" defaultValue="">
-                      <option value="" disabled>Ativo</option>
-                      {investAssets.map((a) => (
+                    <select
+                      value={incomeAssetClassFilter}
+                      onChange={(e) => {
+                        setIncomeAssetClassFilter(e.target.value);
+                        setIncomeAssetId("");
+                      }}
+                    >
+                      <option value="" disabled>Classe do ativo</option>
+                      {tradeAssetClassOptions.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                    <select
+                      name="asset_id"
+                      value={incomeAssetId}
+                      onChange={(e) => setIncomeAssetId(e.target.value)}
+                      disabled={!incomeAssetClassFilter}
+                    >
+                      <option value="" disabled>{incomeAssetClassFilter ? "Selecione o ativo" : "Selecione a classe primeiro"}</option>
+                      {incomeAssetOptions.map((a) => (
                         <option key={a.id} value={a.id}>{a.symbol}</option>
                       ))}
                     </select>
@@ -5138,13 +5382,36 @@ export default function App() {
                       ))}
                     </select>
                     <input name="amount" type="number" step="0.01" min="0.01" placeholder="Valor" required />
+                    <select name="credit_account_id" defaultValue="">
+                      <option value="">Conta de crédito (padrão: corretora do ativo)</option>
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.type})
+                        </option>
+                      ))}
+                    </select>
                     <input name="note" type="text" placeholder="Obs (opcional)" />
                     <button type="submit">Salvar provento</button>
                   </form>
+                  <p className="tx-helper">
+                    Se não informar a conta de crédito, o provento será lançado na corretora vinculada ao ativo.
+                  </p>
                 </section>
 
                 <section className="card">
                   <h3>Proventos recentes</h3>
+                  <div className="tx-form" style={{ gridTemplateColumns: "repeat(2, minmax(220px, 320px))" }}>
+                    <input
+                      type="date"
+                      value={investIncomeDateFrom}
+                      onChange={(e) => setInvestIncomeDateFrom(e.target.value)}
+                    />
+                    <input
+                      type="date"
+                      value={investIncomeDateTo}
+                      onChange={(e) => setInvestIncomeDateTo(e.target.value)}
+                    />
+                  </div>
                   <div className="tx-table-wrap">
                     <table className="tx-table">
                       <thead>
@@ -5153,17 +5420,19 @@ export default function App() {
                           <th>Data</th>
                           <th>Ativo</th>
                           <th>Tipo</th>
+                          <th>Conta crédito</th>
                           <th>Valor</th>
                           <th>Ação</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {investIncomes.map((i) => (
+                        {investIncomesVisible.map((i) => (
                           <tr key={i.id}>
                             <td>{i.id}</td>
                             <td>{i.date}</td>
                             <td>{i.symbol}</td>
                             <td>{i.type}</td>
+                            <td>{i.credit_account_name || "-"}</td>
                             <td>{Number(i.amount || 0).toFixed(2)}</td>
                             <td>
                               <button onClick={() => onDeleteInvestIncome(i.id)}>Excluir</button>
@@ -5180,40 +5449,41 @@ export default function App() {
             {investTab === "Cotações" ? (
               <section className="card">
                 <h3>Cotações</h3>
-                <div className="mgr-grid">
-                  <input
-                    type="number"
-                    step="1"
-                    min="3"
-                    value={quoteTimeout}
-                    onChange={(e) => setQuoteTimeout(e.target.value)}
-                    placeholder="Timeout (s)"
-                  />
-                  <input
-                    type="number"
-                    step="1"
-                    min="1"
-                    value={quoteWorkers}
-                    onChange={(e) => setQuoteWorkers(e.target.value)}
-                    placeholder="Paralelismo"
-                  />
-                  <select
-                    multiple
-                    value={quoteGroups}
-                    onChange={(e) => {
-                      const vals = Array.from(e.target.selectedOptions || []).map((o) => o.value);
-                      setQuoteGroups(vals);
-                    }}
-                    title="Selecione os grupos para atualização"
-                  >
-                    {QUOTE_GROUP_OPTIONS.map((g) => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-                  <button onClick={onUpdateAllInvestPrices} disabled={investPriceUpdateRunning}>
-                    {investPriceUpdateRunning ? "Atualizando..." : "Atualizar cotações automáticas"}
-                  </button>
-                </div>
+                <section className="card quote-section-card">
+                  <div className="quote-section-head">
+                    <div>
+                      <h4>Atualização automática</h4>
+                      <p className="tx-helper">Atualize uma classe por vez para manter o processo previsível e facilitar a futura automação.</p>
+                    </div>
+                  </div>
+                  <div className="tx-form quote-auto-form">
+                    <select value={quoteGroup} onChange={(e) => setQuoteGroup(e.target.value)}>
+                      <option value="" disabled>Selecione a classe</option>
+                      {QUOTE_GROUP_OPTIONS.map((g) => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      step="1"
+                      min="3"
+                      value={quoteTimeout}
+                      onChange={(e) => setQuoteTimeout(e.target.value)}
+                      placeholder="Timeout (s)"
+                    />
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      value={quoteWorkers}
+                      onChange={(e) => setQuoteWorkers(e.target.value)}
+                      placeholder="Paralelismo"
+                    />
+                    <button onClick={onUpdateAllInvestPrices} disabled={investPriceUpdateRunning}>
+                      {investPriceUpdateRunning ? "Atualizando..." : "Atualizar cotações automáticas"}
+                    </button>
+                  </div>
+                </section>
                 {investPriceUpdateReport.length ? (
                   <div className="tx-table-wrap">
                     <table className="tx-table">
@@ -5242,34 +5512,45 @@ export default function App() {
                     </table>
                   </div>
                 ) : null}
-                <form className="tx-form" onSubmit={onUpsertInvestPrice}>
-                  <select name="asset_id" defaultValue="">
-                    <option value="" disabled>Ativo</option>
-                    {investAssets.map((a) => (
-                      <option key={a.id} value={a.id}>{a.symbol}</option>
-                    ))}
-                  </select>
-                  <input name="date" type="date" required />
-                  <input
-                    name="price"
-                    type="number"
-                    step="0.0001"
-                    min="0.0001"
-                    placeholder="Preço unitário"
-                    title="Informe o preço por unidade do ativo, não o valor total da posição."
-                    required
-                  />
-                  <input name="source" type="text" placeholder="Fonte" defaultValue="manual" />
-                  <button type="submit">Salvar cotação manual</button>
-                </form>
-                <p className="tx-helper">
-                  Para ações, BDRs, FIIs, stocks e cripto, a cotação manual deve ser o preço por unidade do ativo. O valor da posição é calculado pela quantidade em carteira.
-                </p>
+                <section className="card quote-section-card">
+                  <div className="quote-section-head">
+                    <div>
+                      <h4>Cotação manual</h4>
+                      <p className="tx-helper">Para ações, BDRs, FIIs, stocks e cripto, informe o preço por unidade do ativo.</p>
+                    </div>
+                  </div>
+                  <form className="tx-form" onSubmit={onUpsertInvestPrice}>
+                    <select value={manualPriceClassFilter} onChange={(e) => setManualPriceClassFilter(e.target.value)}>
+                      <option value="" disabled>Selecione a classe</option>
+                      {MANUAL_PRICE_CLASS_OPTIONS.map((item) => (
+                        <option key={item} value={item}>{item}</option>
+                      ))}
+                    </select>
+                    <select name="asset_id" defaultValue="">
+                      <option value="" disabled>Ativo</option>
+                      {manualPriceAssets.map((a) => (
+                        <option key={a.id} value={a.id}>{a.symbol}</option>
+                      ))}
+                    </select>
+                    <input name="date" type="date" required />
+                    <input
+                      name="price"
+                      type="number"
+                      step="0.0001"
+                      min="0.0001"
+                      placeholder="Preço unitário"
+                      title="Informe o preço por unidade do ativo, não o valor total da posição."
+                      required
+                    />
+                    <input name="source" type="text" placeholder="Fonte" defaultValue="manual" />
+                    <button type="submit">Salvar cotação manual</button>
+                  </form>
+                </section>
                 <section className="card quote-manual-fixed-card">
                   <h3>Atualização manual de renda fixa e fundos</h3>
                   <form className="tx-form" onSubmit={onUpdateInvestManualQuote}>
                     <select value={manualQuoteAssetId} onChange={(e) => setManualQuoteAssetId(e.target.value)}>
-                      <option value="" disabled>Ativo manual</option>
+                      <option value="" disabled>Selecione o ativo</option>
                       {investManualQuoteAssets.map((a) => (
                         <option key={a.id} value={a.id}>
                           {a.symbol} {String(a.rentability_type || "").trim().toUpperCase() === "MANUAL" ? "(Manual)" : "(Automático)"}
@@ -5320,7 +5601,7 @@ export default function App() {
                     <tbody>
                       {investPrices.map((p) => (
                         <tr key={`${p.asset_id}-${p.date}-${p.id}`}>
-                          <td>{p.date}</td>
+                          <td>{formatIsoDatePtBr(p.date)}</td>
                           <td>{p.symbol}</td>
                           <td>{p.asset_class}</td>
                           <td>{Number(p.price || 0).toFixed(4)}</td>
@@ -5335,19 +5616,31 @@ export default function App() {
 
             <section className="card">
               <h3>Carteira (consolidado)</h3>
-              <div className="tx-table-wrap">
-                <table className="tx-table">
+              <div className="tx-form" style={{ gridTemplateColumns: "minmax(220px, 360px)" }}>
+                <select
+                  className="invoice-filter-select"
+                  value={investPortfolioClassFilter}
+                  onChange={(e) => setInvestPortfolioClassFilter(e.target.value)}
+                >
+                  <option value="">Todas as classes</option>
+                  {investSummaryClassOptions.map((cls) => (
+                    <option key={cls} value={cls}>{cls}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="tx-table-wrap portfolio-table-wrap">
+                <table className="tx-table portfolio-table">
                   <thead>
                     <tr>
                       <th>Ativo</th>
                       <th>Classe</th>
                       <th>Qtd</th>
                       <th>Custo</th>
-                      <th>Mercado Bruto</th>
-                      <th>Líquido Estimado</th>
+                      <th>Mercado</th>
+                      <th>Líquido</th>
                       <th>Origem</th>
-                      <th>Data Valor</th>
-                      <th>P&L Não Realizado</th>
+                      <th>Data</th>
+                      <th>P&amp;L</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -5355,7 +5648,7 @@ export default function App() {
                       <tr key={`${p.asset_id}-${p.symbol}`}>
                         <td>{p.symbol}</td>
                         <td>{p.asset_class}</td>
-                        <td>{Number(p.qty || 0).toFixed(8)}</td>
+                        <td>{formatPortfolioQty(p.qty)}</td>
                         <td>{brl.format(Number(p.cost_basis || 0))}</td>
                         <td>{brl.format(Number((p.market_value_gross ?? p.market_value) || 0))}</td>
                         <td>{brl.format(Number((p.estimated_net_value ?? p.market_value) || 0))}</td>
@@ -5423,6 +5716,56 @@ export default function App() {
                 </button>
                 <button type="button" onClick={confirmPayInvoiceModal}>Confirmar pagamento</button>
               </div>
+            </div>
+          </div>
+        ) : null}
+        {profileModalOpen ? (
+          <div className="modal-overlay" onClick={() => setProfileModalOpen(false)}>
+            <div className="modal-card profile-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-head">
+                <div>
+                  <h3>Meu perfil</h3>
+                  <p className="tx-helper">Nome, e-mail e senha da sua conta. Foto/avatar entra depois.</p>
+                </div>
+                <button type="button" className="modal-close" onClick={() => setProfileModalOpen(false)}>Fechar</button>
+              </div>
+              <form className="tx-form" onSubmit={onSaveProfile}>
+                <input
+                  type="text"
+                  placeholder="Nome"
+                  value={profileDisplayName}
+                  onChange={(e) => setProfileDisplayName(e.target.value)}
+                />
+                <input
+                  type="email"
+                  placeholder="E-mail"
+                  value={profileEmail}
+                  onChange={(e) => setProfileEmail(e.target.value)}
+                  required
+                />
+                <input
+                  type="password"
+                  placeholder="Senha atual"
+                  value={profileCurrentPassword}
+                  onChange={(e) => setProfileCurrentPassword(e.target.value)}
+                />
+                <input
+                  type="password"
+                  placeholder="Nova senha"
+                  value={profileNewPassword}
+                  onChange={(e) => setProfileNewPassword(e.target.value)}
+                />
+                <input
+                  type="password"
+                  placeholder="Confirmar nova senha"
+                  value={profileConfirmPassword}
+                  onChange={(e) => setProfileConfirmPassword(e.target.value)}
+                />
+                <button type="submit" disabled={profileSaving}>
+                  {profileSaving ? "Salvando..." : "Salvar perfil"}
+                </button>
+              </form>
+              {profileMsg ? <p className="status-msg">{profileMsg}</p> : null}
             </div>
           </div>
         ) : null}

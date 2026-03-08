@@ -407,6 +407,22 @@ def upsert_price(asset_id: int, date: str, price: float, source: str | None = No
         """,
         (int(asset_id), date, float(price), source, uid),
     )
+    _exec(
+        conn,
+        """
+        DELETE FROM prices
+        WHERE user_id = ?
+          AND asset_id = ?
+          AND id NOT IN (
+            SELECT id
+            FROM prices
+            WHERE user_id = ? AND asset_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+          )
+        """,
+        (uid, int(asset_id), uid, int(asset_id)),
+    )
     conn.commit()
     conn.close()
 
@@ -461,6 +477,13 @@ def list_prices(asset_id: int | None = None, limit: int = 200, user_id: int | No
         FROM prices p
         JOIN assets a ON a.id = p.asset_id AND a.user_id = p.user_id
         WHERE p.user_id = ?
+          AND p.id IN (
+            SELECT MAX(p2.id)
+            FROM prices p2
+            WHERE p2.user_id = p.user_id
+              AND p2.asset_id = p.asset_id
+            GROUP BY p2.asset_id
+          )
     """
     params: list = [uid]
     if asset_id is not None:
@@ -473,15 +496,23 @@ def list_prices(asset_id: int | None = None, limit: int = 200, user_id: int | No
     return rows
 
 
-def insert_income(asset_id: int, date: str, type_: str, amount: float, note: str | None = None, user_id: int | None = None):
+def insert_income(
+    asset_id: int,
+    date: str,
+    type_: str,
+    amount: float,
+    credit_account_id: int | None = None,
+    note: str | None = None,
+    user_id: int | None = None,
+):
     uid = _uid(user_id)
     conn = get_conn()
     _exec(conn, 
         """
-        INSERT INTO income_events(asset_id, date, type, amount, note, user_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO income_events(asset_id, date, type, amount, credit_account_id, note, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (int(asset_id), date, type_, float(amount), note, uid),
+        (int(asset_id), date, type_, float(amount), int(credit_account_id) if credit_account_id else None, note, uid),
     )
     conn.commit()
     conn.close()
@@ -491,9 +522,10 @@ def list_income(asset_id=None, date_from=None, date_to=None, user_id: int | None
     uid = _uid(user_id)
     conn = get_conn()
     q = """
-        SELECT i.*, a.symbol, a.asset_class
+        SELECT i.*, a.symbol, a.asset_class, acc.name AS credit_account_name
         FROM income_events i
         JOIN assets a ON a.id = i.asset_id AND a.user_id = i.user_id
+        LEFT JOIN accounts acc ON acc.id = i.credit_account_id AND acc.user_id = i.user_id
         WHERE i.user_id = ?
     """
     params = [uid]
@@ -513,12 +545,67 @@ def list_income(asset_id=None, date_from=None, date_to=None, user_id: int | None
     return rows
 
 
-def delete_income(income_id: int, user_id: int | None = None):
+def delete_income_with_cash_reversal(income_id: int, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
-    _exec(conn, "DELETE FROM income_events WHERE id = ? AND user_id = ?", (int(income_id), uid))
-    conn.commit()
-    conn.close()
+    try:
+        row = _exec(
+            conn,
+            """
+            SELECT i.id, i.asset_id, i.date, i.type, i.amount, i.credit_account_id, i.note, a.symbol, a.broker_account_id
+            FROM income_events i
+            JOIN assets a ON a.id = i.asset_id AND a.user_id = i.user_id
+            WHERE i.id = ? AND i.user_id = ?
+            """,
+            (int(income_id), uid),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return False, "Provento não encontrado."
+
+        desc = f"PROVENTO {row['symbol']} ({row['type']})"
+        account_id = int(row["credit_account_id"] or row["broker_account_id"] or 0)
+        tx_id = None
+        if account_id > 0:
+            tx_rows = _exec(
+                conn,
+                """
+                SELECT id, amount_brl, notes
+                FROM transactions
+                WHERE user_id = ?
+                  AND date = ?
+                  AND account_id = ?
+                  AND method = 'INV'
+                  AND description = ?
+                ORDER BY id DESC
+                """,
+                (uid, row["date"], account_id, desc),
+            ).fetchall()
+            target_amount = float(row["amount"] or 0.0)
+            target_note = (str(row["note"]).strip() if row["note"] is not None else "")
+            for tx in tx_rows:
+                tx_amount = float(tx["amount_brl"] or 0.0)
+                tx_note = (str(tx["notes"]).strip() if tx["notes"] is not None else "")
+                if abs(tx_amount - target_amount) < 1e-6 and tx_note == target_note:
+                    tx_id = int(tx["id"])
+                    break
+            if tx_id is None:
+                for tx in tx_rows:
+                    tx_amount = float(tx["amount_brl"] or 0.0)
+                    if abs(tx_amount - target_amount) < 1e-6:
+                        tx_id = int(tx["id"])
+                        break
+
+        if tx_id is not None:
+            _exec(conn, "DELETE FROM transactions WHERE id = ? AND user_id = ?", (tx_id, uid))
+        _exec(conn, "DELETE FROM income_events WHERE id = ? AND user_id = ?", (int(income_id), uid))
+        conn.commit()
+        return True, "Provento excluído e saldo da conta ajustado."
+    except Exception as e:
+        conn.rollback()
+        return False, f"Erro ao excluir provento: {e}"
+    finally:
+        conn.close()
 
 
 def get_asset(asset_id: int, user_id: int | None = None):

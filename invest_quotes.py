@@ -368,6 +368,7 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
             px, px_date, src = fetch_last_price_yf(sym_crypto)
             if px is not None:
                 return px, px_date, src, None
+            return None, None, None, err or f"Sem cotação para cripto ({sym_crypto})."
 
         if is_us_stock:
             # Evita travas do yfinance neste ambiente: prioriza HTTP e stooq para US.

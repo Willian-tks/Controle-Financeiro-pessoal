@@ -44,6 +44,7 @@ from .schemas import (
     LoginRequest,
     LoginResponse,
     ManualAssetValueUpdateRequest,
+    ProfileUpdateRequest,
     UserGlobalRoleUpdateRequest,
     WorkspaceAdminCreateRequest,
     WorkspaceMemberCreateRequest,
@@ -1153,6 +1154,30 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
 @app.get("/me")
 def me(user: dict = Depends(_current_user)) -> dict:
     return user
+
+
+@app.put("/me")
+def update_me(body: ProfileUpdateRequest, user: dict = Depends(_current_user)) -> dict:
+    try:
+        updated = auth.update_user_profile(
+            user_id=int(user["id"]),
+            email=body.email,
+            display_name=body.display_name,
+            current_password=body.current_password,
+            new_password=body.new_password,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    out = dict(updated)
+    out["global_role"] = _global_role_from_user(updated)
+    out["role"] = "admin" if out["global_role"] == "SUPER_ADMIN" else "user"
+    out["workspace_id"] = user.get("workspace_id")
+    out["workspace_role"] = user.get("workspace_role")
+    out["workspace_status"] = user.get("workspace_status")
+    out["workspace_name"] = user.get("workspace_name")
+    out["permissions"] = user.get("permissions", [])
+    return out
 
 
 @app.get("/workspaces")
@@ -2799,18 +2824,25 @@ def invest_create_income(
     if not asset:
         raise HTTPException(status_code=404, detail="Ativo não encontrado")
 
+    accounts = repo.list_accounts(user_id=uid) or []
+    account_ids = {int(a["id"]) for a in accounts if a["id"] is not None}
+    credit_account_id = int(body.credit_account_id) if body.credit_account_id is not None else 0
+    if credit_account_id and credit_account_id not in account_ids:
+        raise HTTPException(status_code=400, detail="Conta de crédito inválida.")
+
+    target_account_id = credit_account_id or int(asset["broker_account_id"] or 0)
     note = (body.note or "").strip() or None
     invest_repo.insert_income(
         asset_id=int(body.asset_id),
         date=body.date,
         type_=body.type,
         amount=float(body.amount),
+        credit_account_id=target_account_id or None,
         note=note,
         user_id=uid,
     )
 
-    broker_acc_id = asset["broker_account_id"]
-    if broker_acc_id:
+    if target_account_id:
         cat_id = repo.ensure_category("Investimentos", "Receita", user_id=uid)
         desc = f"PROVENTO {asset['symbol']} ({body.type})"
         repo.create_transaction(
@@ -2818,7 +2850,7 @@ def invest_create_income(
             description=desc,
             amount=float(body.amount),
             category_id=int(cat_id),
-            account_id=int(broker_acc_id),
+            account_id=int(target_account_id),
             method="INV",
             notes=note,
             user_id=uid,
@@ -2832,8 +2864,10 @@ def invest_delete_income(
     user: dict = Depends(_current_user),
 ) -> dict:
     uid = int(user["id"])
-    invest_repo.delete_income(int(income_id), user_id=uid)
-    return {"ok": True}
+    ok, msg = invest_repo.delete_income_with_cash_reversal(int(income_id), user_id=uid)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "message": msg}
 
 
 @app.get("/invest/prices")

@@ -696,6 +696,84 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
     return user
 
 
+def update_user_profile(
+    *,
+    user_id: int,
+    email: str,
+    display_name: str | None = None,
+    current_password: str | None = None,
+    new_password: str | None = None,
+) -> dict[str, Any]:
+    uid = int(user_id)
+    email_n = _norm_email(email)
+    if "@" not in email_n or "." not in email_n:
+        raise ValueError("Informe um e-mail válido.")
+
+    display = (display_name or "").strip() or None
+    current_pwd = str(current_password or "")
+    new_pwd = str(new_password or "")
+
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT id, email, password_hash
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        """,
+        (uid,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("Usuário não encontrado.")
+
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE email = ? AND id <> ?
+        LIMIT 1
+        """,
+        (email_n, uid),
+    ).fetchone()
+    if existing:
+        conn.close()
+        raise ValueError("Este e-mail já está cadastrado.")
+
+    fields = ["email = ?", "display_name = ?"]
+    params: list[Any] = [email_n, display]
+
+    if new_pwd:
+        if len(new_pwd) < 6:
+            conn.close()
+            raise ValueError("A nova senha deve ter pelo menos 6 caracteres.")
+        if not current_pwd:
+            conn.close()
+            raise ValueError("Informe a senha atual para alterar a senha.")
+        if not _verify_password(current_pwd, str(row["password_hash"] or "")):
+            conn.close()
+            raise ValueError("Senha atual inválida.")
+        fields.append("password_hash = ?")
+        params.append(_hash_password(new_pwd))
+
+    params.append(uid)
+    conn.execute(
+        f"""
+        UPDATE users
+        SET {", ".join(fields)}
+        WHERE id = ?
+        """,
+        tuple(params),
+    )
+    conn.commit()
+    conn.close()
+
+    updated = get_user_by_id(uid)
+    if not updated:
+        raise ValueError("Falha ao atualizar perfil.")
+    return updated
+
+
 def claim_legacy_data_for_user(user_id: int) -> None:
     uid = int(user_id)
     conn = get_conn()

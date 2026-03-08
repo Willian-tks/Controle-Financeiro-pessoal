@@ -58,6 +58,13 @@ export function getMe() {
   return req("/me");
 }
 
+export function updateMeProfile(payload) {
+  return req("/me", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getWorkspaces() {
   return req("/workspaces");
 }

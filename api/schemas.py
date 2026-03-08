@@ -11,6 +11,13 @@ class LoginResponse(BaseModel):
     user: dict
 
 
+class ProfileUpdateRequest(BaseModel):
+    display_name: str | None = None
+    email: str
+    current_password: str | None = None
+    new_password: str | None = None
+
+
 class WorkspaceSwitchRequest(BaseModel):
     workspace_id: int
 
@@ -163,6 +170,7 @@ class IncomeCreateRequest(BaseModel):
     date: str
     type: str
     amount: float
+    credit_account_id: int | None = None
     note: str | None = None
 
 
