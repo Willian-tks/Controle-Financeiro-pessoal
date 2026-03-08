@@ -6,8 +6,6 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import streamlit as st
-
 from db import get_conn
 
 PBKDF2_ITERATIONS = 260_000
@@ -330,14 +328,14 @@ def create_workspace_with_owner(
         conn.close()
         raise ValueError("Owner informado está inativo.")
 
-    conn.execute(
+    ws_row = conn.execute(
         """
         INSERT INTO workspaces(name, owner_user_id, status)
         VALUES (?, ?, 'active')
+        RETURNING id AS workspace_id
         """,
         (name, owner_id),
-    )
-    ws_row = conn.execute("SELECT last_insert_rowid() AS workspace_id").fetchone()
+    ).fetchone()
     ws_id = int(ws_row["workspace_id"]) if ws_row else 0
     if ws_id <= 0:
         conn.rollback()
@@ -787,22 +785,3 @@ def claim_legacy_data_for_user(user_id: int) -> None:
     conn.execute("UPDATE asset_prices SET user_id = ? WHERE user_id IS NULL", (uid,))
     conn.commit()
     conn.close()
-
-
-def session_user() -> dict[str, Any] | None:
-    uid = st.session_state.get("auth_user_id")
-    if not uid:
-        return None
-    user = get_user_by_id(int(uid))
-    if not user or not bool(user.get("is_active", 1)):
-        st.session_state.pop("auth_user_id", None)
-        return None
-    return user
-
-
-def login_session(user_id: int) -> None:
-    st.session_state["auth_user_id"] = int(user_id)
-
-
-def logout_session() -> None:
-    st.session_state.pop("auth_user_id", None)

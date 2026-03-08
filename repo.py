@@ -68,7 +68,7 @@ def list_accounts(user_id: int | None = None):
             name,
             type,
             COALESCE(currency, 'BRL') AS currency,
-            COALESCE(show_on_dashboard, 0) AS show_on_dashboard
+            COALESCE(show_on_dashboard, FALSE) AS show_on_dashboard
         FROM accounts
         WHERE user_id = ?
         ORDER BY name
@@ -99,7 +99,7 @@ def create_account(
     if not exists:
         _exec(conn, 
             "INSERT INTO accounts(name, type, currency, show_on_dashboard, user_id) VALUES (?, ?, ?, ?, ?)",
-            (nm, acc_type, curr, 1 if bool(show_on_dashboard) else 0, uid),
+            (nm, acc_type, curr, bool(show_on_dashboard), uid),
         )
     conn.commit()
     conn.close()
@@ -305,7 +305,7 @@ def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", u
                 SELECT id, card_id, invoice_period, amount
                 FROM credit_card_charges
                 WHERE user_id = ?
-                  AND paid IN (0, FALSE, '0', 'false', 'FALSE')
+                  AND COALESCE(paid, FALSE) = FALSE
                   AND purchase_date >= ?
                   AND COALESCE(note, '') LIKE ?
                 """,
@@ -323,7 +323,7 @@ def delete_credit_commitment_with_scope(charge_id: int, scope: str = "single", u
                     SELECT id, card_id, invoice_period, amount
                     FROM credit_card_charges
                     WHERE user_id = ?
-                      AND paid IN (0, FALSE, '0', 'false', 'FALSE')
+                      AND COALESCE(paid, FALSE) = FALSE
                       AND card_id = ?
                       AND COALESCE(category_id, 0) = COALESCE(?, 0)
                       AND purchase_date >= ?
@@ -593,7 +593,7 @@ def update_account(
             name.strip(),
             acc_type,
             (currency or "BRL").strip().upper(),
-            1 if bool(show_on_dashboard) else 0,
+            bool(show_on_dashboard),
             int(account_id),
             uid,
         ),
@@ -960,7 +960,7 @@ def fetch_credit_charges_competencia(
             'Credito' AS method,
             ch.note AS notes,
             'credit_charge' AS source_type,
-            CASE WHEN ch.paid IN (1, TRUE, '1', 'true', 'TRUE') THEN 'Pago' ELSE 'Pendente' END AS charge_status,
+            CASE WHEN COALESCE(ch.paid, FALSE) = TRUE THEN 'Pago' ELSE 'Pendente' END AS charge_status,
             ch.invoice_period,
             ch.due_date,
             cc.name AS card_name
@@ -1011,7 +1011,7 @@ def fetch_credit_charges_future(
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
         LEFT JOIN categories c ON c.id = ch.category_id AND c.user_id = ch.user_id
         WHERE ch.user_id = ?
-          AND ch.paid IN (0, FALSE, '0', 'false', 'FALSE')
+          AND COALESCE(ch.paid, FALSE) = FALSE
     """
     params: list = [uid]
     if date_from:

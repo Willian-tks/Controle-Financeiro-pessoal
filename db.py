@@ -1119,7 +1119,7 @@ def _backfill_fixed_income_assets_phase1(cur):
     cur.execute(f"""
     UPDATE assets
     SET principal_amount = (
-        SELECT ROUND(SUM({buy_cost_expr}), 6)
+        SELECT ROUND(CAST(SUM({buy_cost_expr}) AS NUMERIC), 6)
         FROM trades t
         WHERE t.asset_id = assets.id
           AND COALESCE(t.user_id, 0) = COALESCE(assets.user_id, 0)
