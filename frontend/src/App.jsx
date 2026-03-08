@@ -725,6 +725,11 @@ export default function App() {
   const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
   const [profileMsg, setProfileMsg] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
+  const [installPromptEvent, setInstallPromptEvent] = useState(null);
+  const [pwaInstalled, setPwaInstalled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
+  });
   const [walletCardIndex, setWalletCardIndex] = useState(0);
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [payInvoiceTarget, setPayInvoiceTarget] = useState(null);
@@ -756,6 +761,25 @@ export default function App() {
     setProfileConfirmPassword("");
     setProfileMsg("");
   }, [profileModalOpen, user]);
+
+  useEffect(() => {
+    function onBeforeInstallPrompt(event) {
+      event.preventDefault();
+      setInstallPromptEvent(event);
+    }
+
+    function onAppInstalled() {
+      setPwaInstalled(true);
+      setInstallPromptEvent(null);
+    }
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -3158,6 +3182,16 @@ export default function App() {
     setPage("Dashboard");
   }
 
+  async function onInstallPwa() {
+    if (!installPromptEvent) return;
+    try {
+      await installPromptEvent.prompt();
+      await installPromptEvent.userChoice;
+    } finally {
+      setInstallPromptEvent(null);
+    }
+  }
+
   async function onApplyDashboardFilters(e) {
     e.preventDefault();
     await reloadDashboard({
@@ -3363,6 +3397,22 @@ export default function App() {
                       <path d="M4 18h16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                     </svg>
                     Workspace
+                  </button>
+                ) : null}
+                {!pwaInstalled && installPromptEvent ? (
+                  <button
+                    className="user-popover-item install"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      onInstallPwa();
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 4v10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M8 10l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M5 18h14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                    Instalar app
                   </button>
                 ) : null}
                 <button
@@ -3769,7 +3819,7 @@ export default function App() {
                         <option value="BRL">BRL</option>
                         <option value="USD">USD</option>
                       </select>
-                      <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <label className="mgr-checkline">
                         <input type="checkbox" name="show_on_dashboard" />
                         Fixar no Dashboard (saldo 0)
                       </label>
@@ -3812,7 +3862,7 @@ export default function App() {
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
                     </select>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label className="mgr-checkline">
                       <input
                         type="checkbox"
                         checked={Boolean(accEditShowOnDashboard)}
@@ -3929,7 +3979,7 @@ export default function App() {
                         value={cardCreateDueDay}
                         onChange={(e) => setCardCreateDueDay(e.target.value)}
                       />
-                      <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                      <small className="mgr-hint">
                         Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
                       </small>
                       <button type="button" onClick={onCreateCard}>Cadastrar cartão</button>
@@ -3986,7 +4036,7 @@ export default function App() {
                       disabled={!canEditContas}
                       onChange={(e) => setCardDueDay(e.target.value)}
                     />
-                    <small style={{ gridColumn: "1 / -1", color: "#5f6f8f" }}>
+                    <small className="mgr-hint">
                       Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
                     </small>
                     <button type="button" onClick={onUpdateCard} disabled={!canEditContas}>Atualizar cartão</button>
@@ -4251,7 +4301,7 @@ export default function App() {
           <>
             <section className="card">
               <h3>Novo lançamento</h3>
-              <div className="invest-tabs" style={{ marginBottom: 12 }}>
+              <div className="invest-tabs tx-view-tabs">
                 <button
                   type="button"
                   className={`mini-tab ${txView === "caixa" ? "active" : ""}`}
@@ -4276,14 +4326,14 @@ export default function App() {
               </div>
               {txView === "competencia" ? (
                 <>
-                  <div className="transfer-hint" style={{ marginBottom: 10 }}>
+                  <div className="transfer-hint tx-info-block">
                     <strong className="transfer-badge">Compromissos</strong>
                     <span>
                       Use a aba Compromissos para contas a vencer: se hoje ainda não passou do dia informado, a 1ª
                       parcela entra neste mês; depois replica pelos próximos meses.
                     </span>
                   </div>
-                  <div className="transfer-hint" style={{ marginBottom: 12 }}>
+                  <div className="transfer-hint tx-info-block tx-info-block-last">
                     <strong className="transfer-badge">Competência</strong>
                     <span>
                       A aba Competência apresenta valores já comprometidos - como lançamentos previstos ou vinculados a
@@ -4556,7 +4606,7 @@ export default function App() {
 
             <section className="card">
               <h3>Lançamentos recentes</h3>
-              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(4, minmax(220px, 360px))", marginBottom: 12 }}>
+              <div className="tx-recent-filters">
                 <input
                   type="date"
                   className="invoice-filter-select"
@@ -4829,7 +4879,7 @@ export default function App() {
             {investTab === "Resumo" ? (
               <>
                 <section className="card">
-                  <div className="tx-form" style={{ gridTemplateColumns: "minmax(220px, 360px) auto" }}>
+                  <div className="tx-form invest-summary-toolbar">
                     <select
                       className="invoice-filter-select"
                       value={investSummaryClassFilter}
@@ -4879,7 +4929,7 @@ export default function App() {
                 {investDivergenceOpen ? (
                   <section className="card">
                     <h3>Divergência de rentabilidade</h3>
-                    <div className="tx-form" style={{ gridTemplateColumns: "minmax(220px, 360px) minmax(220px, 360px)" }}>
+                    <div className="tx-form invest-divergence-form">
                       <input
                         type="number"
                         step="0.01"
@@ -5292,7 +5342,7 @@ export default function App() {
 
                 <section className="card">
                   <h3>Operações recentes</h3>
-                  <div className="tx-form" style={{ gridTemplateColumns: "repeat(2, minmax(220px, 320px))" }}>
+                  <div className="tx-form invest-date-filter-form">
                     <input
                       type="date"
                       value={investTradeDateFrom}
@@ -5400,7 +5450,7 @@ export default function App() {
 
                 <section className="card">
                   <h3>Proventos recentes</h3>
-                  <div className="tx-form" style={{ gridTemplateColumns: "repeat(2, minmax(220px, 320px))" }}>
+                  <div className="tx-form invest-date-filter-form">
                     <input
                       type="date"
                       value={investIncomeDateFrom}
@@ -5616,7 +5666,7 @@ export default function App() {
 
             <section className="card">
               <h3>Carteira (consolidado)</h3>
-              <div className="tx-form" style={{ gridTemplateColumns: "minmax(220px, 360px)" }}>
+              <div className="tx-form invest-portfolio-toolbar">
                 <select
                   className="invoice-filter-select"
                   value={investPortfolioClassFilter}
