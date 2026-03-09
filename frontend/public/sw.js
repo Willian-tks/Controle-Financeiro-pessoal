@@ -1,4 +1,4 @@
-const CACHE_NAME = "domus-shell-v1";
+const CACHE_NAME = "domus-shell-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -7,6 +7,15 @@ const APP_SHELL = [
   "/icons/icon-192.png",
   "/icons/icon-512.png",
 ];
+
+const STATIC_DESTINATIONS = new Set(["style", "script", "worker", "image", "font", "manifest"]);
+
+function isCacheableStaticAsset(request) {
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return false;
+  if (STATIC_DESTINATIONS.has(request.destination)) return true;
+  return /^\/(assets|icons)\//.test(url.pathname);
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -29,8 +38,6 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
-  const url = new URL(event.request.url);
-  const isSameOrigin = url.origin === self.location.origin;
   const isNavigation = event.request.mode === "navigate";
 
   if (isNavigation) {
@@ -49,7 +56,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (!isSameOrigin) return;
+  if (!isCacheableStaticAsset(event.request)) return;
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
