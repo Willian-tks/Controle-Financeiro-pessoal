@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from db import get_conn
+from db import USE_POSTGRES, get_conn
 
 
 MODULES = {"dashboard", "lancamentos", "investimentos", "relatorios", "contas", "usuarios"}
@@ -71,8 +71,11 @@ def _norm_module(module: str) -> str:
     return mod
 
 
-def _to_flag(value: Any) -> int:
-    return 1 if bool(value) else 0
+def _to_flag(value: Any) -> bool | int:
+    as_bool = bool(value)
+    if USE_POSTGRES:
+        return as_bool
+    return 1 if as_bool else 0
 
 
 def get_workspace_user(workspace_id: int, user_id: int) -> dict[str, Any] | None:
