@@ -1033,7 +1033,7 @@ export default function App() {
     setAssetEditFixedRate("");
   }, [assetEditClass]);
 
-  const subtitle = useMemo(() => PAGE_SUBTITLES[page] || "Em migração do Streamlit", [page]);
+  const subtitle = useMemo(() => PAGE_SUBTITLES[page] || "Painel financeiro", [page]);
   const isSuperAdmin = String(user?.global_role || "").toUpperCase() === "SUPER_ADMIN";
   const isWorkspaceOwner = String(user?.workspace_role || "").toUpperCase() === "OWNER";
   const canManageWorkspaceUsers = isSuperAdmin || isWorkspaceOwner;

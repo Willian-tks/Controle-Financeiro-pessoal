@@ -140,16 +140,7 @@ def _get_brapi_token() -> Optional[str]:
     if token:
         return token.strip()
 
-    # 2) tenta streamlit secrets (sem quebrar se streamlit não existir aqui)
-    try:
-        import streamlit as st  # import local
-        token = st.secrets.get("BRAPI_TOKEN")
-        if token:
-            return str(token).strip()
-    except Exception:
-        pass
-
-    # 3) tenta .env em locais comuns (cwd e diretório do projeto)
+    # 2) tenta .env em locais comuns (cwd e diretório do projeto)
     env_candidates = [".env"]
     try:
         here = os.path.dirname(os.path.abspath(__file__))
