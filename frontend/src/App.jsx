@@ -571,6 +571,7 @@ function getCircularDistance(fromIndex, toIndex, total) {
 export default function App() {
   const defaultMonthRange = getCurrentMonthRange();
   const [authError, setAuthError] = useState("");
+  const [loginSyncNotice, setLoginSyncNotice] = useState(null);
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("Dashboard");
   const [accounts, setAccounts] = useState([]);
@@ -1747,6 +1748,7 @@ export default function App() {
   async function onLogin(e) {
     e.preventDefault();
     setAuthError("");
+    setLoginSyncNotice(null);
     const form = new FormData(e.currentTarget);
     const email = String(form.get("email") || "");
     const password = String(form.get("password") || "");
@@ -1754,6 +1756,12 @@ export default function App() {
       const data = await login(email, password);
       setToken(data.token);
       setUser(data.user);
+      if (data?.login_sync_status?.should_notify && data?.login_sync_status?.message) {
+        setLoginSyncNotice({
+          level: String(data.login_sync_status.level || "success"),
+          message: String(data.login_sync_status.message || ""),
+        });
+      }
     } catch (err) {
       setAuthError(String(err.message || err));
     }
@@ -3166,6 +3174,7 @@ export default function App() {
   function onLogout() {
     clearToken();
     setUser(null);
+    setLoginSyncNotice(null);
     setAccounts([]);
     setCategories([]);
     setTransactions([]);
@@ -3454,6 +3463,12 @@ export default function App() {
             {!workspaceSwitchingId && workspaceMsg ? <span className="workspace-msg">{workspaceMsg}</span> : null}
           </div>
         </header>
+
+        {loginSyncNotice?.message ? (
+          <section className={`status-banner ${loginSyncNotice.level === "warning" ? "warning" : "success"}`}>
+            <p className="status-msg">{loginSyncNotice.message}</p>
+          </section>
+        ) : null}
 
         {!visiblePages.length ? (
           <section className="card">

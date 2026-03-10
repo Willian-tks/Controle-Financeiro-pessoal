@@ -104,6 +104,10 @@ export function getAdminWorkspaces() {
   return req("/admin/workspaces");
 }
 
+export function getAdminRuntimeChecks() {
+  return req("/admin/runtime-checks");
+}
+
 export function createAdminWorkspace(payload) {
   return req("/admin/workspaces", {
     method: "POST",

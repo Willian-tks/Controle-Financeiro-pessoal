@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from typing import Any
 
 import requests
+import certifi
 
 from db import get_conn
 from tenant import get_current_user_id, get_current_workspace_id
@@ -153,7 +154,13 @@ def fetch_bcb_series(index_name: str, date_from: str, date_to: str, timeout_s: f
     }
     headers = {"User-Agent": "controle-financeiro/1.0"}
 
-    resp = requests.get(url, params=params, headers=headers, timeout=float(timeout_s))
+    resp = requests.get(
+        url,
+        params=params,
+        headers=headers,
+        timeout=float(timeout_s),
+        verify=certifi.where(),
+    )
     if resp.status_code != 200:
         raise RuntimeError(f"Falha ao consultar BCB ({idx}): HTTP {resp.status_code}")
 

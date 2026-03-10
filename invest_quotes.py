@@ -321,16 +321,16 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
     is_us_like_symbol = sym.isalpha() and (1 <= len(sym) <= 6) and ("." not in sym) and ("-" not in sym)
     is_crypto_by_class = ("cripto" in cls) or ("crypto" in cls)
 
-    # 1) Para BR, prioriza BRAPI (mais estável para B3 e sem depender de ".SA")
+    # 1) Para BR, prioriza BRAPI quando configurado e faz fallback para Yahoo.
     if is_b3:
         brapi_token = _get_brapi_token()
-        if not brapi_token:
-            # Sem token, evita fallback lento/instável e falha rápido com erro claro.
-            return None, None, None, "BRAPI_TOKEN não configurado (env ou secrets.toml)."
-
-        px, px_date, src, err = fetch_last_price_brapi(sym)
-        if px is not None:
-            return px, px_date, src, None
+        err = None
+        if brapi_token:
+            px, px_date, src, err = fetch_last_price_brapi(sym)
+            if px is not None:
+                return px, px_date, src, None
+        else:
+            err = "BRAPI_TOKEN não configurado; usando fallback Yahoo."
 
         # fallback para Yahoo caso BRAPI não retorne
         px, px_date, src = fetch_last_price_yf(_normalize_b3(sym))

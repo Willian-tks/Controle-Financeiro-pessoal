@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
@@ -6,9 +6,25 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class LoginSyncStatus(BaseModel):
+    should_notify: bool = False
+    level: str | None = None
+    message: str | None = None
+    impacted_asset_count: int = 0
+    impacted_index_names: list[str] = Field(default_factory=list)
+    updated_indexes: list[str] = Field(default_factory=list)
+    up_to_date_indexes: list[str] = Field(default_factory=list)
+    failed_indexes: list[str] = Field(default_factory=list)
+    pending_indexes: list[str] = Field(default_factory=list)
+    fixed_income_asset_count: int = 0
+    fixed_income_updated: int = 0
+    fixed_income_errors: int = 0
+
+
 class LoginResponse(BaseModel):
     token: str
     user: dict
+    login_sync_status: LoginSyncStatus | None = None
 
 
 class ProfileUpdateRequest(BaseModel):

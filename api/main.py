@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import calendar
+import logging
 from typing import Any
 from datetime import date as _date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -67,6 +68,7 @@ from .security import create_token, verify_token
 
 app = FastAPI(title="Controle Financeiro API", version="0.1.0")
 VALID_VIEWS = {"caixa", "competencia", "futuro"}
+logger = logging.getLogger(__name__)
 
 
 def _cors_origins() -> list[str]:
@@ -946,13 +948,57 @@ def _manual_asset_updates_today(user_id: int, workspace_id: int | None = None, r
     return out
 
 
-def _sync_indexes_on_login(user_id: int, workspace_id: int | None = None) -> None:
+def _collect_login_fixed_income_context(user_id: int, workspace_id: int | None = None) -> dict[str, Any]:
+    try:
+        if workspace_id is not None:
+            set_current_workspace_id(int(workspace_id))
+        set_current_user_id(int(user_id))
+        assets = [dict(a) for a in (invest_repo.list_assets(user_id=int(user_id)) or [])]
+    finally:
+        clear_tenant_context()
+
+    impacted_assets: list[dict[str, Any]] = []
+    impacted_indexes: set[str] = set()
+    for asset in assets:
+        if not invest_rentability._is_fixed_income(asset.get("asset_class")):
+            continue
+        rent_type = invest_rentability._norm_rentability_type(asset.get("rentability_type"))
+        if not invest_rentability._is_auto_rentability_type(rent_type):
+            continue
+        impacted_assets.append(asset)
+        idx_name = invest_rentability._norm_index_name(asset.get("index_name"))
+        if not idx_name:
+            if rent_type in {"PCT_CDI", "CDI_SPREAD"}:
+                idx_name = "CDI"
+            elif rent_type in {"PCT_SELIC", "SELIC_SPREAD"}:
+                idx_name = "SELIC"
+            elif rent_type == "IPCA_SPREAD":
+                idx_name = "IPCA"
+        if idx_name in invest_index_rates.SUPPORTED_INDEX_NAMES:
+            impacted_indexes.add(idx_name)
+
+    ordered_indexes = [idx for idx in invest_index_rates.SUPPORTED_INDEX_NAMES if idx in impacted_indexes]
+    return {
+        "impacted_asset_count": len(impacted_assets),
+        "impacted_index_names": ordered_indexes,
+    }
+
+
+def _sync_indexes_on_login(
+    user_id: int,
+    workspace_id: int | None = None,
+    target_indexes: list[str] | None = None,
+) -> dict[str, Any]:
     today = _date.today()
     today_iso = today.isoformat()
     plans: list[tuple[str, str, str]] = []
+    target_set = {str(idx or "").strip().upper() for idx in (target_indexes or []) if str(idx or "").strip()}
+    status_map: dict[str, str] = {}
 
     for idx in ("CDI", "SELIC"):
         if _has_sync_run_today("index_rate_sync", idx, user_id=user_id, workspace_id=workspace_id, ref_date=today_iso):
+            if idx in target_set:
+                status_map[idx] = "up_to_date"
             continue
         latest = _latest_index_ref_date(idx, user_id=user_id, workspace_id=workspace_id)
         if latest:
@@ -961,6 +1007,8 @@ def _sync_indexes_on_login(user_id: int, workspace_id: int | None = None) -> Non
             start = f"{today.year}-01-01"
         if start <= today_iso:
             plans.append((idx, start, today_iso))
+        elif idx in target_set:
+            status_map[idx] = "up_to_date"
 
     if today.day >= 12:
         if not _has_sync_run_today("index_rate_sync", "IPCA", user_id=user_id, workspace_id=workspace_id, ref_date=today_iso):
@@ -971,12 +1019,23 @@ def _sync_indexes_on_login(user_id: int, workspace_id: int | None = None) -> Non
                 start = f"{today.year}-01-01"
             if start <= today_iso:
                 plans.append(("IPCA", start, today_iso))
+            elif "IPCA" in target_set:
+                status_map["IPCA"] = "up_to_date"
+        elif "IPCA" in target_set:
+            status_map["IPCA"] = "up_to_date"
+    elif "IPCA" in target_set:
+        status_map["IPCA"] = "pending_release"
 
-    try:
-        if workspace_id is not None:
-            set_current_workspace_id(int(workspace_id))
-        set_current_user_id(int(user_id))
-        for idx, start, end in plans:
+    if target_set:
+        for idx, _, _ in plans:
+            if idx in target_set and idx not in status_map:
+                status_map[idx] = "pending_sync"
+
+    for idx, start, end in plans:
+        try:
+            if workspace_id is not None:
+                set_current_workspace_id(int(workspace_id))
+            set_current_user_id(int(user_id))
             invest_index_rates.sync_from_bcb(
                 index_names=[idx],
                 date_from=start,
@@ -985,31 +1044,168 @@ def _sync_indexes_on_login(user_id: int, workspace_id: int | None = None) -> Non
                 user_id=int(user_id),
             )
             _mark_sync_run_today("index_rate_sync", idx, user_id=user_id, workspace_id=workspace_id, ref_date=today_iso)
-    except Exception:
-        # Falhas de sincronização de índices não devem bloquear o login.
-        pass
-    finally:
-        clear_tenant_context()
+            if idx in target_set:
+                status_map[idx] = "updated"
+        except Exception:
+            if idx in target_set:
+                status_map[idx] = "failed"
+            logger.exception(
+                "Falha ao sincronizar índices no login",
+                extra={"user_id": int(user_id), "workspace_id": workspace_id, "index_name": idx},
+            )
+        finally:
+            clear_tenant_context()
+
+    updated = [idx for idx in invest_index_rates.SUPPORTED_INDEX_NAMES if status_map.get(idx) == "updated"]
+    up_to_date = [idx for idx in invest_index_rates.SUPPORTED_INDEX_NAMES if status_map.get(idx) == "up_to_date"]
+    failed = [idx for idx in invest_index_rates.SUPPORTED_INDEX_NAMES if status_map.get(idx) == "failed"]
+    pending = [
+        idx
+        for idx in invest_index_rates.SUPPORTED_INDEX_NAMES
+        if status_map.get(idx) in {"pending_release", "pending_sync"}
+    ]
+    return {
+        "statuses": status_map,
+        "updated_indexes": updated,
+        "up_to_date_indexes": up_to_date,
+        "failed_indexes": failed,
+        "pending_indexes": pending,
+    }
 
 
-def _refresh_fixed_income_on_login(user_id: int, workspace_id: int | None = None) -> None:
+def _refresh_fixed_income_on_login(user_id: int, workspace_id: int | None = None) -> dict[str, Any]:
     today_iso = _date.today().isoformat()
     manual_asset_ids = sorted(_manual_asset_updates_today(user_id=user_id, workspace_id=workspace_id, ref_date=today_iso))
     try:
         if workspace_id is not None:
             set_current_workspace_id(int(workspace_id))
         set_current_user_id(int(user_id))
-        invest_rentability.update_fixed_income_assets(
+        result = invest_rentability.update_fixed_income_assets(
             as_of_date=today_iso,
             user_id=int(user_id),
             only_auto=True,
             exclude_asset_ids=manual_asset_ids,
         )
+        return {
+            "ok": True,
+            "total_assets": int(result.get("total_assets") or 0),
+            "updated": int(result.get("updated") or 0),
+            "errors": int(result.get("errors") or 0),
+            "skipped": int(result.get("skipped") or 0),
+        }
     except Exception:
         # Falhas de atualização automática não devem bloquear o login.
-        pass
+        logger.exception(
+            "Falha ao atualizar renda fixa no login",
+            extra={"user_id": int(user_id), "workspace_id": workspace_id},
+        )
+        return {
+            "ok": False,
+            "total_assets": 0,
+            "updated": 0,
+            "errors": 1,
+            "skipped": 0,
+        }
     finally:
         clear_tenant_context()
+
+
+def _format_index_names(names: list[str]) -> str:
+    labels = [str(name or "").strip().upper() for name in (names or []) if str(name or "").strip()]
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} e {labels[1]}"
+    return f"{', '.join(labels[:-1])} e {labels[-1]}"
+
+
+def _build_login_sync_status(
+    impacted: dict[str, Any],
+    index_sync: dict[str, Any],
+    fixed_income_refresh: dict[str, Any],
+) -> dict[str, Any] | None:
+    impacted_asset_count = int(impacted.get("impacted_asset_count") or 0)
+    impacted_indexes = list(impacted.get("impacted_index_names") or [])
+    if impacted_asset_count <= 0:
+        return None
+
+    updated_set = set(index_sync.get("updated_indexes") or [])
+    up_to_date_set = set(index_sync.get("up_to_date_indexes") or [])
+    failed_set = set(index_sync.get("failed_indexes") or [])
+    pending_set = set(index_sync.get("pending_indexes") or [])
+    updated_indexes = [idx for idx in impacted_indexes if idx in updated_set]
+    up_to_date_indexes = [idx for idx in impacted_indexes if idx in up_to_date_set]
+    failed_indexes = [idx for idx in impacted_indexes if idx in failed_set]
+    pending_indexes = [idx for idx in impacted_indexes if idx in pending_set]
+    refresh_ok = bool(fixed_income_refresh.get("ok"))
+    fixed_income_asset_count = int(fixed_income_refresh.get("total_assets") or 0)
+    fixed_income_updated = int(fixed_income_refresh.get("updated") or 0)
+    fixed_income_errors = int(fixed_income_refresh.get("errors") or 0)
+
+    if (
+        not impacted_indexes
+        and fixed_income_asset_count <= 0
+        and fixed_income_errors <= 0
+        and refresh_ok
+    ):
+        return None
+
+    if failed_indexes or not refresh_ok or fixed_income_errors > 0:
+        parts: list[str] = []
+        if updated_indexes:
+            parts.append(f"{_format_index_names(updated_indexes)} atualizados")
+        if failed_indexes:
+            parts.append(f"{_format_index_names(failed_indexes)} com falha")
+        if pending_indexes:
+            parts.append(f"{_format_index_names(pending_indexes)} sem nova divulgacao hoje")
+        if not refresh_ok or fixed_income_errors > 0:
+            parts.append("a atualizacao automatica da renda fixa teve pendencias")
+        message = "Sync da renda fixa no login com pendencias."
+        if parts:
+            message = f"Sync da renda fixa no login com pendencias: {'; '.join(parts)}."
+        return {
+            "should_notify": True,
+            "level": "warning",
+            "message": message,
+            "impacted_asset_count": impacted_asset_count,
+            "impacted_index_names": impacted_indexes,
+            "updated_indexes": updated_indexes,
+            "up_to_date_indexes": up_to_date_indexes,
+            "failed_indexes": failed_indexes,
+            "pending_indexes": pending_indexes,
+            "fixed_income_asset_count": fixed_income_asset_count,
+            "fixed_income_updated": fixed_income_updated,
+            "fixed_income_errors": fixed_income_errors,
+        }
+
+    parts: list[str] = []
+    if updated_indexes:
+        parts.append(f"indices atualizados: {_format_index_names(updated_indexes)}")
+    if up_to_date_indexes:
+        parts.append(f"em dia: {_format_index_names(up_to_date_indexes)}")
+    if pending_indexes:
+        parts.append(f"sem nova divulgacao hoje: {_format_index_names(pending_indexes)}")
+    if fixed_income_asset_count > 0:
+        parts.append(f"ativos recalculados: {fixed_income_updated}/{fixed_income_asset_count}")
+    message = "Renda fixa conferida no login."
+    if parts:
+        message = f"Renda fixa conferida no login: {'; '.join(parts)}."
+    return {
+        "should_notify": True,
+        "level": "success",
+        "message": message,
+        "impacted_asset_count": impacted_asset_count,
+        "impacted_index_names": impacted_indexes,
+        "updated_indexes": updated_indexes,
+        "up_to_date_indexes": up_to_date_indexes,
+        "failed_indexes": failed_indexes,
+        "pending_indexes": pending_indexes,
+        "fixed_income_asset_count": fixed_income_asset_count,
+        "fixed_income_updated": fixed_income_updated,
+        "fixed_income_errors": fixed_income_errors,
+    }
 
 
 def _current_workspace_id_from_user(user: dict) -> int:
@@ -1033,6 +1229,20 @@ def _require_workspace_owner(user: dict) -> None:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
+
+
+@app.get("/admin/runtime-checks")
+def admin_runtime_checks(user: dict = Depends(_current_user)) -> dict:
+    _require_admin(user)
+    brapi_token = invest_quotes._get_brapi_token()
+    return {
+        "ok": True,
+        "checks": {
+            "brapi_configured": bool(str(brapi_token or "").strip()),
+            "cors_origins_configured": bool(_cors_origins()),
+            "database_url_configured": bool(str(os.getenv("DATABASE_URL") or "").strip()),
+        },
+    }
 
 
 @app.post("/import/transactions-csv")
@@ -1129,8 +1339,18 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
                 )
                 raise HTTPException(status_code=403, detail="Workspace bloqueado")
 
-    _sync_indexes_on_login(uid, workspace_id=workspace_id)
-    _refresh_fixed_income_on_login(uid, workspace_id=workspace_id)
+    impacted_sync_context = _collect_login_fixed_income_context(uid, workspace_id=workspace_id)
+    index_sync_status = _sync_indexes_on_login(
+        uid,
+        workspace_id=workspace_id,
+        target_indexes=impacted_sync_context.get("impacted_index_names"),
+    )
+    fixed_income_refresh_status = _refresh_fixed_income_on_login(uid, workspace_id=workspace_id)
+    login_sync_status = _build_login_sync_status(
+        impacted_sync_context,
+        index_sync_status,
+        fixed_income_refresh_status,
+    )
 
     token = create_token(
         uid,
@@ -1148,7 +1368,7 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
     out_user["workspace_status"] = str(member.get("workspace_status") or "").strip().lower() if member else None
     out_user["workspace_name"] = member.get("workspace_name") if member else None
     out_user["permissions"] = _effective_permissions_for_user(out_user, member=member)
-    return LoginResponse(token=token, user=out_user)
+    return LoginResponse(token=token, user=out_user, login_sync_status=login_sync_status)
 
 
 @app.get("/me")
