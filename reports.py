@@ -312,7 +312,7 @@ def commitments_summary(
     vencidos = float(df.loc[df["date"] < today, "amount_brl"].abs().sum())
 
     # Compromissos em cartão ainda não faturados (futuros).
-    cc_rows = repo.fetch_credit_charges_future(date_from=date_from, date_to=date_to, user_id=uid) or []
+    cc_rows = repo.fetch_credit_charges_future(date_from=date_from, date_to=date_to, user_id=user_id) or []
     if cc_rows:
         cdf = pd.DataFrame([dict(r) for r in cc_rows])
         cdf["date"] = pd.to_datetime(cdf["date"], errors="coerce")

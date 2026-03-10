@@ -511,7 +511,7 @@ def get_category_by_name(name: str, user_id: int | None = None):
 
 def ensure_category(name: str, kind: str = "Transferencia", user_id: int | None = None):
     uid = _uid(user_id)
-    row = get_category_by_name(name, user_id=uid)
+    row = get_category_by_name(name, user_id=user_id)
     if row:
         return row["id"]
     conn = get_conn()
@@ -615,7 +615,7 @@ def account_usage_count(account_id: int, user_id: int | None = None) -> int:
 
 def delete_account(account_id: int, user_id: int | None = None) -> int:
     uid = _uid(user_id)
-    used = account_usage_count(account_id, user_id=uid)
+    used = account_usage_count(account_id, user_id=user_id)
     if used > 0:
         return 0
 
@@ -653,7 +653,7 @@ def category_usage_count(category_id: int, user_id: int | None = None) -> int:
 
 def delete_category(category_id: int, user_id: int | None = None) -> int:
     uid = _uid(user_id)
-    used = category_usage_count(category_id, user_id=uid)
+    used = category_usage_count(category_id, user_id=user_id)
     if used > 0:
         return 0
 

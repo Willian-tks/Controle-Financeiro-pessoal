@@ -243,17 +243,16 @@ def positions_avg_cost(trades_df: pd.DataFrame):
 
 
 def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
-    uid = _uid(user_id)
-    tdf = df_trades(date_from, date_to, user_id=uid)
+    tdf = df_trades(date_from, date_to, user_id=user_id)
     pos = positions_avg_cost(tdf)
 
-    prices = df_latest_prices(user_id=uid)
+    prices = df_latest_prices(user_id=user_id)
     if not prices.empty and not pos.empty:
         pos = pos.merge(prices[["asset_id", "price", "price_date"]], on="asset_id", how="left")
     else:
         pos["price"] = 0.0
         pos["price_date"] = None
-    snapshots = df_latest_asset_snapshots(user_id=uid)
+    snapshots = df_latest_asset_snapshots(user_id=user_id)
     if not snapshots.empty and not pos.empty:
         pos = pos.merge(
             snapshots[["asset_id", "snapshot_price", "snapshot_date", "snapshot_source"]],
@@ -274,7 +273,7 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
         pos.get("avg_cost", 0.0), errors="coerce"
     ).fillna(0.0)
 
-    assets = df_assets(user_id=uid)
+    assets = df_assets(user_id=user_id)
     if not assets.empty and not pos.empty:
         pos = pos.merge(
             assets.rename(columns={"id": "asset_id"})[
@@ -320,7 +319,7 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     pos["estimated_net_value"] = pos["market_value_gross"] - pos["estimated_discount"]
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
 
-    inc = df_income(date_from, date_to, user_id=uid)
+    inc = df_income(date_from, date_to, user_id=user_id)
     if not inc.empty and not pos.empty:
         inc_sum = inc.groupby("asset_id")["amount"].sum().reset_index().rename(columns={"amount": "income"})
         pos = pos.merge(inc_sum, on="asset_id", how="left")
@@ -370,8 +369,7 @@ def df_asset_snapshots_upto(up_to_date: str, user_id: int | None = None) -> pd.D
 
 
 def investments_value_timeseries(date_from: str, date_to: str, user_id: int | None = None) -> pd.DataFrame:
-    uid = _uid(user_id)
-    tdf = df_trades(None, date_to, user_id=uid)
+    tdf = df_trades(None, date_to, user_id=user_id)
     if tdf.empty:
         dates = pd.date_range(date_from, date_to, freq="D")
         return pd.DataFrame({"date": dates, "invest_market_value": 0.0})
@@ -389,12 +387,12 @@ def investments_value_timeseries(date_from: str, date_to: str, user_id: int | No
             out.append({"date": d, "invest_market_value": 0.0})
             continue
 
-        prices = df_prices_upto(d_str, user_id=uid)
+        prices = df_prices_upto(d_str, user_id=user_id)
         if not prices.empty:
             pos = pos.merge(prices[["asset_id", "price"]], on="asset_id", how="left")
         else:
             pos["price"] = 0.0
-        snapshots = df_asset_snapshots_upto(d_str, user_id=uid)
+        snapshots = df_asset_snapshots_upto(d_str, user_id=user_id)
         if not snapshots.empty:
             pos = pos.merge(snapshots[["asset_id", "snapshot_price"]], on="asset_id", how="left")
         else:
