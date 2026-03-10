@@ -738,6 +738,27 @@ export default function App() {
   const [invoiceCardFilterId, setInvoiceCardFilterId] = useState("");
   const userMenuRef = useRef(null);
   const investRentabilityLastSyncRef = useRef(0);
+  const investReloadSeqRef = useRef(0);
+
+  function clearInvestState() {
+    setInvestMeta({ asset_classes: [], asset_sectors: [], income_types: [] });
+    setInvestAssets([]);
+    setInvestTrades([]);
+    setInvestIncomes([]);
+    setInvestPrices([]);
+    setInvestPortfolio({ positions: [] });
+    setInvestSummaryData({
+      assets_count: 0,
+      total_invested: 0,
+      total_market: 0,
+      total_income: 0,
+      total_realized: 0,
+      total_unrealized: 0,
+      total_return: 0,
+      total_return_pct: 0,
+      broker_balance: 0,
+    });
+  }
 
   useEffect(() => {
     (async () => {
@@ -811,23 +832,8 @@ export default function App() {
         if (canViewInvestimentos) {
           await reloadInvestData();
         } else {
-          setInvestMeta({ asset_classes: [], asset_sectors: [], income_types: [] });
-          setInvestAssets([]);
-          setInvestTrades([]);
-          setInvestIncomes([]);
-          setInvestPrices([]);
-          setInvestPortfolio({ positions: [] });
-          setInvestSummaryData({
-            assets_count: 0,
-            total_invested: 0,
-            total_market: 0,
-            total_income: 0,
-            total_realized: 0,
-            total_unrealized: 0,
-            total_return: 0,
-            total_return_pct: 0,
-            broker_balance: 0,
-          });
+          investReloadSeqRef.current += 1;
+          clearInvestState();
         }
         if (canManageWorkspaceUsers) {
           await reloadWorkspaceMembers();
@@ -1812,6 +1818,8 @@ export default function App() {
     if (!targetId || targetId === currentWorkspaceId) return;
     setWorkspaceSwitchingId(targetId);
     setWorkspaceMsg("");
+    investReloadSeqRef.current += 1;
+    clearInvestState();
     try {
       const out = await switchWorkspace(Number(targetId));
       setToken(out.token);
@@ -2138,25 +2146,11 @@ export default function App() {
 
   async function reloadInvestData(options = {}) {
     if (!canViewInvestimentos) {
-      setInvestMeta({ asset_classes: [], asset_sectors: [], income_types: [] });
-      setInvestAssets([]);
-      setInvestTrades([]);
-      setInvestIncomes([]);
-      setInvestPrices([]);
-      setInvestPortfolio({ positions: [] });
-      setInvestSummaryData({
-        assets_count: 0,
-        total_invested: 0,
-        total_market: 0,
-        total_income: 0,
-        total_realized: 0,
-        total_unrealized: 0,
-        total_return: 0,
-        total_return_pct: 0,
-        broker_balance: 0,
-      });
+      investReloadSeqRef.current += 1;
+      clearInvestState();
       return;
     }
+    const requestSeq = ++investReloadSeqRef.current;
     const { syncRentability = false, forceRentabilitySync = false } = options || {};
     if (syncRentability) {
       await syncInvestRentabilityBeforeLoad({ force: forceRentabilitySync });
@@ -2170,6 +2164,7 @@ export default function App() {
       getInvestPortfolio(),
       getInvestSummary(),
     ]);
+    if (requestSeq !== investReloadSeqRef.current) return;
     setInvestMeta(meta || { asset_classes: [], asset_sectors: [], income_types: [] });
     setInvestAssets(assets || []);
     setInvestTrades(trades || []);
