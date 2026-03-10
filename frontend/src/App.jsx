@@ -15,6 +15,7 @@ import bankBradescoLogo from "./banks/bradesco-logo.svg";
 import bankItauLogo from "./banks/itau-logo.svg";
 import bankNubankLogo from "./banks/nubank-logo.svg";
 import bankSantanderLogo from "./banks/santander-logo.svg";
+import bankMercadoPagoLogo from "./banks/mercado-pago-logo.svg";
 import cardVisaLogo from "./cards/visa-17.svg";
 import cardMasterLogo from "./cards/mastercard-18.svg";
 import cardModelBlack from "./cards/Black.png";
@@ -362,6 +363,7 @@ function getBankLogo(name) {
   if (n.includes("inter")) return bankInterLogo;
   if (n.includes("itau")) return bankItauLogo;
   if (n.includes("bradesco")) return bankBradescoLogo;
+  if (n.includes("mercado pago") || n.includes("mercadopago") || n === "mp") return bankMercadoPagoLogo;
   if (n.includes("nubank") || n.includes("nu")) return bankNubankLogo;
   if (n.includes("santander")) return bankSantanderLogo;
   return null;
