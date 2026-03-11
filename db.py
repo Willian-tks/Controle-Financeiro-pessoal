@@ -822,6 +822,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS category_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS description TEXT")
+    cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS note TEXT")
     cur.execute("ALTER TABLE index_rates ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
 
     cur.execute("""
@@ -990,6 +991,7 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "credit_card_charges", "user_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "category_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "description TEXT")
+    _add_column_sqlite(cur, "credit_card_charges", "note TEXT")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS index_rates (
