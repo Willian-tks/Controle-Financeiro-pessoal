@@ -895,7 +895,7 @@ def register_credit_charge(
         INSERT INTO credit_card_charges(
             card_id, purchase_date, amount, category_id, description, invoice_period, due_date, paid, note, user_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?)
         """,
         (
             int(card_id),
@@ -1170,7 +1170,7 @@ def pay_credit_card_invoice(
         (int(invoice_id), uid),
     )
     _exec(conn, 
-        "UPDATE credit_card_charges SET paid = 1 WHERE user_id = ? AND card_id = ? AND invoice_period = ?",
+        "UPDATE credit_card_charges SET paid = TRUE WHERE user_id = ? AND card_id = ? AND invoice_period = ?",
         (uid, int(inv["card_id"]), str(inv["invoice_period"])),
     )
     conn.commit()
