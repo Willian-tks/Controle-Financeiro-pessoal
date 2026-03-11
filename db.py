@@ -8,7 +8,10 @@ BASE_DIR = Path(__file__).resolve().parent
 SQLITE_PATH = BASE_DIR / "data" / "finance.db"
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
-USE_POSTGRES = DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith("postgresql://")
+FORCE_SQLITE = str(os.getenv("LOCAL_DEV_FORCE_SQLITE", "")).strip().lower() in {"1", "true", "yes", "on"}
+USE_POSTGRES = (not FORCE_SQLITE) and (
+    DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith("postgresql://")
+)
 DB_PATH = DATABASE_URL if USE_POSTGRES else SQLITE_PATH
 
 
@@ -735,6 +738,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS global_role TEXT")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_data TEXT")
     cur.execute("""
     UPDATE users
     SET global_role = CASE
@@ -915,6 +919,7 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "users", "role TEXT NOT NULL DEFAULT 'user'")
     _add_column_sqlite(cur, "users", "is_active INTEGER NOT NULL DEFAULT 1")
     _add_column_sqlite(cur, "users", "global_role TEXT")
+    _add_column_sqlite(cur, "users", "avatar_data TEXT")
     cur.execute("""
     UPDATE users
     SET global_role = CASE

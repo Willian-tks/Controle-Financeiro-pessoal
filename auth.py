@@ -121,7 +121,7 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, email, display_name, role, global_role, is_active, created_at
+        SELECT id, email, display_name, avatar_data, role, global_role, is_active, created_at
         FROM users
         WHERE id = ?
         """,
@@ -143,7 +143,7 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, email, display_name, role, global_role, is_active, created_at
+        SELECT id, email, display_name, avatar_data, role, global_role, is_active, created_at
         FROM users
         WHERE email = ?
         """,
@@ -667,7 +667,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
     conn = get_conn()
     row = conn.execute(
         """
-        SELECT id, email, display_name, role, global_role, is_active, created_at, password_hash
+        SELECT id, email, display_name, avatar_data, role, global_role, is_active, created_at, password_hash
         FROM users
         WHERE email = ?
         """,
@@ -684,6 +684,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
         "id": row["id"],
         "email": row["email"],
         "display_name": row["display_name"],
+        "avatar_data": row["avatar_data"],
         "role": row["role"],
         "global_role": row["global_role"],
         "is_active": row["is_active"],
@@ -701,6 +702,7 @@ def update_user_profile(
     display_name: str | None = None,
     current_password: str | None = None,
     new_password: str | None = None,
+    avatar_data: str | None = None,
 ) -> dict[str, Any]:
     uid = int(user_id)
     email_n = _norm_email(email)
@@ -710,6 +712,11 @@ def update_user_profile(
     display = (display_name or "").strip() or None
     current_pwd = str(current_password or "")
     new_pwd = str(new_password or "")
+    avatar = str(avatar_data or "").strip() or None
+    if avatar and not avatar.startswith("data:image/"):
+        raise ValueError("Avatar inválido. Envie uma imagem compatível.")
+    if avatar and len(avatar) > 2_000_000:
+        raise ValueError("Avatar muito grande. Use uma imagem menor.")
 
     conn = get_conn()
     row = conn.execute(
@@ -738,8 +745,8 @@ def update_user_profile(
         conn.close()
         raise ValueError("Este e-mail já está cadastrado.")
 
-    fields = ["email = ?", "display_name = ?"]
-    params: list[Any] = [email_n, display]
+    fields = ["email = ?", "display_name = ?", "avatar_data = ?"]
+    params: list[Any] = [email_n, display, avatar]
 
     if new_pwd:
         if len(new_pwd) < 6:

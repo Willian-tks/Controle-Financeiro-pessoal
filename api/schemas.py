@@ -32,6 +32,7 @@ class ProfileUpdateRequest(BaseModel):
     email: str
     current_password: str | None = None
     new_password: str | None = None
+    avatar_data: str | None = None
 
 
 class WorkspaceSwitchRequest(BaseModel):

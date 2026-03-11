@@ -218,10 +218,13 @@ body {
 }
 
 .user-avatar-icon {
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-  opacity: 0.86;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 999px;
+  border: 2px solid rgba(116, 172, 255, 0.5);
+  background: rgba(10, 24, 55, 0.72);
+  opacity: 0.98;
 }
 
 .user-trigger {
@@ -354,6 +357,49 @@ body {
 
 .profile-modal .tx-form {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.profile-avatar-panel {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(11, 24, 54, 0.58);
+  border: 1px solid rgba(138, 174, 255, 0.28);
+}
+
+.profile-avatar-preview {
+  width: 84px;
+  height: 84px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 2px solid rgba(116, 172, 255, 0.5);
+  background: rgba(10, 24, 55, 0.72);
+}
+
+.profile-avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.profile-avatar-upload {
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(138, 174, 255, 0.4);
+  background: rgba(11, 24, 54, 0.78);
+  color: #eef4ff;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.profile-avatar-upload input {
+  display: none;
 }
 
 .main {

@@ -15,6 +15,8 @@ if (-not (Test-Path $pythonExe)) {
 
 $apiCommand = @(
   "Set-Location -Path '$apiDir'",
+  "Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue",
+  "$env:LOCAL_DEV_FORCE_SQLITE='1'",
   "$env:CORS_ORIGINS='http://127.0.0.1:5173,http://localhost:5173'",
   "$env:JWT_SECRET='dev-local-secret-change-me'",
   "& '$pythonExe' -m uvicorn api.main:app --reload --port 8000"
@@ -33,3 +35,4 @@ Start-Process powershell -ArgumentList @("-NoExit", "-Command", $frontendCommand
 Write-Host "Ambiente local iniciado."
 Write-Host "API: http://127.0.0.1:8000/health"
 Write-Host "Frontend: http://127.0.0.1:5173"
+Write-Host "Banco local forçado: SQLite em data/finance.db"

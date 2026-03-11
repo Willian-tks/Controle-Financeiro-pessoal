@@ -1385,6 +1385,7 @@ def update_me(body: ProfileUpdateRequest, user: dict = Depends(_current_user)) -
             display_name=body.display_name,
             current_password=body.current_password,
             new_password=body.new_password,
+            avatar_data=body.avatar_data,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -568,6 +568,11 @@ function getCircularDistance(fromIndex, toIndex, total) {
   return forward <= backward ? 1 : -1;
 }
 
+function getUserAvatarSrc(user) {
+  const avatar = String(user?.avatar_data || "").trim();
+  return avatar || icUsuario;
+}
+
 export default function App() {
   const defaultMonthRange = getCurrentMonthRange();
   const [authError, setAuthError] = useState("");
@@ -723,6 +728,7 @@ export default function App() {
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileDisplayName, setProfileDisplayName] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
+  const [profileAvatarData, setProfileAvatarData] = useState("");
   const [profileCurrentPassword, setProfileCurrentPassword] = useState("");
   const [profileNewPassword, setProfileNewPassword] = useState("");
   const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
@@ -780,6 +786,7 @@ export default function App() {
     if (!profileModalOpen || !user) return;
     setProfileDisplayName(String(user.display_name || ""));
     setProfileEmail(String(user.email || ""));
+    setProfileAvatarData(String(user.avatar_data || ""));
     setProfileCurrentPassword("");
     setProfileNewPassword("");
     setProfileConfirmPassword("");
@@ -1957,6 +1964,7 @@ export default function App() {
     setProfileMsg("");
     const email = String(profileEmail || "").trim().toLowerCase();
     const displayName = String(profileDisplayName || "").trim();
+    const avatarData = String(profileAvatarData || "").trim();
     const currentPassword = String(profileCurrentPassword || "");
     const newPassword = String(profileNewPassword || "");
     const confirmPassword = String(profileConfirmPassword || "");
@@ -1985,6 +1993,7 @@ export default function App() {
       const updated = await updateMeProfile({
         display_name: displayName || null,
         email,
+        avatar_data: avatarData || null,
         current_password: currentPassword || null,
         new_password: newPassword || null,
       });
@@ -1998,6 +2007,32 @@ export default function App() {
     } finally {
       setProfileSaving(false);
     }
+  }
+
+  async function onSelectProfileAvatar(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!String(file.type || "").startsWith("image/")) {
+      setProfileMsg("Selecione uma imagem válida para o avatar.");
+      return;
+    }
+    if (file.size > 1_000_000) {
+      setProfileMsg("O avatar deve ter no máximo 1 MB.");
+      return;
+    }
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Falha ao ler a imagem."));
+      reader.readAsDataURL(file);
+    }).catch((err) => {
+      setProfileMsg(String(err.message || err));
+      return "";
+    });
+    if (!dataUrl) return;
+    setProfileAvatarData(String(dataUrl));
+    setProfileMsg("");
   }
 
   async function reloadAllData() {
@@ -2165,7 +2200,7 @@ export default function App() {
     if (syncRentability) {
       await syncInvestRentabilityBeforeLoad({ force: forceRentabilitySync });
     }
-    const [meta, assets, trades, incomes, prices, portfolio, summary] = await Promise.all([
+    const results = await Promise.allSettled([
       getInvestMeta(),
       getInvestAssets(),
       getInvestTrades(),
@@ -2175,6 +2210,16 @@ export default function App() {
       getInvestSummary(),
     ]);
     if (requestSeq !== investReloadSeqRef.current) return;
+    const [metaRes, assetsRes, tradesRes, incomesRes, pricesRes, portfolioRes, summaryRes] = results;
+    const hasAnySuccess = results.some((item) => item.status === "fulfilled");
+    const hasAnyFailure = results.some((item) => item.status === "rejected");
+    const meta = metaRes.status === "fulfilled" ? metaRes.value : null;
+    const assets = assetsRes.status === "fulfilled" ? assetsRes.value : [];
+    const trades = tradesRes.status === "fulfilled" ? tradesRes.value : [];
+    const incomes = incomesRes.status === "fulfilled" ? incomesRes.value : [];
+    const prices = pricesRes.status === "fulfilled" ? pricesRes.value : [];
+    const portfolio = portfolioRes.status === "fulfilled" ? portfolioRes.value : { positions: [] };
+    const summary = summaryRes.status === "fulfilled" ? summaryRes.value : null;
     setInvestMeta(meta || { asset_classes: [], asset_sectors: [], income_types: [] });
     setInvestAssets(assets || []);
     setInvestTrades(trades || []);
@@ -2194,6 +2239,16 @@ export default function App() {
         broker_balance: 0,
       }
     );
+    if (hasAnyFailure) {
+      const failed = results
+        .filter((item) => item.status === "rejected")
+        .map((item) => String(item.reason?.message || item.reason || "").trim())
+        .filter(Boolean);
+      if (!hasAnySuccess) {
+        throw new Error(failed[0] || "Falha ao carregar dados de investimentos.");
+      }
+      console.error("Falhas parciais ao recarregar investimentos", failed);
+    }
   }
 
   async function onCreateTransaction(e) {
@@ -2299,6 +2354,7 @@ export default function App() {
         due_day: isFutureExpense && futurePaymentMethod !== "Credito" ? dueDay : null,
         repeat_months: isFutureExpense ? repeatMonths : null,
       });
+      let successMsg = "Lançamento salvo.";
       formEl.reset();
       setTxCategoryId("");
       setTxMethod(txIsFutureTab ? "Futuro" : "PIX");
@@ -2306,30 +2362,33 @@ export default function App() {
       setTxSourceAccountId("");
       setTxCardId("");
       if (out?.mode === "transfer") {
-        setTxMsg("Transferência registrada (débito na origem e crédito no destino).");
+        successMsg = "Transferência registrada (débito na origem e crédito no destino).";
       } else if (out?.mode === "credit_card_charge") {
-        setTxMsg("Compra no crédito registrada. A despesa será lançada no pagamento da fatura.");
+        successMsg = "Compra no crédito registrada. A despesa será lançada no pagamento da fatura.";
       } else if (out?.mode === "future_credit_schedule") {
-        setTxMsg(
+        successMsg =
           `Compromisso no cartão agendado (${Number(out?.created || 0)}x): ${String(out?.first_date || "-")} até ${String(out?.last_date || "-")}.`
-        );
+        ;
       } else if (out?.mode === "future_schedule") {
-        setTxMsg(
+        successMsg =
           `Despesa futura agendada (${Number(out?.created || 0)}x): ${String(out?.first_date || "-")} até ${String(out?.last_date || "-")}.`
-        );
+        ;
       } else if (method === "Futuro") {
-        setTxMsg("Despesa futura agendada. Ela só impactará o caixa na data informada.");
-      } else {
-        setTxMsg("Lançamento salvo.");
+        successMsg = "Despesa futura agendada. Ela só impactará o caixa na data informada.";
       }
-      await reloadTransactions();
-      await reloadCardsData();
-      if (canViewDashboard) {
-        const dash = await getKpis();
-        setKpis(dash);
+      setTxMsg(successMsg);
+      try {
+        await reloadTransactions();
+        await reloadCardsData();
+        if (canViewDashboard) {
+          const dash = await getKpis();
+          setKpis(dash);
+        }
+        await reloadDashboard();
+        await reloadInvestData();
+      } catch (refreshErr) {
+        setTxMsg(`${successMsg} Alguns painéis não foram recarregados: ${String(refreshErr.message || refreshErr)}`);
       }
-      await reloadDashboard();
-      await reloadInvestData();
     } catch (err) {
       setTxMsg(`Erro ao salvar lançamento: ${String(err.message || err)}`);
     }
@@ -3370,7 +3429,7 @@ export default function App() {
         <div className="user-block">
           <div className="user-menu-wrap" ref={userMenuRef}>
             <button className="user-trigger" onClick={() => setUserMenuOpen((v) => !v)}>
-              <img src={icUsuario} alt="" className="user-avatar-icon" />
+              <img src={getUserAvatarSrc(user)} alt="" className="user-avatar-icon" />
               <span className="user-trigger-name">{user.display_name || user.email}</span>
             </button>
             {userMenuOpen ? (
@@ -5787,11 +5846,23 @@ export default function App() {
               <div className="modal-head">
                 <div>
                   <h3>Meu perfil</h3>
-                  <p className="tx-helper">Nome, e-mail e senha da sua conta. Foto/avatar entra depois.</p>
+                  <p className="tx-helper">Nome, e-mail, avatar e senha da sua conta.</p>
                 </div>
                 <button type="button" className="modal-close" onClick={() => setProfileModalOpen(false)}>Fechar</button>
               </div>
               <form className="tx-form" onSubmit={onSaveProfile}>
+                <div className="profile-avatar-panel">
+                  <img src={profileAvatarData || icUsuario} alt="" className="profile-avatar-preview" />
+                  <div className="profile-avatar-actions">
+                    <label className="profile-avatar-upload">
+                      Carregar imagem
+                      <input type="file" accept="image/*" onChange={onSelectProfileAvatar} />
+                    </label>
+                    <button type="button" className="danger" onClick={() => setProfileAvatarData("")}>
+                      Remover avatar
+                    </button>
+                  </div>
+                </div>
                 <input
                   type="text"
                   placeholder="Nome"

@@ -13,6 +13,8 @@ desktop.ini
 
 # segredos locais
 .env
+.env.local
 .secrets/
 secrets/
 BRAPI_TOKEN.txt
+frontend/.env.local
