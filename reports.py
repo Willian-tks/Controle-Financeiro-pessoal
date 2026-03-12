@@ -215,6 +215,43 @@ def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
+def monthly_wealth_summary(df: pd.DataFrame, date_from: str | None = None, date_to: str | None = None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["month", "saldo", "patrimonio"])
+
+    base = df[df["category_kind"].fillna("") != "Transferencia"].copy()
+    if base.empty:
+        return pd.DataFrame(columns=["month", "saldo", "patrimonio"])
+
+    base["month"] = base["date"].dt.to_period("M")
+    grouped = (
+        base.groupby("month", as_index=False)
+        .agg(saldo=("amount_brl", "sum"))
+        .sort_values("month")
+        .reset_index(drop=True)
+    )
+    grouped["patrimonio"] = grouped["saldo"].cumsum()
+
+    period_index = pd.period_range(grouped["month"].min(), grouped["month"].max(), freq="M")
+    grouped = (
+        grouped.set_index("month")
+        .reindex(period_index, fill_value=0.0)
+        .rename_axis("month")
+        .reset_index()
+    )
+    grouped["patrimonio"] = grouped["saldo"].cumsum()
+    grouped["month"] = grouped["month"].astype(str)
+
+    if date_from:
+        from_period = pd.Period(pd.to_datetime(date_from), freq="M")
+        grouped = grouped[grouped["month"] >= str(from_period)]
+    if date_to:
+        to_period = pd.Period(pd.to_datetime(date_to), freq="M")
+        grouped = grouped[grouped["month"] <= str(to_period)]
+
+    return grouped.reset_index(drop=True)
+
+
 def category_expenses(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()

@@ -235,6 +235,10 @@ export function getDashboardMonthly(params = {}) {
   return req(`/dashboard/monthly${qs(params)}`);
 }
 
+export function getDashboardWealthMonthly(params = {}) {
+  return req(`/dashboard/wealth-monthly${qs(params)}`);
+}
+
 export function getDashboardExpenses(params = {}) {
   return req(`/dashboard/expenses-by-category${qs(params)}`);
 }

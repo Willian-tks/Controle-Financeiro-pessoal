@@ -993,7 +993,7 @@ def fetch_credit_charges_future(
     q = """
         SELECT
             ('ccf-' || CAST(ch.id AS TEXT)) AS id,
-            ch.purchase_date AS date,
+            ch.due_date AS date,
             COALESCE(ch.description, ('COMPROMISSO CARTAO ' || cc.name)) AS description,
             -ABS(ch.amount) AS amount_brl,
             ca.name AS account,
@@ -1015,12 +1015,12 @@ def fetch_credit_charges_future(
     """
     params: list = [uid]
     if date_from:
-        q += " AND ch.purchase_date >= ?"
+        q += " AND ch.due_date >= ?"
         params.append(date_from)
     if date_to:
-        q += " AND ch.purchase_date <= ?"
+        q += " AND ch.due_date <= ?"
         params.append(date_to)
-    q += " ORDER BY ch.purchase_date ASC, ch.id ASC"
+    q += " ORDER BY ch.due_date ASC, ch.id ASC"
     rows = _exec(conn, q, params).fetchall()
     conn.close()
     return rows

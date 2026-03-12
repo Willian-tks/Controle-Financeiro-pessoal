@@ -1268,14 +1268,14 @@ body {
   grid-template-columns: 1.5fr 1fr 1fr;
   grid-template-areas:
     "hero saldo cartoes"
-    "hero invest invest"
+    "desp invest invest"
     "desp invest invest";
   gap: 14px;
 }
 
 .dash-hero-card {
   grid-area: hero;
-  min-height: 430px;
+  min-height: 170px;
 }
 
 .dash-list-card {
@@ -1340,24 +1340,24 @@ body {
   color: #ff9d9d;
 }
 
-.dash-spark-wrap {
-  height: 250px;
-  border-radius: 14px;
+.dash-hero-label {
+  margin: 10px 0 0;
+  color: #9cb0dc;
+  font-size: 14px;
+}
+
+.dash-hero-summary {
+  margin-top: 18px;
+  padding: 18px 20px;
+  border-radius: 16px;
   border: 1px solid rgba(147, 184, 255, 0.18);
   background: linear-gradient(180deg, rgba(21, 37, 78, 0.45), rgba(10, 22, 51, 0.75));
-  overflow: hidden;
 }
 
-.dash-spark {
-  width: 100%;
-  height: 100%;
-}
-
-.dash-empty {
-  height: 100%;
-  display: grid;
-  place-items: center;
-  color: #9cb0dc;
+.dash-hero-compare {
+  margin: 10px 0 0;
+  color: #d5e2ff;
+  font-size: 15px;
 }
 
 .dash-list {
@@ -1377,6 +1377,30 @@ body {
 
 .dash-list li:last-child {
   border-bottom: 0;
+}
+
+.dash-list-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dash-list-link:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.dash-list-link:focus-visible {
+  outline: 2px solid rgba(104, 211, 255, 0.9);
+  outline-offset: 4px;
+  border-radius: 8px;
 }
 
 .dash-list span {
@@ -2058,11 +2082,7 @@ body {
   }
 
   .dash-hero-card {
-    min-height: 380px;
-  }
-
-  .dash-spark-wrap {
-    height: 220px;
+    min-height: 280px;
   }
 
   .dash-wallet-stack {
@@ -2212,10 +2232,6 @@ body {
 
   .dash-hero-card {
     min-height: auto;
-  }
-
-  .dash-spark-wrap {
-    height: 180px;
   }
 
   .dash-list li,

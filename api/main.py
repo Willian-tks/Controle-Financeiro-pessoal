@@ -1969,13 +1969,16 @@ def create_transaction(
             card_cfg = repo.get_credit_card_by_id_and_type(int(body.card_id), "Credito", user_id=uid)
             if not card_cfg:
                 raise HTTPException(status_code=400, detail="Cartão de crédito inválido ou não encontrado.")
+            due_day = int(card_cfg["due_day"])
             cycle_day = int(card_cfg["close_day"]) if card_cfg["close_day"] is not None else max(1, int(card_cfg["due_day"]) - 5)
             if cycle_day < 1 or cycle_day > 31:
                 raise HTTPException(status_code=400, detail="Dia de fechamento inválido no cartão.")
 
             today = _date.today()
             start_y, start_m = int(today.year), int(today.month)
-            if int(today.day) > int(cycle_day):
+            # Para compromissos agendados, a 1a parcela deve cair no vencimento do mes corrente
+            # se esse vencimento ainda nao passou. O fechamento nao deve empurrar o compromisso.
+            if int(today.day) > int(due_day):
                 start_y, start_m = _add_months(start_y, start_m, 1)
 
             # Replica o valor informado em cada mês do parcelamento.
@@ -1986,10 +1989,12 @@ def create_transaction(
             last_date = None
             for i in range(parcels):
                 yy, mm = _add_months(start_y, start_m, i)
-                purchase_date = _due_date_for_month(yy, mm, cycle_day)
+                due_date = _due_date_for_month(yy, mm, due_day)
+                # Usa uma compra sintetica no inicio do ciclo para manter o vencimento no mes alvo.
+                purchase_date = _due_date_for_month(yy, mm, 1)
                 if first_date is None:
-                    first_date = purchase_date
-                last_date = purchase_date
+                    first_date = due_date
+                last_date = due_date
                 value_i = round(float(amount_abs), 2)
                 desc_i = f"{desc} ({i + 1}/{parcels})" if parcels > 1 else desc
                 note_i = f"[{recurrence_id}] {notes}" if notes else f"[{recurrence_id}]"
@@ -2419,6 +2424,25 @@ def dashboard_monthly(
     if account and not df.empty:
         df = df[df["account"] == account]
     out = reports.monthly_summary(df)
+    if out.empty:
+        return []
+    return out.to_dict(orient="records")
+
+
+@app.get("/dashboard/wealth-monthly")
+def dashboard_wealth_monthly(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    account: str | None = None,
+    view: str = Query(default="caixa"),
+    user: dict = Depends(_current_user),
+) -> list[dict]:
+    uid = int(user["id"])
+    mode = _norm_view(view)
+    df = reports.df_transactions(date_to=date_to, user_id=uid, view=mode)
+    if account and not df.empty:
+        df = df[df["account"] == account]
+    out = reports.monthly_wealth_summary(df, date_from=date_from, date_to=date_to)
     if out.empty:
         return []
     return out.to_dict(orient="records")

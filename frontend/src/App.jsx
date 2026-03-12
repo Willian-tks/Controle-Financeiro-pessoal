@@ -49,7 +49,7 @@ import {
   getDashboardCommitmentsSummary,
   getDashboardExpenses,
   getDashboardKpis,
-  getDashboardMonthly,
+  getDashboardWealthMonthly,
   getInvestAssets,
   getInvestIncomes,
   getInvestMeta,
@@ -171,6 +171,7 @@ const RENTABILITY_TYPE_LABELS = {
   IPCA_SPREAD: "IPCA + X",
   MANUAL: "Manual",
 };
+const TX_STATUS_FILTER_OPEN = "__open_commitments__";
 
 function getCurrentMonthRange() {
   const now = new Date();
@@ -180,6 +181,48 @@ function getCurrentMonthRange() {
   const to = new Date(year, month + 1, 0);
   const fmt = (d) => d.toISOString().slice(0, 10);
   return { from: fmt(from), to: fmt(to) };
+}
+
+function parseIsoDate(value) {
+  if (!value) return null;
+  const dt = new Date(`${value}T00:00:00`);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function shiftMonthStart(date, offsetMonths) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  return new Date(date.getFullYear(), date.getMonth() + offsetMonths, 1);
+}
+
+function formatIsoDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildDashboardWealthFilters(filters) {
+  const fromDate = parseIsoDate(filters?.date_from);
+  const toDate = parseIsoDate(filters?.date_to);
+  if (!fromDate || !toDate) return filters;
+
+  const now = new Date();
+  const isCurrentMonthOnly =
+    fromDate.getFullYear() === toDate.getFullYear() &&
+    fromDate.getMonth() === toDate.getMonth() &&
+    fromDate.getFullYear() === now.getFullYear() &&
+    fromDate.getMonth() === now.getMonth();
+
+  if (!isCurrentMonthOnly) {
+    return filters;
+  }
+
+  const shiftedStart = shiftMonthStart(toDate, -5);
+  return {
+    ...filters,
+    date_from: formatIsoDate(shiftedStart),
+  };
 }
 
 function normalizeAccountType(value) {
@@ -342,20 +385,6 @@ function pct(part, total) {
   const t = Number(total || 0);
   if (!Number.isFinite(p) || !Number.isFinite(t) || t <= 0) return 0;
   return (p / t) * 100;
-}
-
-function sparklinePoints(values, width = 680, height = 220) {
-  if (!values.length) return "";
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  return values
-    .map((v, i) => {
-      const x = (i / Math.max(1, values.length - 1)) * width;
-      const y = height - ((v - min) / span) * height;
-      return `${x},${y}`;
-    })
-    .join(" ");
 }
 
 function getBankLogo(name) {
@@ -586,7 +615,7 @@ export default function App() {
   const [cardInvoices, setCardInvoices] = useState([]);
   const [kpis, setKpis] = useState(null);
   const [dashKpis, setDashKpis] = useState(null);
-  const [dashMonthly, setDashMonthly] = useState([]);
+  const [dashWealthMonthly, setDashWealthMonthly] = useState([]);
   const [dashExpenses, setDashExpenses] = useState([]);
   const [dashCommitments, setDashCommitments] = useState({ a_vencer: 0, vencidos: 0 });
   const [dashAccountBalance, setDashAccountBalance] = useState([]);
@@ -833,7 +862,7 @@ export default function App() {
           });
         } else {
           setDashKpis(null);
-          setDashMonthly([]);
+          setDashWealthMonthly([]);
           setDashExpenses([]);
           setDashAccountBalance([]);
           setDashCommitments({ a_vencer: 0, vencidos: 0 });
@@ -1166,10 +1195,15 @@ export default function App() {
       if (ib >= 0) return 1;
       return String(a).localeCompare(String(b), "pt-BR");
     });
-    return options.map((value) => ({
+    const mapped = options.map((value) => ({
       value,
       label: value === "__none__" ? "Sem status (-)" : value,
     }));
+    mapped.unshift({
+      value: TX_STATUS_FILTER_OPEN,
+      label: "A vencer (Pendente + Aguardando Fatura)",
+    });
+    return mapped;
   }, [transactions]);
   const transactionsVisible = useMemo(() => {
     const targetId = String(txRecentCategoryFilterId);
@@ -1189,7 +1223,11 @@ export default function App() {
       if (txRecentStatusFilter) {
         const rawStatus = String(t.charge_status || "").trim();
         const statusKey = rawStatus || "__none__";
-        if (statusKey !== txRecentStatusFilter) return false;
+        if (txRecentStatusFilter === TX_STATUS_FILTER_OPEN) {
+          if (statusKey !== "Pendente" && statusKey !== "Aguardando Fatura") return false;
+        } else if (statusKey !== txRecentStatusFilter) {
+          return false;
+        }
       }
       return true;
     });
@@ -1367,18 +1405,22 @@ export default function App() {
     []
   );
   const currentKpi = dashKpis || kpis || {};
-  const trendValues = useMemo(
-    () =>
-      (dashMonthly || [])
-        .map((r) => Number(r.saldo || 0))
-        .filter((n) => Number.isFinite(n)),
-    [dashMonthly]
-  );
-  const trendStart = trendValues.length ? Number(trendValues[0]) : 0;
-  const trendEnd = trendValues.length ? Number(trendValues[trendValues.length - 1]) : 0;
-  const trendDelta = trendEnd - trendStart;
-  const trendPct = trendStart !== 0 ? (trendDelta / Math.abs(trendStart)) * 100 : 0;
-  const sparkPoints = sparklinePoints(trendValues);
+  const currentMonthEntry = dashWealthMonthly.length ? dashWealthMonthly[dashWealthMonthly.length - 1] : null;
+  const previousMonthEntry = dashWealthMonthly.length > 1 ? dashWealthMonthly[dashWealthMonthly.length - 2] : null;
+  const trendEnd = currentMonthEntry ? Number(currentMonthEntry.patrimonio || 0) : 0;
+  const previousMonthValue = previousMonthEntry ? Number(previousMonthEntry.patrimonio || 0) : 0;
+  const trendDelta = trendEnd - previousMonthValue;
+  const trendPct =
+    previousMonthEntry && previousMonthValue !== 0
+      ? (trendDelta / Math.abs(previousMonthValue)) * 100
+      : 0;
+  const trendDirection = trendDelta >= 0 ? "up" : "down";
+  const trendMonthLabel = currentMonthEntry?.month
+    ? new Date(`${currentMonthEntry.month}-01T00:00:00`).toLocaleDateString("pt-BR", {
+        month: "long",
+        year: "numeric",
+      })
+    : "";
   const normalizeMoneyValue = (v) => (Math.abs(Number(v || 0)) < 0.005 ? 0 : Number(v || 0));
   const accountsTop = useMemo(() => {
     const byAccount = new Map(
@@ -2101,17 +2143,18 @@ export default function App() {
       account: params.account ?? dashAccount,
       view: params.view ?? dashView,
     };
+    const wealthFilters = buildDashboardWealthFilters(filters);
     try {
-      const [k, m, e, ab, cs] = await Promise.all([
+      const [k, wm, e, ab, cs] = await Promise.all([
         getDashboardKpis(filters),
-        getDashboardMonthly(filters),
+        getDashboardWealthMonthly(wealthFilters),
         getDashboardExpenses(filters),
         // Saldo de contas sempre no acumulado real (sem filtros de período/conta/visão).
         getDashboardAccountBalance({ view: "caixa" }),
         getDashboardCommitmentsSummary(filters),
       ]);
       setDashKpis(k);
-      setDashMonthly(m || []);
+      setDashWealthMonthly(wm || []);
       setDashExpenses(e || []);
       setDashAccountBalance(ab || []);
       setDashCommitments(cs || { a_vencer: 0, vencidos: 0 });
@@ -3267,6 +3310,16 @@ export default function App() {
     });
   }
 
+  function openCommitmentsFromDashboard(status = "") {
+    if (!canViewLancamentos) return;
+    setPage("Lançamentos");
+    setTxView("futuro");
+    setTxRecentDateFrom(dashDateFrom);
+    setTxRecentDateTo(dashDateTo);
+    setTxRecentCategoryFilterId("");
+    setTxRecentStatusFilter(status);
+  }
+
   async function onPreviewTransactionsCsv() {
     if (!canAddRelatorios) {
       setImportMsg("Sem permissão para pré-visualizar importações.");
@@ -3586,7 +3639,7 @@ export default function App() {
               <article className="card dash-kpi-card">
                 <h3 className="dash-kpi-title">
                   <img src={icSaldo} alt="" className="dash-kpi-icon" />
-                  <span>Saldo</span>
+                  <span>Resultado</span>
                 </h3>
                 <strong>{brl.format(Number(currentKpi.saldo || 0))}</strong>
               </article>
@@ -3596,27 +3649,23 @@ export default function App() {
               <article className="card dash-hero-card">
                 <div className="dash-hero-head">
                   <h3>Patrimônio mensal</h3>
-                  <span className={`dash-delta ${trendDelta >= 0 ? "up" : "down"}`}>
-                    {trendDelta >= 0 ? "↑" : "↓"} {Math.abs(trendPct).toFixed(1)}%
+                  <span className={`dash-delta ${trendDirection}`}>
+                    {trendDelta >= 0 ? "+" : "-"}
+                    {Math.abs(trendPct).toFixed(1)}% vs mês anterior
                   </span>
                 </div>
                 <strong className="dash-hero-value">{brl.format(trendEnd)}</strong>
-                <p className={`dash-hero-sub ${trendDelta >= 0 ? "up" : "down"}`}>
-                  {trendDelta >= 0 ? "▲" : "▼"} {brl.format(Math.abs(trendDelta))} no período
-                </p>
-                <div className="dash-spark-wrap">
-                  {sparkPoints ? (
-                    <svg viewBox="0 0 680 240" preserveAspectRatio="none" className="dash-spark">
-                      <polyline fill="none" stroke="url(#sparkStroke)" strokeWidth="5" points={sparkPoints} />
-                      <defs>
-                        <linearGradient id="sparkStroke" x1="0" x2="1" y1="0" y2="0">
-                          <stop offset="0%" stopColor="#68d3ff" />
-                          <stop offset="100%" stopColor="#9ff7be" />
-                        </linearGradient>
-                      </defs>
-                    </svg>
+                <p className="dash-hero-label">{trendMonthLabel ? `Referência: ${trendMonthLabel}` : "Sem dados no período"}</p>
+                <div className="dash-hero-summary">
+                  <p className={`dash-hero-sub ${trendDirection}`}>
+                    {trendDelta >= 0 ? "▲" : "▼"} {brl.format(Math.abs(trendDelta))} vs mês anterior
+                  </p>
+                  {previousMonthEntry ? (
+                    <p className="dash-hero-compare">
+                      Mês anterior: <strong>{brl.format(previousMonthValue)}</strong>
+                    </p>
                   ) : (
-                    <div className="dash-empty">Sem dados no período</div>
+                    <p className="dash-hero-compare">Sem base comparativa anterior.</p>
                   )}
                 </div>
               </article>
@@ -3746,12 +3795,26 @@ export default function App() {
                 <h3>Compromissos do período</h3>
                 <ul className="dash-list">
                   <li>
-                    <span>A vencer</span>
-                    <strong>{brl.format(commitmentsAging.aVencer)}</strong>
+                    <button
+                      type="button"
+                      className="dash-list-link"
+                      onClick={() => openCommitmentsFromDashboard(TX_STATUS_FILTER_OPEN)}
+                      disabled={!canViewLancamentos}
+                    >
+                      <span>A vencer</span>
+                      <strong>{brl.format(commitmentsAging.aVencer)}</strong>
+                    </button>
                   </li>
                   <li>
-                    <span>Vencidos</span>
-                    <strong>{brl.format(commitmentsAging.vencidos)}</strong>
+                    <button
+                      type="button"
+                      className="dash-list-link"
+                      onClick={() => openCommitmentsFromDashboard("Vencido")}
+                      disabled={!canViewLancamentos}
+                    >
+                      <span>Vencidos</span>
+                      <strong>{brl.format(commitmentsAging.vencidos)}</strong>
+                    </button>
                   </li>
                 </ul>
                 <div className="dash-list-total">
@@ -3762,7 +3825,7 @@ export default function App() {
             </section>
 
             <Suspense fallback={<section className="card"><p>Carregando gráficos...</p></section>}>
-              <DashboardCharts monthly={dashMonthly} expenses={dashExpenses} />
+              <DashboardCharts monthly={dashWealthMonthly} expenses={dashExpenses} />
             </Suspense>
           </>
         ) : null}
