@@ -145,9 +145,10 @@ def fix_future_credit_due_dates(apply_changes: bool = False) -> dict:
         FROM credit_card_charges ch
         JOIN credit_cards cc ON cc.id = ch.card_id
         WHERE COALESCE(ch.paid, FALSE) = FALSE
-          AND COALESCE(ch.note, '') LIKE '%[FUTCC-%'
+          AND COALESCE(ch.note, '') LIKE ?
         ORDER BY ch.id
-        """
+        """,
+        ("%[FUTCC-%",),
     ).fetchall()
 
     changed = []
