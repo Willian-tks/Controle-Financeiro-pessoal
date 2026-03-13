@@ -6,6 +6,15 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 class LoginSyncStatus(BaseModel):
     should_notify: bool = False
     level: str | None = None

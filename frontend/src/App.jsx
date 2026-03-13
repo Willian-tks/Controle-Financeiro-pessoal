@@ -24,6 +24,7 @@ import cardModelPlatinum from "./cards/Platinum.png";
 import cardModelOrange from "./cards/Orange.png";
 import cardModelVioleta from "./cards/Violeta.png";
 import cardModelVermelho from "./cards/Vermelho.png";
+import { ResponsiveContainer, PieChart, Pie, Sector } from "recharts";
 import {
   clearToken,
   createCard,
@@ -67,6 +68,7 @@ import {
   createWorkspaceMember,
   updateWorkspaceMemberPermissions,
   deleteWorkspaceMember,
+  forgotPassword,
   getAdminWorkspaces,
   createAdminWorkspace,
   updateAdminWorkspaceStatus,
@@ -76,6 +78,7 @@ import {
   importTransactionsCsv,
   login,
   payCardInvoice,
+  resetPassword,
   settleCommitmentTransaction,
   setToken,
   updateAllInvestRentability,
@@ -118,6 +121,34 @@ const PAGE_SUBTITLES = {
 const INVEST_TABS = ["Resumo", "Ativos", "Operações", "Proventos", "Cotações"];
 const MANAGER_TABS = ["Cadastro de contas", "Cadastro de categorias", "Cadastro cartão de crédito"];
 const QUOTE_GROUP_OPTIONS = ["Ações BR", "FIIs", "Stocks", "Cripto"];
+
+function getAuthLocationState() {
+  if (typeof window === "undefined") {
+    return { mode: "login", token: "" };
+  }
+  const url = new URL(window.location.href);
+  const token = String(url.searchParams.get("token") || "").trim();
+  const pathname = String(url.pathname || "").toLowerCase();
+  if (token && pathname.endsWith("/reset-password")) {
+    return { mode: "reset", token };
+  }
+  if (token && String(url.searchParams.get("mode") || "").trim().toLowerCase() === "reset-password") {
+    return { mode: "reset", token };
+  }
+  return { mode: "login", token: "" };
+}
+
+function clearPasswordResetLocation() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("token");
+  url.searchParams.delete("mode");
+  if (String(url.pathname || "").toLowerCase().endsWith("/reset-password")) {
+    url.pathname = url.pathname.replace(/\/reset-password\/?$/i, "/");
+  }
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, "", nextUrl);
+}
 const MANUAL_PRICE_CLASS_OPTIONS = ["Ações BR", "FIIs", "Stocks US", "BDRs", "Cripto"];
 const INVEST_RENTABILITY_TIMEOUT_MS = 6000;
 const INVEST_DIVERGENCE_TIMEOUT_MS = 8000;
@@ -244,6 +275,48 @@ function normalizeText(value) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function InvestmentPieGradient(props) {
+  const index = Number(props?.index || 0);
+  const baseColor = String(props?.fill || DONUT_COLORS[index % DONUT_COLORS.length]);
+  const fade = Number(props?.payload?.opacity ?? 1);
+  const fillId = `invest-fill-gradient-${index}`;
+  const borderId = `invest-border-gradient-${index}`;
+  const clipId = `invest-clip-path-${index}`;
+  const width = Number(props?.width || 0);
+  const height = Number(props?.height || 0);
+
+  return (
+    <>
+      <defs>
+        <radialGradient
+          id={fillId}
+          cx={props?.cx}
+          cy={props?.cy}
+          r={props?.outerRadius}
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0%" stopColor={baseColor} stopOpacity={0.08 * fade} />
+          <stop offset="100%" stopColor={baseColor} stopOpacity={0.92 * fade} />
+        </radialGradient>
+        <radialGradient id={borderId} cx={width / 2} cy={height / 2}>
+          <stop offset="0%" stopColor={baseColor} stopOpacity={0.18 * fade} />
+          <stop offset="100%" stopColor={baseColor} stopOpacity={0.95 * fade} />
+        </radialGradient>
+        <clipPath id={clipId}>
+          <Sector {...props} />
+        </clipPath>
+      </defs>
+      <Sector
+        {...props}
+        clipPath={`url(#${clipId})`}
+        fill={`url(#${fillId})`}
+        stroke={`url(#${borderId})`}
+        strokeWidth={props?.payload?.isFocused ? 4 : 1}
+      />
+    </>
+  );
 }
 
 function normalizeWorkspaceStatus(value) {
@@ -604,7 +677,16 @@ function getUserAvatarSrc(user) {
 
 export default function App() {
   const defaultMonthRange = getCurrentMonthRange();
+  const initialAuthLocation = getAuthLocationState();
+  const [authMode, setAuthMode] = useState(initialAuthLocation.mode);
+  const [authResetToken, setAuthResetToken] = useState(initialAuthLocation.token);
   const [authError, setAuthError] = useState("");
+  const [authInfo, setAuthInfo] = useState("");
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [showResetNewPassword, setShowResetNewPassword] = useState(false);
+  const [showResetConfirmPassword, setShowResetConfirmPassword] = useState(false);
   const [loginSyncNotice, setLoginSyncNotice] = useState(null);
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("Dashboard");
@@ -691,6 +773,7 @@ export default function App() {
   const [quoteGroup, setQuoteGroup] = useState("");
   const [manualPriceClassFilter, setManualPriceClassFilter] = useState("");
   const [investSummaryClassFilter, setInvestSummaryClassFilter] = useState("");
+  const [dashInvestFocusClass, setDashInvestFocusClass] = useState("");
   const [investPortfolioClassFilter, setInvestPortfolioClassFilter] = useState("");
   const [investAssetsClassFilter, setInvestAssetsClassFilter] = useState("");
   const [investTradeDateFrom, setInvestTradeDateFrom] = useState(defaultMonthRange.from);
@@ -761,6 +844,12 @@ export default function App() {
   const [profileCurrentPassword, setProfileCurrentPassword] = useState("");
   const [profileNewPassword, setProfileNewPassword] = useState("");
   const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showWorkspaceInvitePassword, setShowWorkspaceInvitePassword] = useState(false);
+  const [showAdminOwnerPassword, setShowAdminOwnerPassword] = useState(false);
+  const [showProfileCurrentPassword, setShowProfileCurrentPassword] = useState(false);
+  const [showProfileNewPassword, setShowProfileNewPassword] = useState(false);
+  const [showProfileConfirmPassword, setShowProfileConfirmPassword] = useState(false);
   const [profileMsg, setProfileMsg] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
@@ -1541,6 +1630,21 @@ export default function App() {
     () => investmentByClass.reduce((acc, r) => acc + Number(r.value || 0), 0),
     [investmentByClass]
   );
+  const dashInvestFocusedClass = useMemo(() => {
+    if (!dashInvestFocusClass) return "";
+    return investmentByClass.some((row) => row.name === dashInvestFocusClass) ? dashInvestFocusClass : "";
+  }, [dashInvestFocusClass, investmentByClass]);
+  const investmentRadialData = useMemo(() => {
+    const hasFocus = Boolean(dashInvestFocusedClass);
+    return investmentByClass.map((row, idx) => ({
+      name: row.name,
+      value: Number(row.value || 0),
+      pct: pct(row.value, investmentTotal),
+      fill: DONUT_COLORS[idx % DONUT_COLORS.length],
+      opacity: !hasFocus || row.name === dashInvestFocusedClass ? 1 : 0.22,
+      isFocused: row.name === dashInvestFocusedClass,
+    }));
+  }, [dashInvestFocusedClass, investmentByClass, investmentTotal]);
   const investSummaryClassOptions = useMemo(() => {
     const classes = new Set(
       (investPortfolio?.positions || [])
@@ -1778,25 +1882,10 @@ export default function App() {
       setManualQuoteMode("rentability");
     }
   }, [selectedManualQuoteAsset, selectedManualQuoteIsManual, manualQuoteMode]);
-  const donutStyle = useMemo(() => {
-    if (!investmentByClass.length || investmentTotal <= 0) {
-      return { background: "conic-gradient(#2f3f63 0deg 360deg)" };
-    }
-    let start = 0;
-    const parts = investmentByClass.map((row, idx) => {
-      const angle = (Number(row.value || 0) / investmentTotal) * 360;
-      const end = start + angle;
-      const color = DONUT_COLORS[idx % DONUT_COLORS.length];
-      const out = `${color} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
-      start = end;
-      return out;
-    });
-    return { background: `conic-gradient(${parts.join(", ")})` };
-  }, [investmentByClass, investmentTotal]);
-
   async function onLogin(e) {
     e.preventDefault();
     setAuthError("");
+    setAuthInfo("");
     setLoginSyncNotice(null);
     const form = new FormData(e.currentTarget);
     const email = String(form.get("email") || "");
@@ -1811,6 +1900,49 @@ export default function App() {
           message: String(data.login_sync_status.message || ""),
         });
       }
+    } catch (err) {
+      setAuthError(String(err.message || err));
+    }
+  }
+
+  async function onForgotPassword(e) {
+    e.preventDefault();
+    setAuthError("");
+    setAuthInfo("");
+    try {
+      const out = await forgotPassword(forgotEmail);
+      setAuthInfo(String(out?.message || "Se o e-mail existir, você receberá instruções para redefinir sua senha."));
+    } catch (err) {
+      setAuthError(String(err.message || err));
+    }
+  }
+
+  async function onResetPassword(e) {
+    e.preventDefault();
+    setAuthError("");
+    setAuthInfo("");
+    if (!authResetToken) {
+      setAuthError("Token de redefinição inválido.");
+      return;
+    }
+    if (!resetNewPassword || !resetConfirmPassword) {
+      setAuthError("Informe e confirme a nova senha.");
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      setAuthError("A confirmação da senha não confere.");
+      return;
+    }
+    try {
+      const out = await resetPassword(authResetToken, resetNewPassword);
+      setAuthInfo(String(out?.message || "Sua senha foi alterada com sucesso."));
+      setResetNewPassword("");
+      setResetConfirmPassword("");
+      setShowResetNewPassword(false);
+      setShowResetConfirmPassword(false);
+      setAuthResetToken("");
+      setAuthMode("login");
+      clearPasswordResetLocation();
     } catch (err) {
       setAuthError(String(err.message || err));
     }
@@ -3320,6 +3452,41 @@ export default function App() {
     setTxRecentStatusFilter(status);
   }
 
+  function openInvestmentsClassFromDashboard(assetClass = "") {
+    if (!canViewInvestimentos) return;
+    setPage("Investimentos");
+    setInvestTab("Resumo");
+    setInvestSummaryClassFilter(String(assetClass || "").trim());
+  }
+
+  function renderPasswordInput({
+    name,
+    placeholder,
+    value,
+    onChange,
+    visible,
+    onToggle,
+    required = false,
+    disabled = false,
+  }) {
+    return (
+      <label className="password-field">
+        <input
+          name={name}
+          type={visible ? "text" : "password"}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+          required={required}
+          disabled={disabled}
+        />
+        <button type="button" className="password-toggle" onClick={onToggle} disabled={disabled}>
+          {visible ? "Ocultar" : "Mostrar"}
+        </button>
+      </label>
+    );
+  }
+
   async function onPreviewTransactionsCsv() {
     if (!canAddRelatorios) {
       setImportMsg("Sem permissão para pré-visualizar importações.");
@@ -3448,14 +3615,98 @@ export default function App() {
   if (!user) {
     return (
       <div className="auth-wrap">
-        <form className="auth-card" onSubmit={onLogin}>
-          <h1>Controle Financeiro</h1>
-          <p>Login via FastAPI</p>
-          <input name="email" type="email" placeholder="E-mail" required />
-          <input name="password" type="password" placeholder="Senha" required />
-          <button type="submit">Entrar</button>
-          {authError ? <div className="error">{authError}</div> : null}
-        </form>
+        {authMode === "reset" ? (
+          <form className="auth-card" onSubmit={onResetPassword}>
+            <h1>Redefinir senha</h1>
+            <p>Informe sua nova senha para concluir a recuperação.</p>
+            {renderPasswordInput({
+              name: "reset_new_password",
+              placeholder: "Nova senha",
+              value: resetNewPassword,
+              onChange: (e) => setResetNewPassword(e.target.value),
+              visible: showResetNewPassword,
+              onToggle: () => setShowResetNewPassword((v) => !v),
+              required: true,
+            })}
+            {renderPasswordInput({
+              name: "reset_confirm_password",
+              placeholder: "Confirmar nova senha",
+              value: resetConfirmPassword,
+              onChange: (e) => setResetConfirmPassword(e.target.value),
+              visible: showResetConfirmPassword,
+              onToggle: () => setShowResetConfirmPassword((v) => !v),
+              required: true,
+            })}
+            <button type="submit">Salvar nova senha</button>
+            <button
+              type="button"
+              className="auth-secondary-btn"
+              onClick={() => {
+                setAuthMode("login");
+                setAuthResetToken("");
+                setAuthError("");
+                clearPasswordResetLocation();
+              }}
+            >
+              Voltar ao login
+            </button>
+            {authInfo ? <div className="status-msg">{authInfo}</div> : null}
+            {authError ? <div className="error">{authError}</div> : null}
+          </form>
+        ) : authMode === "forgot" ? (
+          <form className="auth-card" onSubmit={onForgotPassword}>
+            <h1>Recuperar acesso</h1>
+            <p>Informe seu e-mail para receber o link de redefinição.</p>
+            <input
+              name="forgot_email"
+              type="email"
+              placeholder="E-mail"
+              value={forgotEmail}
+              onChange={(e) => setForgotEmail(e.target.value)}
+              required
+            />
+            <button type="submit">Enviar link</button>
+            <button
+              type="button"
+              className="auth-secondary-btn"
+              onClick={() => {
+                setAuthMode("login");
+                setAuthError("");
+                setAuthInfo("");
+              }}
+            >
+              Voltar ao login
+            </button>
+            {authInfo ? <div className="status-msg">{authInfo}</div> : null}
+            {authError ? <div className="error">{authError}</div> : null}
+          </form>
+        ) : (
+          <form className="auth-card" onSubmit={onLogin}>
+            <h1>Controle Financeiro</h1>
+            <p>Login via FastAPI</p>
+            <input name="email" type="email" placeholder="E-mail" required />
+            <label className="password-field">
+              <input name="password" type={showLoginPassword ? "text" : "password"} placeholder="Senha" required />
+              <button type="button" className="password-toggle" onClick={() => setShowLoginPassword((v) => !v)}>
+                {showLoginPassword ? "Ocultar" : "Mostrar"}
+              </button>
+            </label>
+            <button type="submit">Entrar</button>
+            <button
+              type="button"
+              className="auth-link-btn"
+              onClick={() => {
+                setAuthMode("forgot");
+                setAuthError("");
+                setAuthInfo("");
+              }}
+            >
+              Esqueci minha senha
+            </button>
+            {authInfo ? <div className="status-msg">{authInfo}</div> : null}
+            {authError ? <div className="error">{authError}</div> : null}
+          </form>
+        )}
       </div>
     );
   }
@@ -3772,22 +4023,55 @@ export default function App() {
 
               <article className="card dash-invest-card">
                 <h3>Resumo de investimentos</h3>
+                <p className="dash-invest-total">
+                  Total investido: <strong>{brl.format(Number(investmentTotal || 0))}</strong>
+                </p>
                 <div className="dash-invest-layout">
-                  <div className="dash-donut" style={donutStyle}>
-                    <div className="dash-donut-center">
-                      <strong>{brl.format(Number(investmentTotal || 0))}</strong>
-                    </div>
-                  </div>
                   <ul className="dash-legend">
-                    {investmentByClass.map((row, idx) => (
+                    {investmentRadialData.map((row) => (
                       <li key={row.name}>
-                        <span className="dot" style={{ background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
-                        <span>{row.name}</span>
-                        <strong>{brl.format(Number(row.value || 0))}</strong>
-                        <em>{pct(row.value, investmentTotal).toFixed(0)}%</em>
+                        <button
+                          type="button"
+                          className={`dash-legend-link ${dashInvestFocusedClass === row.name ? "active" : ""}`}
+                          onClick={() =>
+                            setDashInvestFocusClass((current) => (current === row.name ? "" : row.name))
+                          }
+                        >
+                          <span className="dot" style={{ background: row.fill, opacity: row.opacity }} />
+                          <span>{row.name}</span>
+                          <strong>{brl.format(row.value)}</strong>
+                          <em>{row.pct.toFixed(0)}%</em>
+                        </button>
                       </li>
                     ))}
                   </ul>
+                  <div className="dash-donut">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={investmentRadialData}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius="52%"
+                          outerRadius="92%"
+                          paddingAngle={2}
+                          startAngle={90}
+                          endAngle={-270}
+                          shape={InvestmentPieGradient}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    {dashInvestFocusedClass ? (
+                      <div className="dash-donut-center">
+                        <strong>
+                          {brl.format(
+                            Number(investmentRadialData.find((row) => row.name === dashInvestFocusedClass)?.value || 0)
+                          )}
+                        </strong>
+                        <span>{dashInvestFocusedClass}</span>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </article>
 
@@ -4204,13 +4488,14 @@ export default function App() {
                       onChange={(e) => setWorkspaceInviteName(e.target.value)}
                       disabled={!canManageWorkspaceUsers}
                     />
-                    <input
-                      type="password"
-                      placeholder="Senha inicial (obrigatória se e-mail novo)"
-                      value={workspaceInvitePassword}
-                      onChange={(e) => setWorkspaceInvitePassword(e.target.value)}
-                      disabled={!canManageWorkspaceUsers}
-                    />
+                    {renderPasswordInput({
+                      placeholder: "Senha inicial (obrigatória se e-mail novo)",
+                      value: workspaceInvitePassword,
+                      onChange: (e) => setWorkspaceInvitePassword(e.target.value),
+                      visible: showWorkspaceInvitePassword,
+                      onToggle: () => setShowWorkspaceInvitePassword((v) => !v),
+                      disabled: !canManageWorkspaceUsers,
+                    })}
                     <button type="submit" disabled={!canManageWorkspaceUsers}>
                       Adicionar convidado
                     </button>
@@ -4359,12 +4644,13 @@ export default function App() {
                           value={adminOwnerDisplayName}
                           onChange={(e) => setAdminOwnerDisplayName(e.target.value)}
                         />
-                        <input
-                          type="password"
-                          placeholder="Senha inicial (obrigatória se e-mail novo)"
-                          value={adminOwnerPassword}
-                          onChange={(e) => setAdminOwnerPassword(e.target.value)}
-                        />
+                        {renderPasswordInput({
+                          placeholder: "Senha inicial (obrigatória se e-mail novo)",
+                          value: adminOwnerPassword,
+                          onChange: (e) => setAdminOwnerPassword(e.target.value),
+                          visible: showAdminOwnerPassword,
+                          onToggle: () => setShowAdminOwnerPassword((v) => !v),
+                        })}
                         <button type="submit">Criar workspace</button>
                       </form>
                       <p className="workspace-helper-text">
@@ -5939,24 +6225,27 @@ export default function App() {
                   onChange={(e) => setProfileEmail(e.target.value)}
                   required
                 />
-                <input
-                  type="password"
-                  placeholder="Senha atual"
-                  value={profileCurrentPassword}
-                  onChange={(e) => setProfileCurrentPassword(e.target.value)}
-                />
-                <input
-                  type="password"
-                  placeholder="Nova senha"
-                  value={profileNewPassword}
-                  onChange={(e) => setProfileNewPassword(e.target.value)}
-                />
-                <input
-                  type="password"
-                  placeholder="Confirmar nova senha"
-                  value={profileConfirmPassword}
-                  onChange={(e) => setProfileConfirmPassword(e.target.value)}
-                />
+                {renderPasswordInput({
+                  placeholder: "Senha atual",
+                  value: profileCurrentPassword,
+                  onChange: (e) => setProfileCurrentPassword(e.target.value),
+                  visible: showProfileCurrentPassword,
+                  onToggle: () => setShowProfileCurrentPassword((v) => !v),
+                })}
+                {renderPasswordInput({
+                  placeholder: "Nova senha",
+                  value: profileNewPassword,
+                  onChange: (e) => setProfileNewPassword(e.target.value),
+                  visible: showProfileNewPassword,
+                  onToggle: () => setShowProfileNewPassword((v) => !v),
+                })}
+                {renderPasswordInput({
+                  placeholder: "Confirmar nova senha",
+                  value: profileConfirmPassword,
+                  onChange: (e) => setProfileConfirmPassword(e.target.value),
+                  visible: showProfileConfirmPassword,
+                  onToggle: () => setShowProfileConfirmPassword((v) => !v),
+                })}
                 <button type="submit" disabled={profileSaving}>
                   {profileSaving ? "Salvando..." : "Salvar perfil"}
                 </button>

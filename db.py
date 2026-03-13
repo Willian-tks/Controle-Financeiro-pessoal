@@ -118,6 +118,8 @@ def _sqlite_schema(cur):
         password_hash TEXT NOT NULL,
         display_name TEXT,
         role TEXT NOT NULL DEFAULT 'user',
+        token_version INTEGER NOT NULL DEFAULT 0,
+        password_changed_at TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -131,6 +133,21 @@ def _sqlite_schema(cur):
         created_by INTEGER NOT NULL,
         used_by INTEGER,
         expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        requested_ip TEXT,
+        requested_user_agent TEXT,
+        consumed_ip TEXT,
+        consumed_user_agent TEXT,
         used_at TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -347,6 +364,8 @@ def _postgres_schema(cur):
         password_hash TEXT NOT NULL,
         display_name TEXT,
         role TEXT NOT NULL DEFAULT 'user',
+        token_version INTEGER NOT NULL DEFAULT 0,
+        password_changed_at TIMESTAMP,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -360,6 +379,21 @@ def _postgres_schema(cur):
         created_by BIGINT NOT NULL,
         used_by BIGINT,
         expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        requested_ip TEXT,
+        requested_user_agent TEXT,
+        consumed_ip TEXT,
+        consumed_user_agent TEXT,
         used_at TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -739,6 +773,8 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS global_role TEXT")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_data TEXT")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP")
     cur.execute("""
     UPDATE users
     SET global_role = CASE
@@ -776,6 +812,20 @@ def _migrate_multitenant_postgres(cur):
         can_add BOOLEAN NOT NULL DEFAULT FALSE,
         can_edit BOOLEAN NOT NULL DEFAULT FALSE,
         can_delete BOOLEAN NOT NULL DEFAULT FALSE
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        requested_ip TEXT,
+        requested_user_agent TEXT,
+        consumed_ip TEXT,
+        consumed_user_agent TEXT,
+        used_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     """)
 
@@ -867,6 +917,9 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_used_at ON password_reset_tokens(used_at)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sync_runs_ref_date ON sync_runs(ref_date)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)")
@@ -920,6 +973,8 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "users", "is_active INTEGER NOT NULL DEFAULT 1")
     _add_column_sqlite(cur, "users", "global_role TEXT")
     _add_column_sqlite(cur, "users", "avatar_data TEXT")
+    _add_column_sqlite(cur, "users", "token_version INTEGER NOT NULL DEFAULT 0")
+    _add_column_sqlite(cur, "users", "password_changed_at TEXT")
     cur.execute("""
     UPDATE users
     SET global_role = CASE
@@ -957,6 +1012,20 @@ def _migrate_multitenant_sqlite(cur):
         can_add INTEGER NOT NULL DEFAULT 0,
         can_edit INTEGER NOT NULL DEFAULT 0,
         can_delete INTEGER NOT NULL DEFAULT 0
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        requested_ip TEXT,
+        requested_user_agent TEXT,
+        consumed_ip TEXT,
+        consumed_user_agent TEXT,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     """)
 
@@ -1034,6 +1103,9 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cc_chg_user ON credit_card_charges(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_used_at ON password_reset_tokens(used_at)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_sync_runs_scope_type_key_date ON sync_runs(scope_kind, scope_id, sync_type, sync_key, ref_date)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date)")

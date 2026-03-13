@@ -1,9 +1,13 @@
 import base64
+import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
+from collections import deque
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 from typing import Any
 
 from db import get_conn
@@ -12,6 +16,14 @@ PBKDF2_ITERATIONS = 260_000
 BOOTSTRAP_ADMIN_EMAIL = "willian@tks.global"
 BOOTSTRAP_ADMIN_PASSWORD = "B3qVFb"
 BOOTSTRAP_ADMIN_NAME = "Willian Admin"
+PASSWORD_RESET_TTL_MINUTES = max(15, min(30, int(os.getenv("PASSWORD_RESET_TTL_MINUTES", "30") or "30")))
+PASSWORD_RESET_EMAIL_LIMIT_PER_HOUR = max(1, int(os.getenv("PASSWORD_RESET_EMAIL_LIMIT_PER_HOUR", "3") or "3"))
+PASSWORD_RESET_IP_LIMIT_PER_HOUR = max(1, int(os.getenv("PASSWORD_RESET_IP_LIMIT_PER_HOUR", "10") or "10"))
+PASSWORD_RESET_NEUTRAL_MESSAGE = "Se o e-mail existir, você receberá instruções para redefinir sua senha."
+
+_PASSWORD_RESET_RATE_LOCK = Lock()
+_PASSWORD_RESET_EMAIL_ATTEMPTS: dict[str, deque[float]] = {}
+_PASSWORD_RESET_IP_ATTEMPTS: dict[str, deque[float]] = {}
 
 
 def _utc_now() -> datetime:
@@ -28,6 +40,48 @@ def _to_db_datetime(dt: datetime) -> str:
 
 def _norm_email(email: str) -> str:
     return (email or "").strip().lower()
+
+
+def _hash_token(raw_token: str) -> str:
+    return hashlib.sha256(str(raw_token or "").encode("utf-8")).hexdigest()
+
+
+def _password_strength_error(password: str) -> str | None:
+    raw = str(password or "")
+    if len(raw) < 8:
+        return "A nova senha deve ter pelo menos 8 caracteres."
+    if not re.search(r"[A-Za-z]", raw):
+        return "A nova senha deve conter pelo menos uma letra."
+    if not re.search(r"\d", raw):
+        return "A nova senha deve conter pelo menos um numero."
+    return None
+
+
+def _check_password_change_allowed(new_password: str, current_hash: str) -> None:
+    err = _password_strength_error(new_password)
+    if err:
+        raise ValueError(err)
+    if _verify_password(new_password, str(current_hash or "")):
+        raise ValueError("A nova senha nao pode ser igual a atual.")
+
+
+def password_reset_public_message() -> str:
+    return PASSWORD_RESET_NEUTRAL_MESSAGE
+
+
+def _consume_recent_attempts(bucket: dict[str, deque[float]], key: str, limit: int) -> bool:
+    if not key:
+        return True
+    now_ts = _utc_now().timestamp()
+    cutoff = now_ts - 3600
+    with _PASSWORD_RESET_RATE_LOCK:
+        q = bucket.setdefault(key, deque())
+        while q and q[0] < cutoff:
+            q.popleft()
+        if len(q) >= limit:
+            return False
+        q.append(now_ts)
+        return True
 
 
 def _global_role_from_legacy(role: str | None) -> str:
@@ -108,10 +162,12 @@ def ensure_bootstrap_admin() -> None:
         conn.execute(
             """
             UPDATE users
-            SET password_hash = ?, display_name = ?, role = 'admin', global_role = 'SUPER_ADMIN', is_active = TRUE
+            SET password_hash = ?, display_name = ?, role = 'admin', global_role = 'SUPER_ADMIN', is_active = TRUE,
+                token_version = COALESCE(token_version, 0) + 1,
+                password_changed_at = ?
             WHERE id = ?
             """,
-            (_hash_password(admin_password), admin_name, int(row["id"])),
+            (_hash_password(admin_password), admin_name, _utc_now_str(), int(row["id"])),
         )
     conn.commit()
     conn.close()
@@ -122,6 +178,7 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT id, email, display_name, avatar_data, role, global_role, is_active, created_at
+               , token_version, password_changed_at
         FROM users
         WHERE id = ?
         """,
@@ -144,6 +201,7 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT id, email, display_name, avatar_data, role, global_role, is_active, created_at
+               , token_version, password_changed_at
         FROM users
         WHERE email = ?
         """,
@@ -668,6 +726,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT id, email, display_name, avatar_data, role, global_role, is_active, created_at, password_hash
+               , token_version, password_changed_at
         FROM users
         WHERE email = ?
         """,
@@ -689,6 +748,8 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
         "global_role": row["global_role"],
         "is_active": row["is_active"],
         "created_at": row["created_at"],
+        "token_version": row["token_version"],
+        "password_changed_at": row["password_changed_at"],
     }
     user["global_role"] = _effective_global_role(user)
     user["role"] = _legacy_role_from_global(user["global_role"])
@@ -751,15 +812,23 @@ def update_user_profile(
     if new_pwd:
         if len(new_pwd) < 6:
             conn.close()
-            raise ValueError("A nova senha deve ter pelo menos 6 caracteres.")
+            raise ValueError("A nova senha deve ter pelo menos 8 caracteres.")
         if not current_pwd:
             conn.close()
             raise ValueError("Informe a senha atual para alterar a senha.")
         if not _verify_password(current_pwd, str(row["password_hash"] or "")):
             conn.close()
             raise ValueError("Senha atual inválida.")
+        try:
+            _check_password_change_allowed(new_pwd, str(row["password_hash"] or ""))
+        except ValueError as e:
+            conn.close()
+            raise
         fields.append("password_hash = ?")
         params.append(_hash_password(new_pwd))
+        fields.append("token_version = COALESCE(token_version, 0) + 1")
+        fields.append("password_changed_at = ?")
+        params.append(_utc_now_str())
 
     params.append(uid)
     conn.execute(
@@ -776,6 +845,137 @@ def update_user_profile(
     updated = get_user_by_id(uid)
     if not updated:
         raise ValueError("Falha ao atualizar perfil.")
+    return updated
+
+
+def create_password_reset_request(
+    *,
+    email: str,
+    request_ip: str | None = None,
+    request_user_agent: str | None = None,
+) -> str | None:
+    email_n = _norm_email(email)
+    if not email_n:
+        return None
+    if not _consume_recent_attempts(_PASSWORD_RESET_EMAIL_ATTEMPTS, email_n, PASSWORD_RESET_EMAIL_LIMIT_PER_HOUR):
+        return None
+    ip = str(request_ip or "").strip()
+    if ip and not _consume_recent_attempts(_PASSWORD_RESET_IP_ATTEMPTS, ip, PASSWORD_RESET_IP_LIMIT_PER_HOUR):
+        return None
+
+    user = get_user_by_email(email_n)
+    if not user or not bool(user.get("is_active", True)):
+        return None
+
+    uid = int(user["id"])
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_token(raw_token)
+    now_s = _utc_now_str()
+    expires_at = _to_db_datetime(_utc_now() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES))
+
+    conn = get_conn()
+    conn.execute(
+        """
+        UPDATE password_reset_tokens
+        SET used_at = ?, consumed_user_agent = ?
+        WHERE user_id = ? AND used_at IS NULL
+        """,
+        (now_s, "superseded", uid),
+    )
+    conn.execute(
+        """
+        INSERT INTO password_reset_tokens(
+            user_id, token_hash, expires_at, requested_ip, requested_user_agent
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (uid, token_hash, expires_at, ip or None, str(request_user_agent or "").strip() or None),
+    )
+    conn.commit()
+    conn.close()
+    return raw_token
+
+
+def reset_password_with_token(
+    *,
+    token: str,
+    new_password: str,
+    request_ip: str | None = None,
+    request_user_agent: str | None = None,
+) -> dict[str, Any]:
+    token_hash = _hash_token(token)
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT
+            prt.id,
+            prt.user_id,
+            prt.expires_at,
+            prt.used_at,
+            u.email,
+            u.display_name,
+            u.avatar_data,
+            u.role,
+            u.global_role,
+            u.is_active,
+            u.created_at,
+            u.password_hash,
+            u.token_version,
+            u.password_changed_at
+        FROM password_reset_tokens prt
+        JOIN users u ON u.id = prt.user_id
+        WHERE prt.token_hash = ?
+        LIMIT 1
+        """,
+        (token_hash,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("Token invalido ou expirado.")
+    if row["used_at"]:
+        conn.close()
+        raise ValueError("Token invalido ou expirado.")
+    exp = str(row["expires_at"]).replace("T", " ").split(".")[0]
+    if exp < _utc_now_str():
+        conn.close()
+        raise ValueError("Token invalido ou expirado.")
+    if not bool(row["is_active"]):
+        conn.close()
+        raise ValueError("Usuario inativo.")
+
+    _check_password_change_allowed(new_password, str(row["password_hash"] or ""))
+    now_s = _utc_now_str()
+    uid = int(row["user_id"])
+    conn.execute(
+        """
+        UPDATE users
+        SET password_hash = ?, token_version = COALESCE(token_version, 0) + 1, password_changed_at = ?
+        WHERE id = ?
+        """,
+        (_hash_password(new_password), now_s, uid),
+    )
+    conn.execute(
+        """
+        UPDATE password_reset_tokens
+        SET used_at = ?, consumed_ip = ?, consumed_user_agent = ?
+        WHERE id = ?
+        """,
+        (now_s, str(request_ip or "").strip() or None, str(request_user_agent or "").strip() or None, int(row["id"])),
+    )
+    conn.execute(
+        """
+        UPDATE password_reset_tokens
+        SET used_at = ?, consumed_user_agent = ?
+        WHERE user_id = ? AND used_at IS NULL
+        """,
+        (now_s, "password_changed", uid),
+    )
+    conn.commit()
+    conn.close()
+
+    updated = get_user_by_id(uid)
+    if not updated:
+        raise ValueError("Usuario nao encontrado.")
     return updated
 
 

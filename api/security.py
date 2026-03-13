@@ -25,11 +25,13 @@ def create_token(
     workspace_id: int | None = None,
     global_role: str | None = None,
     workspace_role: str | None = None,
+    token_version: int | None = None,
 ) -> str:
     payload = {
         "uid": int(user_id),
         "email": email,
         "exp": int(time.time()) + TTL_SECONDS,
+        "tv": int(token_version or 0),
     }
     if workspace_id is not None:
         payload["wid"] = int(workspace_id)

@@ -3,11 +3,13 @@ from __future__ import annotations
 import os
 import calendar
 import logging
+from html import escape
 from typing import Any
 from datetime import date as _date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import uuid4
 
+import requests
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -41,6 +43,7 @@ from .schemas import (
     CreditCardCreateRequest,
     CreditCardPayInvoiceRequest,
     CreditCardUpdateRequest,
+    ForgotPasswordRequest,
     CommitmentSettleRequest,
     LoginRequest,
     LoginResponse,
@@ -60,6 +63,7 @@ from .schemas import (
     QuoteUpdateAllRequest,
     RentabilityDivergenceRequest,
     RentabilityUpdateRequest,
+    ResetPasswordRequest,
     TradeCreateRequest,
     TransactionCreateRequest,
 )
@@ -581,6 +585,60 @@ def _request_ip(request: Request | None) -> str | None:
         return None
 
 
+def _request_user_agent(request: Request | None) -> str | None:
+    try:
+        raw = request.headers.get("user-agent", "") if request else ""
+    except Exception:
+        raw = ""
+    return str(raw or "").strip() or None
+
+
+def _password_reset_target_url(raw_token: str) -> str:
+    base = str(os.getenv("APP_PASSWORD_RESET_URL", "") or "").strip()
+    if not base:
+        app_base = str(os.getenv("APP_BASE_URL", "") or "").strip().rstrip("/")
+        base = f"{app_base}/reset-password" if app_base else "http://localhost:5173/reset-password"
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}token={raw_token}"
+
+
+def _send_password_reset_email(*, email: str, raw_token: str) -> bool:
+    api_key = str(os.getenv("RESEND_API_KEY", "") or "").strip()
+    from_email = str(os.getenv("RESEND_FROM_EMAIL", "") or "").strip()
+    if not api_key or not from_email:
+        logger.warning("Password reset requested but Resend is not configured.")
+        return False
+
+    reset_url = _password_reset_target_url(raw_token)
+    safe_url = escape(reset_url, quote=True)
+    payload = {
+        "from": from_email,
+        "to": [email],
+        "subject": "Redefinicao de senha do Domus",
+        "html": (
+            "<p>Recebemos uma solicitacao para redefinir sua senha no Domus.</p>"
+            f"<p><a href=\"{safe_url}\">Clique aqui para redefinir sua senha</a></p>"
+            "<p>Este link expira em 30 minutos. Se voce nao solicitou a alteracao, ignore este e-mail.</p>"
+        ),
+        "text": (
+            "Recebemos uma solicitacao para redefinir sua senha no Domus.\n\n"
+            f"Abra este link: {reset_url}\n\n"
+            "Este link expira em 30 minutos. Se voce nao solicitou a alteracao, ignore este e-mail."
+        ),
+    }
+    resp = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return True
+
+
 def _auth_payload(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -745,6 +803,21 @@ def _current_user(
             ip=_request_ip(request),
         )
         raise HTTPException(status_code=401, detail="Invalid user")
+    try:
+        token_version = int(payload.get("tv", 0) or 0)
+    except Exception:
+        token_version = 0
+    current_token_version = int(user.get("token_version") or 0)
+    if token_version != current_token_version:
+        security_monitor.record_event(
+            event_type="auth_stale_session",
+            status_code=401,
+            path=str(request.url.path),
+            detail="Stale session token",
+            user_id=uid,
+            ip=_request_ip(request),
+        )
+        raise HTTPException(status_code=401, detail="Sessao expirada. Faca login novamente.")
 
     global_role = _global_role_from_user(user)
     requested_workspace_id = x_workspace_id
@@ -1358,6 +1431,7 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
         workspace_id=workspace_id,
         global_role=global_role,
         workspace_role=workspace_role,
+        token_version=int(user.get("token_version") or 0),
     )
 
     out_user = dict(user)
@@ -1369,6 +1443,78 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
     out_user["workspace_name"] = member.get("workspace_name") if member else None
     out_user["permissions"] = _effective_permissions_for_user(out_user, member=member)
     return LoginResponse(token=token, user=out_user, login_sync_status=login_sync_status)
+
+
+@app.post("/auth/forgot-password")
+def forgot_password(body: ForgotPasswordRequest, request: Request) -> dict:
+    email = (body.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="E-mail é obrigatório.")
+
+    raw_token = auth.create_password_reset_request(
+        email=email,
+        request_ip=_request_ip(request),
+        request_user_agent=_request_user_agent(request),
+    )
+    if raw_token:
+        try:
+            sent = _send_password_reset_email(email=email, raw_token=raw_token)
+            security_monitor.record_event(
+                event_type="password_reset_requested",
+                status_code=200,
+                path=str(request.url.path),
+                detail="Password reset email queued" if sent else "Password reset requested without email transport",
+                ip=_request_ip(request),
+            )
+        except Exception as exc:
+            logger.exception("Failed to send password reset email: %s", exc)
+            security_monitor.record_event(
+                event_type="password_reset_email_failed",
+                status_code=500,
+                path=str(request.url.path),
+                detail="Password reset email transport failed",
+                ip=_request_ip(request),
+            )
+    else:
+        security_monitor.record_event(
+            event_type="password_reset_requested",
+            status_code=200,
+            path=str(request.url.path),
+            detail="Password reset requested with neutral response",
+            ip=_request_ip(request),
+        )
+    return {"ok": True, "message": auth.password_reset_public_message()}
+
+
+@app.post("/auth/reset-password")
+def reset_password(body: ResetPasswordRequest, request: Request) -> dict:
+    token = str(body.token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Token é obrigatório.")
+    try:
+        auth.reset_password_with_token(
+            token=token,
+            new_password=body.new_password,
+            request_ip=_request_ip(request),
+            request_user_agent=_request_user_agent(request),
+        )
+    except ValueError as e:
+        security_monitor.record_event(
+            event_type="password_reset_failed",
+            status_code=400,
+            path=str(request.url.path),
+            detail=str(e),
+            ip=_request_ip(request),
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    security_monitor.record_event(
+        event_type="password_reset_completed",
+        status_code=200,
+        path=str(request.url.path),
+        detail="Password reset completed",
+        ip=_request_ip(request),
+    )
+    return {"ok": True, "message": "Sua senha foi alterada com sucesso."}
 
 
 @app.get("/me")
@@ -1446,6 +1592,7 @@ def switch_workspace(body: WorkspaceSwitchRequest, user: dict = Depends(_current
         workspace_id=target_workspace_id,
         global_role=global_role,
         workspace_role=workspace_role,
+        token_version=int(user.get("token_version") or 0),
     )
     out_user = dict(user)
     out_user["global_role"] = global_role
