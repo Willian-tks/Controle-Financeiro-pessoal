@@ -78,6 +78,10 @@ class WorkspaceStatusUpdateRequest(BaseModel):
     status: str
 
 
+class WorkspaceRenameRequest(BaseModel):
+    workspace_name: str
+
+
 class UserGlobalRoleUpdateRequest(BaseModel):
     global_role: str
 

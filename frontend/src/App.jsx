@@ -63,6 +63,7 @@ import {
   getMe,
   updateMeProfile,
   getWorkspaces,
+  renameCurrentWorkspace,
   switchWorkspace,
   getWorkspaceMembers,
   createWorkspaceMember,
@@ -813,6 +814,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState([]);
   const [workspaceMsg, setWorkspaceMsg] = useState("");
   const [workspaceSwitchingId, setWorkspaceSwitchingId] = useState("");
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceMembers, setWorkspaceMembers] = useState([]);
   const [workspaceMembersLoading, setWorkspaceMembersLoading] = useState(false);
   const [workspaceInviteEmail, setWorkspaceInviteEmail] = useState("");
@@ -910,6 +912,10 @@ export default function App() {
     setProfileConfirmPassword("");
     setProfileMsg("");
   }, [profileModalOpen, user]);
+
+  useEffect(() => {
+    setWorkspaceNameDraft(String(user?.workspace_name || ""));
+  }, [user?.workspace_id, user?.workspace_name]);
 
   useEffect(() => {
     function onBeforeInstallPrompt(event) {
@@ -2044,6 +2050,29 @@ export default function App() {
       setWorkspaceInvitePassword("");
       setWorkspaceManageMsg("Convidado atualizado com sucesso.");
       await reloadWorkspaceMembers();
+      await reloadWorkspaces();
+    } catch (err) {
+      setWorkspaceManageMsg(String(err.message || err));
+    }
+  }
+
+  async function onRenameCurrentWorkspace(e) {
+    e.preventDefault();
+    if (!canManageWorkspaceUsers && !isSuperAdmin && !isWorkspaceOwner) {
+      setWorkspaceManageMsg("Sem permissão para renomear o workspace.");
+      return;
+    }
+    const workspace_name = String(workspaceNameDraft || "").trim();
+    if (!workspace_name) {
+      setWorkspaceManageMsg("Informe o nome do workspace.");
+      return;
+    }
+    try {
+      const out = await renameCurrentWorkspace({ workspace_name });
+      const nextName = String(out?.workspace?.workspace_name || workspace_name);
+      setUser((prev) => (prev ? { ...prev, workspace_name: nextName } : prev));
+      setWorkspaceNameDraft(nextName);
+      setWorkspaceManageMsg("Nome do workspace atualizado.");
       await reloadWorkspaces();
     } catch (err) {
       setWorkspaceManageMsg(String(err.message || err));
@@ -4473,6 +4502,18 @@ export default function App() {
                     <b>ID:</b> {user.workspace_id || "-"} | <b>Nome:</b> {user.workspace_name || "-"} |{" "}
                     <b>Papel:</b> {user.workspace_role || "-"} | <b>Status:</b> {user.workspace_status || "-"}
                   </p>
+                  <form className="workspace-create-form" onSubmit={onRenameCurrentWorkspace}>
+                    <input
+                      type="text"
+                      placeholder="Renomear workspace"
+                      value={workspaceNameDraft}
+                      onChange={(e) => setWorkspaceNameDraft(e.target.value)}
+                      disabled={!isSuperAdmin && !isWorkspaceOwner}
+                    />
+                    <button type="submit" disabled={!isSuperAdmin && !isWorkspaceOwner}>
+                      Atualizar nome
+                    </button>
+                  </form>
                   <form className="workspace-invite-form" onSubmit={onAddWorkspaceGuest}>
                     <input
                       type="email"

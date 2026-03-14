@@ -440,6 +440,26 @@ def update_workspace_status(workspace_id: int, status: str) -> dict[str, Any] | 
     return get_workspace_by_id(ws_id)
 
 
+def update_workspace_name(workspace_id: int, workspace_name: str) -> dict[str, Any] | None:
+    ws_id = int(workspace_id)
+    name = str(workspace_name or "").strip()
+    if not name:
+        raise ValueError("Nome do workspace é obrigatório.")
+    if len(name) < 3:
+        raise ValueError("Nome do workspace deve ter pelo menos 3 caracteres.")
+
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE workspaces SET name = ? WHERE id = ?",
+        (name, ws_id),
+    )
+    conn.commit()
+    conn.close()
+    if int(cur.rowcount or 0) <= 0:
+        return None
+    return get_workspace_by_id(ws_id)
+
+
 def set_user_global_role(user_id: int, global_role: str) -> dict[str, Any] | None:
     uid = int(user_id)
     role_n = str(global_role or "").strip().upper()

@@ -90,6 +90,13 @@ export function switchWorkspace(workspaceId) {
   });
 }
 
+export function renameCurrentWorkspace(payload) {
+  return req("/workspaces/current", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getWorkspaceMembers() {
   return req("/workspaces/members");
 }

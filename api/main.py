@@ -54,6 +54,7 @@ from .schemas import (
     WorkspaceMemberCreateRequest,
     WorkspacePermissionItemRequest,
     WorkspacePermissionsUpdateRequest,
+    WorkspaceRenameRequest,
     WorkspaceStatusUpdateRequest,
     WorkspaceSwitchRequest,
     IncomeCreateRequest,
@@ -1560,6 +1561,30 @@ def list_workspaces(user: dict = Depends(_current_user)) -> list[dict]:
     uid = int(user["id"])
     rows = auth.list_user_workspaces(uid)
     return [dict(r) for r in rows]
+
+
+@app.put("/workspaces/current")
+def rename_current_workspace(
+    body: WorkspaceRenameRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    workspace_id = _current_workspace_id_from_user(user)
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="Workspace atual inválido.")
+
+    if not (_is_super_admin(user) or str(user.get("workspace_role") or "").strip().upper() == "OWNER"):
+        raise HTTPException(status_code=403, detail="Somente OWNER pode renomear o workspace.")
+
+    try:
+        updated = auth.update_workspace_name(int(workspace_id), body.workspace_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Workspace não encontrado.")
+
+    item = dict(updated)
+    item["workspace_status"] = str(item.get("status") or item.get("workspace_status") or "active").strip().lower()
+    return {"ok": True, "workspace": item}
 
 
 @app.post("/workspaces/switch", response_model=LoginResponse)
