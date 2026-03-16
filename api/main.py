@@ -640,6 +640,56 @@ def _send_password_reset_email(*, email: str, raw_token: str) -> bool:
     return True
 
 
+def _send_first_access_email(*, email: str, raw_token: str) -> bool:
+    api_key = str(os.getenv("RESEND_API_KEY", "") or "").strip()
+    from_email = str(os.getenv("RESEND_FROM_EMAIL", "") or "").strip()
+    if not api_key or not from_email:
+        logger.warning("First access requested but Resend is not configured.")
+        return False
+
+    reset_url = _password_reset_target_url(raw_token)
+    safe_url = escape(reset_url, quote=True)
+    payload = {
+        "from": from_email,
+        "to": [email],
+        "subject": "Crie sua senha de acesso ao Domus",
+        "html": (
+            "<p>Seu acesso ao Domus foi criado.</p>"
+            "<p>Para concluir o primeiro acesso, defina sua senha pelo link abaixo.</p>"
+            f"<p><a href=\"{safe_url}\">Criar senha de acesso</a></p>"
+            "<p>Este link expira em 30 minutos. Se voce nao esperava este convite, ignore este e-mail.</p>"
+        ),
+        "text": (
+            "Seu acesso ao Domus foi criado.\n\n"
+            "Para concluir o primeiro acesso, defina sua senha neste link:\n"
+            f"{reset_url}\n\n"
+            "Este link expira em 30 minutos. Se voce nao esperava este convite, ignore este e-mail."
+        ),
+    }
+    resp = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return True
+
+
+def _issue_first_access_email(*, email: str, request: Request | None = None) -> bool:
+    raw_token = auth.create_password_reset_request(
+        email=email,
+        request_ip=_request_ip(request),
+        request_user_agent=_request_user_agent(request),
+    )
+    if not raw_token:
+        return False
+    return _send_first_access_email(email=email, raw_token=raw_token)
+
+
 def _auth_payload(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -1650,6 +1700,7 @@ def list_workspace_members(user: dict = Depends(_current_user)) -> list[dict]:
 @app.post("/workspaces/members")
 def create_workspace_member(
     body: WorkspaceMemberCreateRequest,
+    request: Request,
     user: dict = Depends(_current_user),
 ) -> dict:
     _require_workspace_owner(user)
@@ -1662,23 +1713,23 @@ def create_workspace_member(
         raise HTTPException(status_code=400, detail="E-mail é obrigatório.")
 
     target = auth.get_user_by_email(email)
+    created_user = False
+    first_access_email_sent = False
     if not target:
-        raw_password = str(body.password or "")
         display_name = (body.display_name or "").strip() or None
-        if len(raw_password) < 6:
-            raise HTTPException(
-                status_code=400,
-                detail="Usuário não encontrado. Informe senha inicial (mín. 6) para criar o convidado.",
-            )
         try:
             target = auth.create_user(
                 email=email,
-                password=raw_password,
                 display_name=display_name,
                 global_role="USER",
             )
+            created_user = True
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        try:
+            first_access_email_sent = _issue_first_access_email(email=email, request=request)
+        except Exception as exc:
+            logger.exception("Failed to send first access email for workspace invite: %s", exc)
     if not bool(target.get("is_active", True)):
         raise HTTPException(status_code=400, detail="Usuário inativo não pode ser adicionado.")
 
@@ -1700,6 +1751,8 @@ def create_workspace_member(
         return {
             "ok": True,
             "created": False,
+            "created_user": created_user,
+            "first_access_email_sent": first_access_email_sent,
             "member": {
                 **dict(existing),
                 "email": target.get("email"),
@@ -1729,6 +1782,8 @@ def create_workspace_member(
     return {
         "ok": True,
         "created": True,
+        "created_user": created_user,
+        "first_access_email_sent": first_access_email_sent,
         "member": {
             **dict(member),
             "email": target.get("email"),
@@ -1815,12 +1870,12 @@ def admin_list_workspaces(user: dict = Depends(_current_user)) -> list[dict]:
 @app.post("/admin/workspaces")
 def admin_create_workspace(
     body: WorkspaceAdminCreateRequest,
+    request: Request,
     user: dict = Depends(_current_user),
 ) -> dict:
     _require_admin(user)
     owner_email = str(body.owner_email or "").strip().lower()
     workspace_name = str(body.workspace_name or "").strip()
-    owner_password = str(body.owner_password or "")
     owner_display_name = (body.owner_display_name or "").strip() or None
     if not owner_email:
         raise HTTPException(status_code=400, detail="E-mail do owner é obrigatório.")
@@ -1828,21 +1883,22 @@ def admin_create_workspace(
         raise HTTPException(status_code=400, detail="Nome do workspace é obrigatório.")
 
     owner = auth.get_user_by_email(owner_email)
+    created_user = False
+    first_access_email_sent = False
     if not owner:
-        if len(owner_password) < 6:
-            raise HTTPException(
-                status_code=400,
-                detail="Owner não encontrado. Informe senha inicial (mín. 6) para criar o usuário owner.",
-            )
         try:
             owner = auth.create_user(
                 email=owner_email,
-                password=owner_password,
                 display_name=owner_display_name,
                 global_role="USER",
             )
+            created_user = True
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        try:
+            first_access_email_sent = _issue_first_access_email(email=owner_email, request=request)
+        except Exception as exc:
+            logger.exception("Failed to send first access email for workspace owner: %s", exc)
     if not bool(owner.get("is_active", True)):
         raise HTTPException(status_code=400, detail="Usuário owner está inativo.")
     try:
@@ -1860,7 +1916,12 @@ def admin_create_workspace(
     ws["workspace_status"] = str(ws.get("status") or "active").strip().lower()
     ws["owner_email"] = owner.get("email")
     ws["owner_display_name"] = owner.get("display_name")
-    return {"ok": True, "workspace": ws}
+    return {
+        "ok": True,
+        "workspace": ws,
+        "created_user": created_user,
+        "first_access_email_sent": first_access_email_sent,
+    }
 
 
 @app.put("/admin/workspaces/{workspace_id}/status")

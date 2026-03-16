@@ -219,15 +219,18 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
 def create_user(
     *,
     email: str,
-    password: str,
+    password: str | None = None,
     display_name: str | None = None,
     global_role: str = "USER",
 ) -> dict[str, Any]:
     email_n = _norm_email(email)
     if "@" not in email_n or "." not in email_n:
         raise ValueError("Informe um e-mail válido.")
-    if len(password or "") < 6:
+    raw_password = str(password or "")
+    if raw_password and len(raw_password) < 6:
         raise ValueError("A senha deve ter pelo menos 6 caracteres.")
+    if not raw_password:
+        raw_password = secrets.token_urlsafe(24)
 
     role_n = str(global_role or "").strip().upper() or "USER"
     if role_n not in {"USER", "SUPER_ADMIN"}:
@@ -244,7 +247,7 @@ def create_user(
         INSERT INTO users(email, password_hash, display_name, role, global_role, is_active)
         VALUES (?, ?, ?, ?, ?, TRUE)
         """,
-        (email_n, _hash_password(password), display, _legacy_role_from_global(role_n), role_n),
+        (email_n, _hash_password(raw_password), display, _legacy_role_from_global(role_n), role_n),
     )
     conn.commit()
     conn.close()

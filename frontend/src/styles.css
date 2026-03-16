@@ -729,7 +729,8 @@ body {
 }
 
 .workspace-invite-form,
-.workspace-create-form {
+.workspace-create-form,
+.workspace-rename-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
@@ -740,7 +741,9 @@ body {
 .workspace-invite-form input,
 .workspace-invite-form button,
 .workspace-create-form input,
-.workspace-create-form button {
+.workspace-create-form button,
+.workspace-rename-form input,
+.workspace-rename-form button {
   border-radius: 10px;
   border: 1px solid #cfd8e9;
   padding: 10px;
@@ -750,6 +753,12 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.workspace-rename-form {
+  grid-template-columns: minmax(260px, 520px) 220px;
+  align-items: start;
+  margin-bottom: 12px;
+}
+
 .workspace-helper-text {
   margin: 10px 0 0 0;
   color: var(--text-muted);
@@ -757,7 +766,8 @@ body {
 }
 
 .workspace-invite-form button,
-.workspace-create-form button {
+.workspace-create-form button,
+.workspace-rename-form button {
   background: #1f8cea;
   color: #fff;
   border-color: #1f8cea;
@@ -1263,17 +1273,35 @@ body {
 }
 
 .main-dashboard .workspace-invite-form input,
-.main-dashboard .workspace-create-form input {
+.main-dashboard .workspace-create-form input,
+.main-dashboard .workspace-rename-form input {
   background: rgba(11, 24, 54, 0.78);
   border-color: rgba(138, 174, 255, 0.4);
   color: #eef4ff;
 }
 
 .main-dashboard .workspace-invite-form button,
-.main-dashboard .workspace-create-form button {
+.main-dashboard .workspace-create-form button,
+.main-dashboard .workspace-rename-form button {
   background: linear-gradient(90deg, #2ec6ff, #4e7ff3);
   border-color: rgba(255, 255, 255, 0.22);
   color: #ffffff;
+}
+
+.workspace-invite-form .password-field {
+  min-width: 0;
+}
+
+.workspace-invite-form .password-toggle,
+.workspace-create-form .password-toggle,
+.workspace-rename-form .password-toggle {
+  width: auto;
+  min-width: 0;
+  min-height: auto;
+  padding: 3px 8px;
+  border: 0;
+  background: rgba(46, 198, 255, 0.14);
+  box-shadow: none;
 }
 
 .main-dashboard .perm-row {
@@ -2044,7 +2072,8 @@ body {
   }
 
   .workspace-invite-form,
-  .workspace-create-form {
+  .workspace-create-form,
+  .workspace-rename-form {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
 }
@@ -2241,7 +2270,8 @@ body {
 
   .mgr-grid,
   .workspace-invite-form,
-  .workspace-create-form {
+  .workspace-create-form,
+  .workspace-rename-form {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
 
@@ -2461,6 +2491,7 @@ body {
   .quote-auto-form,
   .workspace-invite-form,
   .workspace-create-form,
+  .workspace-rename-form,
   .profile-modal .tx-form {
     grid-template-columns: 1fr;
   }

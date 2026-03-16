@@ -234,6 +234,14 @@ function formatIsoDate(date) {
   return `${year}-${month}-${day}`;
 }
 
+function isIsoDateWithinRange(value, from, to) {
+  const date = String(value || "").trim();
+  if (!date) return false;
+  if (from && date < from) return false;
+  if (to && date > to) return false;
+  return true;
+}
+
 function buildDashboardWealthFilters(filters) {
   const fromDate = parseIsoDate(filters?.date_from);
   const toDate = parseIsoDate(filters?.date_to);
@@ -706,6 +714,8 @@ export default function App() {
   const [dashDateTo, setDashDateTo] = useState(defaultMonthRange.to);
   const [dashAccount, setDashAccount] = useState("");
   const [dashView, setDashView] = useState("caixa");
+  const [invoiceDateFrom, setInvoiceDateFrom] = useState(defaultMonthRange.from);
+  const [invoiceDateTo, setInvoiceDateTo] = useState(defaultMonthRange.to);
   const [dashMsg, setDashMsg] = useState("");
   const [txMsg, setTxMsg] = useState("");
   const [txAccountId, setTxAccountId] = useState("");
@@ -819,14 +829,12 @@ export default function App() {
   const [workspaceMembersLoading, setWorkspaceMembersLoading] = useState(false);
   const [workspaceInviteEmail, setWorkspaceInviteEmail] = useState("");
   const [workspaceInviteName, setWorkspaceInviteName] = useState("");
-  const [workspaceInvitePassword, setWorkspaceInvitePassword] = useState("");
   const [workspacePermDrafts, setWorkspacePermDrafts] = useState({});
   const [workspaceManageMsg, setWorkspaceManageMsg] = useState("");
   const [adminWorkspaces, setAdminWorkspaces] = useState([]);
   const [adminWorkspaceName, setAdminWorkspaceName] = useState("");
   const [adminOwnerEmail, setAdminOwnerEmail] = useState("");
   const [adminOwnerDisplayName, setAdminOwnerDisplayName] = useState("");
-  const [adminOwnerPassword, setAdminOwnerPassword] = useState("");
   const [adminMsg, setAdminMsg] = useState("");
   const [adminStatusUpdatingId, setAdminStatusUpdatingId] = useState("");
   const [accEditId, setAccEditId] = useState("");
@@ -847,8 +855,6 @@ export default function App() {
   const [profileNewPassword, setProfileNewPassword] = useState("");
   const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [showWorkspaceInvitePassword, setShowWorkspaceInvitePassword] = useState(false);
-  const [showAdminOwnerPassword, setShowAdminOwnerPassword] = useState(false);
   const [showProfileCurrentPassword, setShowProfileCurrentPassword] = useState(false);
   const [showProfileNewPassword, setShowProfileNewPassword] = useState(false);
   const [showProfileConfirmPassword, setShowProfileConfirmPassword] = useState(false);
@@ -1610,16 +1616,24 @@ export default function App() {
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
   }, [cardInvoices]);
+  const openInvoicesDateRange = useMemo(() => {
+    const monthRange = getCurrentMonthRange();
+    return {
+      from: String(invoiceDateFrom || "").trim() || monthRange.from,
+      to: String(invoiceDateTo || "").trim() || monthRange.to,
+    };
+  }, [invoiceDateFrom, invoiceDateTo]);
   const openInvoicesVisible = useMemo(() => {
     const selectedId = Number(invoiceCardFilterId);
     const rows = (cardInvoices || []).filter((inv) => {
       if (String(inv.status || "").toUpperCase() !== "OPEN") return false;
+      if (!isIsoDateWithinRange(inv.due_date, openInvoicesDateRange.from, openInvoicesDateRange.to)) return false;
       if (!invoiceCardFilterId) return true;
       return Number(inv.card_id) === selectedId;
     });
     rows.sort((a, b) => String(a.due_date || "").localeCompare(String(b.due_date || "")));
     return rows;
-  }, [cardInvoices, invoiceCardFilterId]);
+  }, [cardInvoices, invoiceCardFilterId, openInvoicesDateRange]);
   const investmentByClass = useMemo(() => {
     const rows = investPortfolio?.positions || [];
     const map = new Map();
@@ -2032,7 +2046,6 @@ export default function App() {
     e.preventDefault();
     const email = String(workspaceInviteEmail || "").trim().toLowerCase();
     const displayName = String(workspaceInviteName || "").trim();
-    const password = String(workspaceInvitePassword || "");
     if (!email) {
       setWorkspaceManageMsg("Informe o e-mail do usuário para convidar.");
       return;
@@ -2043,12 +2056,10 @@ export default function App() {
         email,
         role: "GUEST",
         display_name: displayName || undefined,
-        password: password || undefined,
       });
       setWorkspaceInviteEmail("");
       setWorkspaceInviteName("");
-      setWorkspaceInvitePassword("");
-      setWorkspaceManageMsg("Convidado atualizado com sucesso.");
+      setWorkspaceManageMsg("Convidado atualizado com sucesso. Se o usuário for novo, ele receberá um e-mail para criar a senha.");
       await reloadWorkspaceMembers();
       await reloadWorkspaces();
     } catch (err) {
@@ -2123,7 +2134,6 @@ export default function App() {
     const workspace_name = String(adminWorkspaceName || "").trim();
     const owner_email = String(adminOwnerEmail || "").trim().toLowerCase();
     const owner_display_name = String(adminOwnerDisplayName || "").trim();
-    const owner_password = String(adminOwnerPassword || "");
     if (!workspace_name || !owner_email) {
       setAdminMsg("Informe nome do workspace e e-mail do owner.");
       return;
@@ -2134,13 +2144,11 @@ export default function App() {
         workspace_name,
         owner_email,
         owner_display_name: owner_display_name || undefined,
-        owner_password: owner_password || undefined,
       });
       setAdminWorkspaceName("");
       setAdminOwnerEmail("");
       setAdminOwnerDisplayName("");
-      setAdminOwnerPassword("");
-      setAdminMsg("Workspace criado com sucesso.");
+      setAdminMsg("Workspace criado com sucesso. Se o owner for novo, ele receberá um e-mail para criar a senha.");
       await Promise.all([reloadAdminWorkspaces(), reloadWorkspaces()]);
     } catch (err) {
       setAdminMsg(String(err.message || err));
@@ -4171,7 +4179,19 @@ export default function App() {
 
             <section className="card">
               <h3>Faturas abertas</h3>
-              <div style={{ display: "grid", gap: 10, maxWidth: 360, marginBottom: 12 }}>
+              <div className="tx-recent-filters">
+                <input
+                  type="date"
+                  className="invoice-filter-select"
+                  value={invoiceDateFrom}
+                  onChange={(e) => setInvoiceDateFrom(e.target.value)}
+                />
+                <input
+                  type="date"
+                  className="invoice-filter-select"
+                  value={invoiceDateTo}
+                  onChange={(e) => setInvoiceDateTo(e.target.value)}
+                />
                 <select
                   className="invoice-filter-select"
                   value={invoiceCardFilterId}
@@ -4502,7 +4522,7 @@ export default function App() {
                     <b>ID:</b> {user.workspace_id || "-"} | <b>Nome:</b> {user.workspace_name || "-"} |{" "}
                     <b>Papel:</b> {user.workspace_role || "-"} | <b>Status:</b> {user.workspace_status || "-"}
                   </p>
-                  <form className="workspace-create-form" onSubmit={onRenameCurrentWorkspace}>
+                  <form className="workspace-rename-form" onSubmit={onRenameCurrentWorkspace}>
                     <input
                       type="text"
                       placeholder="Renomear workspace"
@@ -4529,20 +4549,12 @@ export default function App() {
                       onChange={(e) => setWorkspaceInviteName(e.target.value)}
                       disabled={!canManageWorkspaceUsers}
                     />
-                    {renderPasswordInput({
-                      placeholder: "Senha inicial (obrigatória se e-mail novo)",
-                      value: workspaceInvitePassword,
-                      onChange: (e) => setWorkspaceInvitePassword(e.target.value),
-                      visible: showWorkspaceInvitePassword,
-                      onToggle: () => setShowWorkspaceInvitePassword((v) => !v),
-                      disabled: !canManageWorkspaceUsers,
-                    })}
                     <button type="submit" disabled={!canManageWorkspaceUsers}>
                       Adicionar convidado
                     </button>
                   </form>
                   <p className="workspace-helper-text">
-                    Se o e-mail já existir, a senha não é necessária. Se não existir, informando a senha o usuário convidado é criado automaticamente como `USER` e vinculado como `GUEST` neste workspace.
+                    Se o e-mail já existir, o usuário é vinculado ao workspace atual. Se não existir, o Domus cria o acesso e envia um e-mail para definição da senha de primeiro acesso.
                   </p>
                   {workspaceManageMsg ? <p className="status-msg">{workspaceManageMsg}</p> : null}
                 </section>
@@ -4685,17 +4697,10 @@ export default function App() {
                           value={adminOwnerDisplayName}
                           onChange={(e) => setAdminOwnerDisplayName(e.target.value)}
                         />
-                        {renderPasswordInput({
-                          placeholder: "Senha inicial (obrigatória se e-mail novo)",
-                          value: adminOwnerPassword,
-                          onChange: (e) => setAdminOwnerPassword(e.target.value),
-                          visible: showAdminOwnerPassword,
-                          onToggle: () => setShowAdminOwnerPassword((v) => !v),
-                        })}
                         <button type="submit">Criar workspace</button>
                       </form>
                       <p className="workspace-helper-text">
-                        Se o e-mail do owner já existir, a senha não é necessária. Se não existir, com a senha inicial o usuário é criado automaticamente como `USER` e já vira `OWNER` do novo workspace.
+                        Se o e-mail do owner já existir, ele assume o novo workspace como OWNER. Se não existir, o Domus cria o usuário e envia um e-mail para definição da senha de primeiro acesso.
                       </p>
                       {adminMsg ? <p className="status-msg">{adminMsg}</p> : null}
                     </section>
