@@ -838,6 +838,15 @@ def get_credit_card_by_id_and_type(card_id: int, card_type: str, user_id: int | 
     return row
 
 
+def _effective_close_day(due_day: int, close_day: int | None = None) -> int:
+    if close_day is not None:
+        return int(close_day)
+    # Cartões legados podem não ter fechamento persistido. Mantemos a
+    # mesma regra padrão usada na API para evitar jogar tudo para a
+    # próxima fatura indevidamente.
+    return max(1, int(due_day) - 5)
+
+
 def _due_date_by_cycle(purchase_date: str, due_day: int, close_day: int | None = None) -> tuple[str, str]:
     """
     Regra do ciclo:
@@ -846,16 +855,11 @@ def _due_date_by_cycle(purchase_date: str, due_day: int, close_day: int | None =
     """
     d = datetime.strptime(purchase_date, "%Y-%m-%d").date()
     due_d = int(due_day)
-    close_d = int(close_day) if close_day is not None else 0
+    close_d = _effective_close_day(due_d, close_day)
 
-    if close_d > 0:
-        if int(d.day) <= close_d:
-            y, m = d.year, d.month
-        else:
-            y = d.year + (1 if d.month == 12 else 0)
-            m = 1 if d.month == 12 else d.month + 1
+    if int(d.day) <= close_d:
+        y, m = d.year, d.month
     else:
-        # Compatibilidade com cartões antigos sem close_day:
         y = d.year + (1 if d.month == 12 else 0)
         m = 1 if d.month == 12 else d.month + 1
 
@@ -1032,12 +1036,26 @@ def list_credit_card_invoices(user_id: int | None = None, status: str | None = N
     q = """
         SELECT
             i.id, i.card_id, cc.name AS card_name, ca.name AS linked_account, sa.name AS source_account,
-            i.invoice_period, i.due_date, i.total_amount, i.paid_amount,
+            i.invoice_period,
+            COALESCE(ch.due_date, i.due_date) AS due_date,
+            COALESCE(ch.total_amount, i.total_amount, 0) AS total_amount,
+            COALESCE(ch.paid_amount, i.paid_amount, 0) AS paid_amount,
             CASE
-                WHEN COALESCE(i.total_amount, 0) > COALESCE(i.paid_amount, 0) THEN 'OPEN'
+                WHEN COALESCE(ch.total_amount, i.total_amount, 0) > COALESCE(ch.paid_amount, i.paid_amount, 0) THEN 'OPEN'
                 ELSE 'PAID'
             END AS status
         FROM credit_card_invoices i
+        LEFT JOIN (
+            SELECT
+                user_id,
+                card_id,
+                invoice_period,
+                MAX(due_date) AS due_date,
+                COALESCE(SUM(amount), 0) AS total_amount,
+                COALESCE(SUM(CASE WHEN COALESCE(paid, FALSE) = TRUE THEN amount ELSE 0 END), 0) AS paid_amount
+            FROM credit_card_charges
+            GROUP BY user_id, card_id, invoice_period
+        ) ch ON ch.user_id = i.user_id AND ch.card_id = i.card_id AND ch.invoice_period = i.invoice_period
         JOIN credit_cards cc ON cc.id = i.card_id AND cc.user_id = i.user_id
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
         JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
@@ -1046,13 +1064,13 @@ def list_credit_card_invoices(user_id: int | None = None, status: str | None = N
     params: list = [uid]
     if status:
         if str(status).upper() == "OPEN":
-            q += " AND COALESCE(i.total_amount, 0) > COALESCE(i.paid_amount, 0)"
+            q += " AND COALESCE(ch.total_amount, i.total_amount, 0) > COALESCE(ch.paid_amount, i.paid_amount, 0)"
         elif str(status).upper() == "PAID":
-            q += " AND COALESCE(i.total_amount, 0) <= COALESCE(i.paid_amount, 0)"
+            q += " AND COALESCE(ch.total_amount, i.total_amount, 0) <= COALESCE(ch.paid_amount, i.paid_amount, 0)"
     if card_id is not None:
         q += " AND i.card_id = ?"
         params.append(int(card_id))
-    q += " ORDER BY i.due_date DESC, i.id DESC"
+    q += " ORDER BY COALESCE(ch.due_date, i.due_date) DESC, i.id DESC"
     rows = _exec(conn, q, params).fetchall()
     conn.close()
     return rows
@@ -1068,10 +1086,31 @@ def pay_credit_card_invoice(
     conn = get_conn()
     inv = _exec(conn, 
         """
-        SELECT i.id, i.card_id, i.invoice_period, i.due_date, i.total_amount, i.paid_amount, i.status,
+        SELECT
+               i.id,
+               i.card_id,
+               i.invoice_period,
+               COALESCE(ch.due_date, i.due_date) AS due_date,
+               COALESCE(ch.total_amount, i.total_amount, 0) AS total_amount,
+               COALESCE(ch.paid_amount, i.paid_amount, 0) AS paid_amount,
+               CASE
+                   WHEN COALESCE(ch.total_amount, i.total_amount, 0) > COALESCE(ch.paid_amount, i.paid_amount, 0) THEN 'OPEN'
+                   ELSE 'PAID'
+               END AS status,
                cc.name AS card_name, cc.card_account_id, cc.source_account_id,
                ca.name AS linked_account_name, sa.name AS source_account_name
         FROM credit_card_invoices i
+        LEFT JOIN (
+            SELECT
+                user_id,
+                card_id,
+                invoice_period,
+                MAX(due_date) AS due_date,
+                COALESCE(SUM(amount), 0) AS total_amount,
+                COALESCE(SUM(CASE WHEN COALESCE(paid, FALSE) = TRUE THEN amount ELSE 0 END), 0) AS paid_amount
+            FROM credit_card_charges
+            GROUP BY user_id, card_id, invoice_period
+        ) ch ON ch.user_id = i.user_id AND ch.card_id = i.card_id AND ch.invoice_period = i.invoice_period
         JOIN credit_cards cc ON cc.id = i.card_id AND cc.user_id = i.user_id
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
         JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
@@ -1166,8 +1205,8 @@ def pay_credit_card_invoice(
             ),
         )
     _exec(conn, 
-        "UPDATE credit_card_invoices SET paid_amount = total_amount, status = 'PAID' WHERE id = ? AND user_id = ?",
-        (int(invoice_id), uid),
+        "UPDATE credit_card_invoices SET total_amount = ?, paid_amount = ?, status = 'PAID' WHERE id = ? AND user_id = ?",
+        (float(inv["total_amount"] or 0.0), float(inv["total_amount"] or 0.0), int(invoice_id), uid),
     )
     _exec(conn, 
         "UPDATE credit_card_charges SET paid = TRUE WHERE user_id = ? AND card_id = ? AND invoice_period = ?",
