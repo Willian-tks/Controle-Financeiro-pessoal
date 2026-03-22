@@ -286,6 +286,76 @@ function normalizeText(value) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function sanitizeDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function addThousandsSeparator(value) {
+  return String(value || "").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+function formatCurrencyInputValue(value) {
+  const digits = sanitizeDigits(value);
+  if (!digits) return "";
+  const padded = digits.padStart(3, "0");
+  const cents = padded.slice(-2);
+  const integerDigits = padded.slice(0, -2).replace(/^0+(?=\d)/, "") || "0";
+  return `${addThousandsSeparator(integerDigits)},${cents}`;
+}
+
+function formatLocalizedNumber(value, fractionDigits = 2) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return num.toLocaleString("pt-BR", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+}
+
+function parseLocaleNumber(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return NaN;
+  let normalized = raw.replace(/\s/g, "").replace(/[^\d,.-]/g, "");
+  if (normalized.includes(",")) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  }
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : NaN;
+}
+
+function sanitizeIntegerInputValue(value, maxDigits = 3) {
+  return sanitizeDigits(value).slice(0, maxDigits);
+}
+
+function sanitizeDecimalInputValue(value, options = {}) {
+  const { maxDecimals = 2, maxIntegerDigits = 12 } = options;
+  const raw = String(value || "").replace(/\./g, ",");
+  const cleaned = raw.replace(/[^\d,]/g, "");
+  const commaIndex = cleaned.indexOf(",");
+  if (commaIndex === -1) {
+    return cleaned.slice(0, maxIntegerDigits);
+  }
+  const integerPart = cleaned.slice(0, commaIndex).replace(/\D/g, "").slice(0, maxIntegerDigits) || "0";
+  const decimalPart = cleaned
+    .slice(commaIndex + 1)
+    .replace(/\D/g, "")
+    .slice(0, maxDecimals);
+  const keepComma = cleaned.endsWith(",") && !decimalPart;
+  return `${integerPart},${decimalPart}${keepComma ? "" : ""}`;
+}
+
+function applyCurrencyMaskInput(event) {
+  event.target.value = formatCurrencyInputValue(event.target.value);
+}
+
+function applyIntegerMaskInput(event, maxDigits = 3) {
+  event.target.value = sanitizeIntegerInputValue(event.target.value, maxDigits);
+}
+
+function applyDecimalMaskInput(event, options = {}) {
+  event.target.value = sanitizeDecimalInputValue(event.target.value, options);
+}
+
 function InvestmentPieGradient(props) {
   const index = Number(props?.index || 0);
   const baseColor = String(props?.fill || DONUT_COLORS[index % DONUT_COLORS.length]);
@@ -539,9 +609,9 @@ function classKey(assetClass) {
 }
 
 function parseOptionalNumberInput(value) {
-  const raw = String(value ?? "").trim().replace(",", ".");
+  const raw = String(value ?? "").trim();
   if (!raw) return { empty: true, value: null };
-  const num = Number(raw);
+  const num = parseLocaleNumber(raw);
   if (!Number.isFinite(num)) return { empty: false, value: NaN };
   return { empty: false, value: num };
 }
@@ -755,7 +825,7 @@ export default function App() {
   const [investMsg, setInvestMsg] = useState("");
   const [investRentabilityMsg, setInvestRentabilityMsg] = useState("");
   const [investDivergenceMsg, setInvestDivergenceMsg] = useState("");
-  const [investDivergenceThreshold, setInvestDivergenceThreshold] = useState("0.10");
+  const [investDivergenceThreshold, setInvestDivergenceThreshold] = useState("0,10");
   const [investDivergenceReport, setInvestDivergenceReport] = useState([]);
   const [investDivergenceRunning, setInvestDivergenceRunning] = useState(false);
   const [investDivergenceOpen, setInvestDivergenceOpen] = useState(false);
@@ -860,6 +930,8 @@ export default function App() {
   const [showProfileConfirmPassword, setShowProfileConfirmPassword] = useState(false);
   const [profileMsg, setProfileMsg] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
+  const [globalActionNotice, setGlobalActionNotice] = useState(null);
+  const [pendingActions, setPendingActions] = useState({});
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
   const [pwaInstalled, setPwaInstalled] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -874,6 +946,7 @@ export default function App() {
   const userMenuRef = useRef(null);
   const investRentabilityLastSyncRef = useRef(0);
   const investReloadSeqRef = useRef(0);
+  const globalActionNoticeTimeoutRef = useRef(null);
 
   function clearInvestState() {
     setInvestMeta({ asset_classes: [], asset_sectors: [], income_types: [] });
@@ -907,6 +980,52 @@ export default function App() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (globalActionNoticeTimeoutRef.current) {
+        clearTimeout(globalActionNoticeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  function showGlobalSuccess(message) {
+    const text = String(message || "").trim();
+    if (!text) return;
+    if (globalActionNoticeTimeoutRef.current) {
+      clearTimeout(globalActionNoticeTimeoutRef.current);
+    }
+    setGlobalActionNotice({ message: text, level: "success" });
+    globalActionNoticeTimeoutRef.current = setTimeout(() => {
+      setGlobalActionNotice(null);
+      globalActionNoticeTimeoutRef.current = null;
+    }, 3800);
+  }
+
+  function setPendingAction(actionKey, isPending) {
+    if (!actionKey) return;
+    setPendingActions((prev) => {
+      if (isPending) {
+        return { ...prev, [actionKey]: true };
+      }
+      const next = { ...prev };
+      delete next[actionKey];
+      return next;
+    });
+  }
+
+  function isPendingAction(actionKey) {
+    return Boolean(pendingActions[actionKey]);
+  }
+
+  async function withPendingAction(actionKey, job) {
+    setPendingAction(actionKey, true);
+    try {
+      return await job();
+    } finally {
+      setPendingAction(actionKey, false);
+    }
+  }
 
   useEffect(() => {
     if (!profileModalOpen || !user) return;
@@ -1152,9 +1271,9 @@ export default function App() {
     setAssetEditCurrency((cur.currency || "BRL").toUpperCase());
     setAssetEditBrokerId(cur.broker_account_id ? String(cur.broker_account_id) : "");
     setAssetEditRentabilityType(isFixedIncome ? String(cur.rentability_type || "MANUAL").toUpperCase() : "");
-    setAssetEditIndexPct(cur.index_pct == null ? "" : String(cur.index_pct));
-    setAssetEditSpreadRate(cur.spread_rate == null ? "" : String(cur.spread_rate));
-    setAssetEditFixedRate(cur.fixed_rate == null ? "" : String(cur.fixed_rate));
+    setAssetEditIndexPct(cur.index_pct == null ? "" : formatLocalizedNumber(cur.index_pct, 8));
+    setAssetEditSpreadRate(cur.spread_rate == null ? "" : formatLocalizedNumber(cur.spread_rate, 8));
+    setAssetEditFixedRate(cur.fixed_rate == null ? "" : formatLocalizedNumber(cur.fixed_rate, 8));
   }, [investAssets, assetEditId]);
 
   useEffect(() => {
@@ -2051,7 +2170,8 @@ export default function App() {
       return;
     }
     setWorkspaceManageMsg("");
-    try {
+    await withPendingAction("workspaceInvite", async () => {
+      try {
       await createWorkspaceMember({
         email,
         role: "GUEST",
@@ -2059,12 +2179,15 @@ export default function App() {
       });
       setWorkspaceInviteEmail("");
       setWorkspaceInviteName("");
+      const successMsg = "Convidado salvo.";
       setWorkspaceManageMsg("Convidado atualizado com sucesso. Se o usuário for novo, ele receberá um e-mail para criar a senha.");
+      showGlobalSuccess(successMsg);
       await reloadWorkspaceMembers();
       await reloadWorkspaces();
     } catch (err) {
       setWorkspaceManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onRenameCurrentWorkspace(e) {
@@ -2078,16 +2201,19 @@ export default function App() {
       setWorkspaceManageMsg("Informe o nome do workspace.");
       return;
     }
-    try {
+    await withPendingAction("workspaceRename", async () => {
+      try {
       const out = await renameCurrentWorkspace({ workspace_name });
       const nextName = String(out?.workspace?.workspace_name || workspace_name);
       setUser((prev) => (prev ? { ...prev, workspace_name: nextName } : prev));
       setWorkspaceNameDraft(nextName);
       setWorkspaceManageMsg("Nome do workspace atualizado.");
+      showGlobalSuccess("Workspace renomeado.");
       await reloadWorkspaces();
     } catch (err) {
       setWorkspaceManageMsg(String(err.message || err));
     }
+    });
   }
 
   function onToggleMemberPermission(memberUserId, module, field, checked) {
@@ -2107,26 +2233,32 @@ export default function App() {
     const key = String(memberUserId || "");
     const payload = Array.isArray(workspacePermDrafts[key]) ? workspacePermDrafts[key] : [];
     setWorkspaceManageMsg("");
-    try {
+    await withPendingAction(`workspacePerms-${memberUserId}`, async () => {
+      try {
       await updateWorkspaceMemberPermissions(Number(memberUserId), { permissions: payload });
       setWorkspaceManageMsg("Permissões salvas.");
+      showGlobalSuccess("Permissões salvas.");
       await reloadWorkspaceMembers();
     } catch (err) {
       setWorkspaceManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onRemoveWorkspaceMember(memberUserId) {
     if (!window.confirm("Remover este membro do workspace atual?")) return;
     setWorkspaceManageMsg("");
-    try {
+    await withPendingAction(`workspaceRemove-${memberUserId}`, async () => {
+      try {
       await deleteWorkspaceMember(Number(memberUserId));
       setWorkspaceManageMsg("Membro removido.");
+      showGlobalSuccess("Membro removido.");
       await reloadWorkspaceMembers();
       await reloadWorkspaces();
     } catch (err) {
       setWorkspaceManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onCreateAdminWorkspace(e) {
@@ -2139,7 +2271,8 @@ export default function App() {
       return;
     }
     setAdminMsg("");
-    try {
+    await withPendingAction("adminCreateWorkspace", async () => {
+      try {
       await createAdminWorkspace({
         workspace_name,
         owner_email,
@@ -2149,25 +2282,30 @@ export default function App() {
       setAdminOwnerEmail("");
       setAdminOwnerDisplayName("");
       setAdminMsg("Workspace criado com sucesso. Se o owner for novo, ele receberá um e-mail para criar a senha.");
+      showGlobalSuccess("Workspace criado.");
       await Promise.all([reloadAdminWorkspaces(), reloadWorkspaces()]);
     } catch (err) {
       setAdminMsg(String(err.message || err));
     }
+    });
   }
 
   async function onToggleAdminWorkspaceStatus(workspaceId, currentStatus) {
     const target = normalizeWorkspaceStatus(currentStatus) === "active" ? "blocked" : "active";
     setAdminStatusUpdatingId(String(workspaceId));
     setAdminMsg("");
-    try {
+    await withPendingAction(`adminStatus-${workspaceId}`, async () => {
+      try {
       await updateAdminWorkspaceStatus(Number(workspaceId), { status: target });
       setAdminMsg(`Workspace ${workspaceId} atualizado para ${target}.`);
+      showGlobalSuccess(`Workspace ${target === "active" ? "ativado" : "bloqueado"}.`);
       await Promise.all([reloadAdminWorkspaces(), reloadWorkspaces()]);
     } catch (err) {
       setAdminMsg(String(err.message || err));
     } finally {
       setAdminStatusUpdatingId("");
     }
+    });
   }
 
   async function onSaveProfile(e) {
@@ -2213,6 +2351,7 @@ export default function App() {
       setProfileNewPassword("");
       setProfileConfirmPassword("");
       setProfileMsg("Perfil atualizado.");
+      showGlobalSuccess("Perfil salvo.");
     } catch (err) {
       setProfileMsg(String(err.message || err));
     } finally {
@@ -2381,7 +2520,7 @@ export default function App() {
     setInvestDivergenceRunning(true);
     setInvestDivergenceMsg("");
     try {
-      const threshold = Number(String(investDivergenceThreshold || "").replace(",", "."));
+      const threshold = parseLocaleNumber(investDivergenceThreshold || "");
       const out = await getInvestRentabilityDivergenceReport(
         {
           only_auto: true,
@@ -2473,7 +2612,7 @@ export default function App() {
     const formEl = e.currentTarget;
     const form = new FormData(e.currentTarget);
     const description = String(form.get("description") || "").trim();
-    const amountAbs = Number(String(form.get("amount") || "0").replace(",", "."));
+    const amountAbs = parseLocaleNumber(form.get("amount") || "0");
     const accountId = txAccountId ? Number(txAccountId) : NaN;
     const categoryIdRaw = String(txCategoryId || "");
     const categoryId = categoryIdRaw ? Number(categoryIdRaw) : null;
@@ -2482,8 +2621,8 @@ export default function App() {
     const futurePaymentMethod = txIsFutureTab ? String(txFuturePaymentMethod || "PIX").trim() : "";
     const notes = String(form.get("notes") || "").trim();
     const dateInput = String(form.get("date") || "");
-    const dueDayInput = Number(String(form.get("due_day") || "0").replace(",", "."));
-    const repeatMonthsInput = Number(String(form.get("repeat_months") || "1").replace(",", "."));
+    const dueDayInput = Number(sanitizeIntegerInputValue(form.get("due_day") || "0", 2));
+    const repeatMonthsInput = Number(sanitizeIntegerInputValue(form.get("repeat_months") || "1", 3));
     const effectiveKind = String(category?.kind || "").trim();
     const sourceAccountId = txSourceAccountId ? Number(txSourceAccountId) : NaN;
     const selectedCardId = txCardId ? Number(txCardId) : NaN;
@@ -2543,7 +2682,8 @@ export default function App() {
       }
     }
 
-    try {
+    await withPendingAction("createTransaction", async () => {
+      try {
       const out = await createTransaction({
         date,
         description,
@@ -2589,6 +2729,7 @@ export default function App() {
         successMsg = "Despesa futura agendada. Ela só impactará o caixa na data informada.";
       }
       setTxMsg(successMsg);
+      showGlobalSuccess(successMsg);
       try {
         await reloadTransactions();
         await reloadCardsData();
@@ -2604,6 +2745,7 @@ export default function App() {
     } catch (err) {
       setTxMsg(`Erro ao salvar lançamento: ${String(err.message || err)}`);
     }
+    });
   }
 
   async function onDeleteTransaction(id, scope = "single") {
@@ -2611,8 +2753,11 @@ export default function App() {
       setTxMsg("Sem permissão para excluir lançamentos.");
       return;
     }
-    try {
+    await withPendingAction(`deleteTransaction-${id}-${scope}`, async () => {
+      try {
       await deleteTransaction(id, { scope });
+      setTxMsg("Lançamento excluído.");
+      showGlobalSuccess("Lançamento excluído.");
       await reloadTransactions();
       if (canViewDashboard) {
         const dash = await getKpis();
@@ -2623,6 +2768,7 @@ export default function App() {
     } catch (err) {
       setTxMsg(String(err.message || err));
     }
+    });
   }
 
   function isCommitmentTx(tx) {
@@ -2645,7 +2791,7 @@ export default function App() {
       id: tx?.id,
       payment_date: String(tx?.date || "").slice(0, 10),
       account_id: accId ? String(accId) : "",
-      amount: Math.abs(Number(tx?.amount_brl || 0)).toFixed(2),
+      amount: formatLocalizedNumber(Math.abs(Number(tx?.amount_brl || 0)), 2),
       notes: String(tx?.notes || ""),
     });
   }
@@ -2677,7 +2823,8 @@ export default function App() {
       "Excluir este compromisso do cartão e os próximos da mesma série?\n\nOK = este e próximos\nCancelar = somente este mês"
     );
     const scope = deleteFuture ? "future" : "single";
-    try {
+    await withPendingAction(`deleteCreditCommitment-${match[1]}-${scope}`, async () => {
+      try {
       await deleteCreditCommitment(Number(match[1]), { scope });
       await reloadTransactions();
       await reloadCardsData();
@@ -2687,9 +2834,11 @@ export default function App() {
         setKpis(dash);
       }
       setTxMsg("Compromisso no cartão excluído.");
+      showGlobalSuccess("Compromisso excluído.");
     } catch (err) {
       setTxMsg(String(err.message || err));
     }
+    });
   }
 
   async function onConfirmPayCommitment() {
@@ -2698,7 +2847,7 @@ export default function App() {
       return;
     }
     if (!commitmentEdit?.id) return;
-    const amountVal = Number(String(commitmentEdit.amount || "").replace(",", "."));
+    const amountVal = parseLocaleNumber(commitmentEdit.amount || "");
     const accountId = Number(commitmentEdit.account_id || 0);
     const paymentDate = String(commitmentEdit.payment_date || "").trim();
     if (!paymentDate) {
@@ -2713,7 +2862,8 @@ export default function App() {
       setTxMsg("Informe um valor válido para pagamento.");
       return;
     }
-    try {
+    await withPendingAction(`payCommitment-${commitmentEdit.id}`, async () => {
+      try {
       await settleCommitmentTransaction(Number(commitmentEdit.id), {
         payment_date: paymentDate,
         account_id: accountId,
@@ -2722,6 +2872,7 @@ export default function App() {
       });
       setCommitmentEdit(null);
       setTxMsg("Compromisso pago e convertido em lançamento real de caixa.");
+      showGlobalSuccess("Compromisso pago.");
       await reloadTransactions();
       await reloadCardsData();
       if (canViewDashboard) {
@@ -2733,6 +2884,7 @@ export default function App() {
     } catch (err) {
       setTxMsg(`Erro ao confirmar pagamento: ${String(err.message || err)}`);
     }
+    });
   }
 
   async function onCreateInvestAsset(e) {
@@ -2765,7 +2917,8 @@ export default function App() {
       setInvestMsg(rentCfg.error || "Configuração de rentabilidade inválida.");
       return;
     }
-    try {
+    await withPendingAction("createInvestAsset", async () => {
+      try {
       await createInvestAsset({
         symbol,
         name,
@@ -2782,10 +2935,12 @@ export default function App() {
       setAssetCreateSpreadRate("");
       setAssetCreateFixedRate("");
       setInvestMsg("Ativo salvo.");
+      showGlobalSuccess("Ativo salvo.");
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onUpdateInvestAsset() {
@@ -2808,7 +2963,8 @@ export default function App() {
       setInvestMsg(rentCfg.error || "Configuração de rentabilidade inválida.");
       return;
     }
-    try {
+    await withPendingAction("updateInvestAsset", async () => {
+      try {
       await updateInvestAsset(Number(assetEditId), {
         symbol: assetEditSymbol.trim().toUpperCase(),
         name: assetEditName.trim(),
@@ -2819,10 +2975,12 @@ export default function App() {
         ...rentCfg.payload,
       });
       setInvestMsg("Ativo atualizado.");
+      showGlobalSuccess("Ativo atualizado.");
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onDeleteInvestAsset(id) {
@@ -2830,13 +2988,16 @@ export default function App() {
       setInvestMsg("Sem permissão para excluir ativos.");
       return;
     }
-    try {
+    await withPendingAction(`deleteInvestAsset-${id}`, async () => {
+      try {
       await deleteInvestAsset(Number(id));
       setInvestMsg("Ativo excluído.");
+      showGlobalSuccess("Ativo excluído.");
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onCreateInvestTrade(e) {
@@ -2851,13 +3012,13 @@ export default function App() {
     const assetId = Number(tradeAssetId || form.get("asset_id"));
     const date = String(form.get("date") || "");
     const side = String(tradeSide || form.get("side") || "BUY").toUpperCase();
-    const quantityRaw = Number(String(form.get("quantity") || "0").replace(",", "."));
-    const priceRaw = Number(String(form.get("price") || "0").replace(",", "."));
-    const appliedValue = Number(String(form.get("applied_value") || "0").replace(",", "."));
-    const irIofPct = Number(String(form.get("ir_iof") || "0").replace(",", "."));
-    const exchangeRate = Number(String(tradeExchangeRate || form.get("exchange_rate") || "0").replace(",", "."));
-    const fees = Number(String(form.get("fees") || "0").replace(",", "."));
-    const taxesRaw = Number(String(form.get("taxes") || "0").replace(",", "."));
+    const quantityRaw = parseLocaleNumber(form.get("quantity") || "0");
+    const priceRaw = parseLocaleNumber(form.get("price") || "0");
+    const appliedValue = parseLocaleNumber(form.get("applied_value") || "0");
+    const irIofPct = parseLocaleNumber(form.get("ir_iof") || "0");
+    const exchangeRate = parseLocaleNumber(tradeExchangeRate || form.get("exchange_rate") || "0");
+    const fees = parseLocaleNumber(form.get("fees") || "0");
+    const taxesRaw = parseLocaleNumber(form.get("taxes") || "0");
     const note = String(form.get("note") || "").trim();
     let quantity = quantityRaw;
     let price = priceRaw;
@@ -2894,7 +3055,8 @@ export default function App() {
       setInvestMsg("Para Stocks US, informe a cotação USD/BRL.");
       return;
     }
-    try {
+    await withPendingAction("createInvestTrade", async () => {
+      try {
       await createInvestTrade({
         asset_id: assetId,
         date,
@@ -2911,6 +3073,7 @@ export default function App() {
       setTradeSide("BUY");
       setTradeExchangeRate("");
       setInvestMsg("Operação salva.");
+      showGlobalSuccess("Operação salva.");
       await reloadInvestData();
       if (canViewDashboard) {
         const dash = await getKpis();
@@ -2921,6 +3084,7 @@ export default function App() {
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onDeleteInvestTrade(id) {
@@ -2928,9 +3092,11 @@ export default function App() {
       setInvestMsg("Sem permissão para excluir operações.");
       return;
     }
-    try {
+    await withPendingAction(`deleteInvestTrade-${id}`, async () => {
+      try {
       await deleteInvestTrade(Number(id));
       setInvestMsg("Operação excluída.");
+      showGlobalSuccess("Operação excluída.");
       await reloadInvestData();
       if (canViewDashboard) {
         const dash = await getKpis();
@@ -2941,6 +3107,7 @@ export default function App() {
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onCreateInvestIncome(e) {
@@ -2955,14 +3122,15 @@ export default function App() {
     const assetId = Number(form.get("asset_id"));
     const date = String(form.get("date") || "");
     const type = String(form.get("type") || "");
-    const amount = Number(String(form.get("amount") || "0").replace(",", "."));
+    const amount = parseLocaleNumber(form.get("amount") || "0");
     const creditAccountIdRaw = String(form.get("credit_account_id") || "").trim();
     const note = String(form.get("note") || "").trim();
     if (!assetId || !date || !type || !Number.isFinite(amount) || amount <= 0) {
       setInvestMsg("Preencha ativo, data, tipo e valor do provento.");
       return;
     }
-    try {
+    await withPendingAction("createInvestIncome", async () => {
+      try {
       await createInvestIncome({
         asset_id: assetId,
         date,
@@ -2975,6 +3143,7 @@ export default function App() {
       setIncomeAssetClassFilter("");
       setIncomeAssetId("");
       setInvestMsg("Provento salvo.");
+      showGlobalSuccess("Provento salvo.");
       await reloadInvestData();
       if (canViewDashboard) {
         const dash = await getKpis();
@@ -2985,6 +3154,7 @@ export default function App() {
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onDeleteInvestIncome(id) {
@@ -2992,13 +3162,16 @@ export default function App() {
       setInvestMsg("Sem permissão para excluir proventos.");
       return;
     }
-    try {
+    await withPendingAction(`deleteInvestIncome-${id}`, async () => {
+      try {
       await deleteInvestIncome(Number(id));
       setInvestMsg("Provento excluído.");
+      showGlobalSuccess("Provento excluído.");
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onUpsertInvestPrice(e) {
@@ -3012,13 +3185,14 @@ export default function App() {
     const form = new FormData(e.currentTarget);
     const assetId = Number(form.get("asset_id"));
     const date = String(form.get("date") || "");
-    const price = Number(String(form.get("price") || "0").replace(",", "."));
+    const price = parseLocaleNumber(form.get("price") || "0");
     const source = String(form.get("source") || "manual").trim();
     if (!assetId || !date || !Number.isFinite(price) || price <= 0) {
       setInvestMsg("Preencha ativo, data e preço válido.");
       return;
     }
-    try {
+    await withPendingAction("upsertInvestPrice", async () => {
+      try {
       await upsertInvestPrice({
         asset_id: assetId,
         date,
@@ -3027,10 +3201,12 @@ export default function App() {
       });
       formEl.reset();
       setInvestMsg("Cotação salva.");
+      showGlobalSuccess("Cotação salva.");
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onUpdateInvestManualQuote(e) {
@@ -3041,7 +3217,7 @@ export default function App() {
       return;
     }
     const assetId = Number(manualQuoteAssetId || 0);
-    const value = Number(String(manualQuoteValue || "").replace(",", "."));
+    const value = parseLocaleNumber(manualQuoteValue || "");
     const refDate = String(manualQuoteDate || "").trim();
     if (!assetId) {
       setInvestMsg("Selecione um ativo para atualização manual.");
@@ -3067,7 +3243,8 @@ export default function App() {
       setInvestMsg("A rentabilidade manual não pode ser menor que -100%.");
       return;
     }
-    try {
+    await withPendingAction("updateInvestManualQuote", async () => {
+      try {
       await updateInvestManualAssetValue(assetId, {
         mode: manualQuoteMode,
         value,
@@ -3076,10 +3253,12 @@ export default function App() {
       setManualQuoteValue("");
       setManualQuoteDate("");
       setInvestMsg("Atualização manual salva.");
+      showGlobalSuccess("Atualização manual salva.");
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
   }
 
   async function onUpdateAllInvestPrices() {
@@ -3090,8 +3269,8 @@ export default function App() {
     setInvestMsg("");
     setInvestPriceUpdateReport([]);
     setInvestPriceUpdateRunning(true);
-    const timeout = Number(String(quoteTimeout || "25").replace(",", "."));
-    const workers = Number(String(quoteWorkers || "4").replace(",", "."));
+    const timeout = Number(sanitizeIntegerInputValue(quoteTimeout || "25", 3));
+    const workers = Number(sanitizeIntegerInputValue(quoteWorkers || "4", 2));
     if (!quoteGroup) {
       setInvestMsg("Selecione uma classe para atualização.");
       setInvestPriceUpdateRunning(false);
@@ -3107,6 +3286,7 @@ export default function App() {
       const failed = report.filter((row) => !row?.ok).length;
       setInvestPriceUpdateReport(report);
       setInvestMsg(`Cotações salvas: ${out.saved}/${out.total}${failed ? ` | Falhas: ${failed}` : ""}`);
+      showGlobalSuccess("Cotações atualizadas.");
       await reloadInvestData();
     } catch (err) {
       setInvestMsg(String(err.message || err));
@@ -3132,15 +3312,18 @@ export default function App() {
       setManageMsg("Preencha nome, tipo e moeda da conta.");
       return;
     }
-    try {
+    await withPendingAction("createAccount", async () => {
+      try {
       await createAccount({ name, type, currency, show_on_dashboard: showOnDashboard });
       formEl.reset();
       setManageMsg("Conta salva.");
+      showGlobalSuccess("Conta salva.");
       await reloadAllData();
       await reloadCardsData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onUpdateAccount() {
@@ -3152,7 +3335,8 @@ export default function App() {
       setManageMsg("Selecione uma conta e informe nome.");
       return;
     }
-    try {
+    await withPendingAction("updateAccount", async () => {
+      try {
       await updateAccount(Number(accEditId), {
         name: accEditName.trim(),
         type: accEditType,
@@ -3160,11 +3344,13 @@ export default function App() {
         show_on_dashboard: Boolean(accEditShowOnDashboard),
       });
       setManageMsg("Conta atualizada.");
+      showGlobalSuccess("Conta atualizada.");
       await reloadAllData();
       await reloadCardsData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onDeleteAccount() {
@@ -3173,14 +3359,17 @@ export default function App() {
       return;
     }
     if (!accEditId) return;
-    try {
+    await withPendingAction("deleteAccount", async () => {
+      try {
       await deleteAccount(Number(accEditId));
       setManageMsg("Conta excluída.");
+      showGlobalSuccess("Conta excluída.");
       await reloadAllData();
       await reloadCardsData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onCreateCategory(e) {
@@ -3198,14 +3387,17 @@ export default function App() {
       setManageMsg("Preencha nome e tipo da categoria.");
       return;
     }
-    try {
+    await withPendingAction("createCategory", async () => {
+      try {
       await createCategory({ name, kind });
       formEl.reset();
       setManageMsg("Categoria salva.");
+      showGlobalSuccess("Categoria salva.");
       await reloadAllData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onUpdateCategory() {
@@ -3217,13 +3409,16 @@ export default function App() {
       setManageMsg("Selecione uma categoria e informe nome.");
       return;
     }
-    try {
+    await withPendingAction("updateCategory", async () => {
+      try {
       await updateCategory(Number(catEditId), { name: catEditName.trim(), kind: catEditKind });
       setManageMsg("Categoria atualizada.");
+      showGlobalSuccess("Categoria atualizada.");
       await reloadAllData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onDeleteCategory() {
@@ -3232,13 +3427,16 @@ export default function App() {
       return;
     }
     if (!catEditId) return;
-    try {
+    await withPendingAction("deleteCategory", async () => {
+      try {
       await deleteCategory(Number(catEditId));
       setManageMsg("Categoria excluída.");
+      showGlobalSuccess("Categoria excluída.");
       await reloadAllData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
+    });
   }
 
   async function onCreateCard(e) {
@@ -3270,7 +3468,8 @@ export default function App() {
       setCardMsg("Preencha nome, conta banco vinculada, fechamento e vencimento.");
       return;
     }
-    try {
+    await withPendingAction("createCard", async () => {
+      try {
       await createCard({
         name,
         brand,
@@ -3289,12 +3488,14 @@ export default function App() {
       setCardCreateAccountId("");
       setCardCreateDueDay("");
       setCardCreateCloseDay("");
+      showGlobalSuccess("Cartão salvo.");
       await reloadCardsData();
       await reloadAllData();
       await reloadDashboard();
     } catch (err) {
       setCardMsg(String(err.message || err));
     }
+    });
   }
 
   async function onUpdateCard() {
@@ -3328,7 +3529,8 @@ export default function App() {
       setCardMsg("Selecione e preencha os dados do cartão.");
       return;
     }
-    try {
+    await withPendingAction("updateCard", async () => {
+      try {
       await updateCard(id, {
         name,
         brand,
@@ -3340,12 +3542,14 @@ export default function App() {
         close_day: close,
       });
       setCardMsg("Cartão atualizado.");
+      showGlobalSuccess("Cartão atualizado.");
       await reloadCardsData();
       await reloadAllData();
       await reloadDashboard();
     } catch (err) {
       setCardMsg(String(err.message || err));
     }
+    });
   }
 
   async function onDeleteCard() {
@@ -3356,15 +3560,18 @@ export default function App() {
     }
     const id = Number(cardEditId);
     if (!Number.isFinite(id)) return;
-    try {
+    await withPendingAction("deleteCard", async () => {
+      try {
       await deleteCard(id);
       setCardMsg("Cartão excluído.");
+      showGlobalSuccess("Cartão excluído.");
       await reloadCardsData();
       await reloadAllData();
       await reloadDashboard();
     } catch (err) {
       setCardMsg(String(err.message || err));
     }
+    });
   }
 
   function onSelectCardEdit(id) {
@@ -3399,12 +3606,14 @@ export default function App() {
     }
     const invoiceId = Number(invoice?.id);
     const paymentDate = String(paymentDateValue || "").trim() || new Date().toISOString().slice(0, 10);
-    try {
+    await withPendingAction(`payInvoice-${invoiceId}`, async () => {
+      try {
       await payCardInvoice(invoiceId, {
         payment_date: paymentDate,
         source_account_id: sourceAccountId ? Number(sourceAccountId) : null,
       });
       setCardMsg("Fatura paga.");
+      showGlobalSuccess("Fatura paga.");
       await reloadCardsData();
       await reloadAllData();
       await reloadDashboard();
@@ -3413,6 +3622,7 @@ export default function App() {
     } catch (err) {
       setCardMsg(String(err.message || err));
     }
+    });
   }
 
   function openPayInvoiceModal(invoice) {
@@ -3534,13 +3744,16 @@ export default function App() {
       return;
     }
     setImportMsg("");
-    try {
+    await withPendingAction("previewTransactionsCsv", async () => {
+      try {
       const out = await importTransactionsCsv(txCsvFile, true);
       setImportPreview(out.preview || []);
       setImportMsg(`Prévia pronta: ${out.rows} linha(s) lidas.`);
+      showGlobalSuccess("Prévia de lançamentos pronta.");
     } catch (err) {
       setImportMsg(String(err.message || err));
     }
+    });
   }
 
   async function onImportTransactionsCsv() {
@@ -3553,16 +3766,19 @@ export default function App() {
       return;
     }
     setImportMsg("");
-    try {
+    await withPendingAction("importTransactionsCsv", async () => {
+      try {
       const out = await importTransactionsCsv(txCsvFile, false);
       setImportPreview([]);
       setImportMsg(`Importação concluída: ${out.inserted}/${out.rows} lançamentos.`);
+      showGlobalSuccess("Lançamentos importados.");
       await reloadAllData();
       await reloadDashboard();
       await reloadInvestData();
     } catch (err) {
       setImportMsg(String(err.message || err));
     }
+    });
   }
 
   async function onPreviewAssetsCsv() {
@@ -3575,13 +3791,16 @@ export default function App() {
       return;
     }
     setImportMsg("");
-    try {
+    await withPendingAction("previewAssetsCsv", async () => {
+      try {
       const out = await importAssetsCsv(assetCsvFile, true);
       setImportPreview(out.preview || []);
       setImportMsg(`Prévia pronta: ${out.rows} linha(s) lidas.`);
+      showGlobalSuccess("Prévia de ativos pronta.");
     } catch (err) {
       setImportMsg(String(err.message || err));
     }
+    });
   }
 
   async function onImportAssetsCsv() {
@@ -3594,15 +3813,18 @@ export default function App() {
       return;
     }
     setImportMsg("");
-    try {
+    await withPendingAction("importAssetsCsv", async () => {
+      try {
       const out = await importAssetsCsv(assetCsvFile, false);
       setImportPreview([]);
       const errInfo = out.errors && out.errors.length ? ` Erros: ${out.errors.length}.` : "";
       setImportMsg(`Importação de ativos: inseridos ${out.inserted}, ignorados ${out.skipped}.${errInfo}`);
+      showGlobalSuccess("Ativos importados.");
       await reloadInvestData();
     } catch (err) {
       setImportMsg(String(err.message || err));
     }
+    });
   }
 
   async function onPreviewTradesCsv() {
@@ -3615,13 +3837,16 @@ export default function App() {
       return;
     }
     setImportMsg("");
-    try {
+    await withPendingAction("previewTradesCsv", async () => {
+      try {
       const out = await importTradesCsv(tradeCsvFile, true);
       setImportPreview(out.preview || []);
       setImportMsg(`Prévia pronta: ${out.rows} linha(s) lidas.`);
+      showGlobalSuccess("Prévia de operações pronta.");
     } catch (err) {
       setImportMsg(String(err.message || err));
     }
+    });
   }
 
   async function onImportTradesCsv() {
@@ -3634,17 +3859,20 @@ export default function App() {
       return;
     }
     setImportMsg("");
-    try {
+    await withPendingAction("importTradesCsv", async () => {
+      try {
       const out = await importTradesCsv(tradeCsvFile, false);
       setImportPreview([]);
       const errInfo = out.errors && out.errors.length ? ` Erros: ${out.errors.length}.` : "";
       setImportMsg(`Importação de operações: inseridas ${out.inserted}, ignoradas ${out.skipped}.${errInfo}`);
+      showGlobalSuccess("Operações importadas.");
       await reloadInvestData();
       await reloadTransactions();
       await reloadDashboard();
     } catch (err) {
       setImportMsg(String(err.message || err));
     }
+    });
   }
 
   if (loading) return <div className="center">Carregando...</div>;
@@ -3867,6 +4095,12 @@ export default function App() {
         {loginSyncNotice?.message ? (
           <section className={`status-banner ${loginSyncNotice.level === "warning" ? "warning" : "success"}`}>
             <p className="status-msg">{loginSyncNotice.message}</p>
+          </section>
+        ) : null}
+
+        {globalActionNotice?.message ? (
+          <section className={`status-banner status-banner-floating ${globalActionNotice.level === "warning" ? "warning" : "success"}`}>
+            <p className="status-msg">{globalActionNotice.message}</p>
           </section>
         ) : null}
 
@@ -4290,7 +4524,9 @@ export default function App() {
                         <input type="checkbox" name="show_on_dashboard" />
                         Fixar no Dashboard (saldo 0)
                       </label>
-                      <button type="submit">Salvar conta</button>
+                      <button type="submit" disabled={isPendingAction("createAccount")}>
+                        {isPendingAction("createAccount") ? "Salvando..." : "Salvar conta"}
+                      </button>
                     </form>
                   ) : (
                     <p>Sem permissão para cadastrar contas.</p>
@@ -4338,8 +4574,12 @@ export default function App() {
                       />
                       Fixar no Dashboard (saldo 0)
                     </label>
-                    <button onClick={onUpdateAccount} disabled={!canEditContas}>Atualizar conta</button>
-                    <button className="danger" onClick={onDeleteAccount} disabled={!canDeleteContas}>Excluir conta</button>
+                    <button onClick={onUpdateAccount} disabled={!canEditContas || isPendingAction("updateAccount")}>
+                      {isPendingAction("updateAccount") ? "Atualizando..." : "Atualizar conta"}
+                    </button>
+                    <button className="danger" onClick={onDeleteAccount} disabled={!canDeleteContas || isPendingAction("deleteAccount")}>
+                      {isPendingAction("deleteAccount") ? "Excluindo..." : "Excluir conta"}
+                    </button>
                   </div>
                 </section>
               </>
@@ -4358,7 +4598,9 @@ export default function App() {
                         <option value="Receita">Receita</option>
                         <option value="Transferencia">Transferência</option>
                       </select>
-                      <button type="submit">Salvar categoria</button>
+                      <button type="submit" disabled={isPendingAction("createCategory")}>
+                        {isPendingAction("createCategory") ? "Salvando..." : "Salvar categoria"}
+                      </button>
                     </form>
                   ) : (
                     <p>Sem permissão para cadastrar categorias.</p>
@@ -4391,8 +4633,12 @@ export default function App() {
                       <option value="Receita">Receita</option>
                       <option value="Transferencia">Transferência</option>
                     </select>
-                    <button onClick={onUpdateCategory} disabled={!canEditContas}>Atualizar categoria</button>
-                    <button className="danger" onClick={onDeleteCategory} disabled={!canDeleteContas}>Excluir categoria</button>
+                    <button onClick={onUpdateCategory} disabled={!canEditContas || isPendingAction("updateCategory")}>
+                      {isPendingAction("updateCategory") ? "Atualizando..." : "Atualizar categoria"}
+                    </button>
+                    <button className="danger" onClick={onDeleteCategory} disabled={!canDeleteContas || isPendingAction("deleteCategory")}>
+                      {isPendingAction("deleteCategory") ? "Excluindo..." : "Excluir categoria"}
+                    </button>
                   </div>
                 </section>
               </>
@@ -4431,25 +4677,25 @@ export default function App() {
                         <input type="text" value="Sem conta Banco cadastrada." disabled />
                       ) : null}
                       <input
-                        type="number"
-                        min="1"
-                        max="31"
+                        type="text"
+                        inputMode="numeric"
                         placeholder="Dia de fechamento (1-31)"
                         value={cardCreateCloseDay}
-                        onChange={(e) => setCardCreateCloseDay(e.target.value)}
+                        onChange={(e) => setCardCreateCloseDay(sanitizeIntegerInputValue(e.target.value, 2))}
                       />
                       <input
-                        type="number"
-                        min="1"
-                        max="31"
+                        type="text"
+                        inputMode="numeric"
                         placeholder="Dia do vencimento (1-31)"
                         value={cardCreateDueDay}
-                        onChange={(e) => setCardCreateDueDay(e.target.value)}
+                        onChange={(e) => setCardCreateDueDay(sanitizeIntegerInputValue(e.target.value, 2))}
                       />
                       <small className="mgr-hint">
                         Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
                       </small>
-                      <button type="button" onClick={onCreateCard}>Cadastrar cartão</button>
+                      <button type="button" onClick={onCreateCard} disabled={isPendingAction("createCard")}>
+                        {isPendingAction("createCard") ? "Salvando..." : "Cadastrar cartão"}
+                      </button>
                     </div>
                   ) : (
                     <p>Sem permissão para cadastrar cartões.</p>
@@ -4486,28 +4732,30 @@ export default function App() {
                       ))}
                     </select>
                     <input
-                      type="number"
-                      min="1"
-                      max="31"
+                      type="text"
+                      inputMode="numeric"
                       placeholder="Dia de fechamento (1-31)"
                       value={cardCloseDay}
                       disabled={!canEditContas}
-                      onChange={(e) => setCardCloseDay(e.target.value)}
+                      onChange={(e) => setCardCloseDay(sanitizeIntegerInputValue(e.target.value, 2))}
                     />
                     <input
-                      type="number"
-                      min="1"
-                      max="31"
+                      type="text"
+                      inputMode="numeric"
                       placeholder="Dia do vencimento (1-31)"
                       value={cardDueDay}
                       disabled={!canEditContas}
-                      onChange={(e) => setCardDueDay(e.target.value)}
+                      onChange={(e) => setCardDueDay(sanitizeIntegerInputValue(e.target.value, 2))}
                     />
                     <small className="mgr-hint">
                       Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
                     </small>
-                    <button type="button" onClick={onUpdateCard} disabled={!canEditContas}>Atualizar cartão</button>
-                    <button type="button" className="danger" onClick={onDeleteCard} disabled={!canDeleteContas}>Excluir cartão</button>
+                    <button type="button" onClick={onUpdateCard} disabled={!canEditContas || isPendingAction("updateCard")}>
+                      {isPendingAction("updateCard") ? "Atualizando..." : "Atualizar cartão"}
+                    </button>
+                    <button type="button" className="danger" onClick={onDeleteCard} disabled={!canDeleteContas || isPendingAction("deleteCard")}>
+                      {isPendingAction("deleteCard") ? "Excluindo..." : "Excluir cartão"}
+                    </button>
                   </div>
                   {cardMsg ? <p>{cardMsg}</p> : null}
                 </section>
@@ -4530,8 +4778,8 @@ export default function App() {
                       onChange={(e) => setWorkspaceNameDraft(e.target.value)}
                       disabled={!isSuperAdmin && !isWorkspaceOwner}
                     />
-                    <button type="submit" disabled={!isSuperAdmin && !isWorkspaceOwner}>
-                      Atualizar nome
+                    <button type="submit" disabled={(!isSuperAdmin && !isWorkspaceOwner) || isPendingAction("workspaceRename")}>
+                      {isPendingAction("workspaceRename") ? "Salvando..." : "Atualizar nome"}
                     </button>
                   </form>
                   <form className="workspace-invite-form" onSubmit={onAddWorkspaceGuest}>
@@ -4549,8 +4797,8 @@ export default function App() {
                       onChange={(e) => setWorkspaceInviteName(e.target.value)}
                       disabled={!canManageWorkspaceUsers}
                     />
-                    <button type="submit" disabled={!canManageWorkspaceUsers}>
-                      Adicionar convidado
+                    <button type="submit" disabled={!canManageWorkspaceUsers || isPendingAction("workspaceInvite")}>
+                      {isPendingAction("workspaceInvite") ? "Salvando..." : "Adicionar convidado"}
                     </button>
                   </form>
                   <p className="workspace-helper-text">
@@ -4591,8 +4839,9 @@ export default function App() {
                                       type="button"
                                       className="tx-action-neutral"
                                       onClick={() => onRemoveWorkspaceMember(m.user_id)}
+                                      disabled={isPendingAction(`workspaceRemove-${m.user_id}`)}
                                     >
-                                      Remover
+                                      {isPendingAction(`workspaceRemove-${m.user_id}`) ? "Removendo..." : "Remover"}
                                     </button>
                                   ) : (
                                     "-"
@@ -4653,8 +4902,9 @@ export default function App() {
                                           type="button"
                                           className="tx-action-primary"
                                           onClick={() => onSaveMemberPermissions(m.user_id)}
+                                          disabled={isPendingAction(`workspacePerms-${m.user_id}`)}
                                         >
-                                          Salvar permissões
+                                          {isPendingAction(`workspacePerms-${m.user_id}`) ? "Salvando..." : "Salvar permissões"}
                                         </button>
                                       </div>
                                     </div>
@@ -4697,7 +4947,9 @@ export default function App() {
                           value={adminOwnerDisplayName}
                           onChange={(e) => setAdminOwnerDisplayName(e.target.value)}
                         />
-                        <button type="submit">Criar workspace</button>
+                        <button type="submit" disabled={isPendingAction("adminCreateWorkspace")}>
+                          {isPendingAction("adminCreateWorkspace") ? "Criando..." : "Criar workspace"}
+                        </button>
                       </form>
                       <p className="workspace-helper-text">
                         Se o e-mail do owner já existir, ele assume o novo workspace como OWNER. Se não existir, o Domus cria o usuário e envia um e-mail para definição da senha de primeiro acesso.
@@ -4870,21 +5122,19 @@ export default function App() {
                     {txFuturePaymentMethod !== "Credito" ? (
                       <input
                         name="due_day"
-                        type="number"
-                        min="1"
-                        max="31"
-                        step="1"
+                        type="text"
+                        inputMode="numeric"
                         placeholder="Dia de vencimento (1-31)"
+                        onInput={(e) => applyIntegerMaskInput(e, 2)}
                         required
                       />
                     ) : null}
                     <input
                       name="repeat_months"
-                      type="number"
-                      min="1"
-                      max="120"
-                      step="1"
+                      type="text"
+                      inputMode="numeric"
                       placeholder={txFuturePaymentMethod === "Credito" ? "Parcelamento (qtd. de parcelas)" : "Meses para replicar"}
+                      onInput={(e) => applyIntegerMaskInput(e, 3)}
                       required
                     />
                   </>
@@ -4974,7 +5224,14 @@ export default function App() {
                   </>
                 ) : null}
                 <input name="description" type="text" placeholder="Descrição (opcional)" />
-                <input name="amount" type="number" step="0.01" min="0.01" placeholder="Valor" required />
+                <input
+                  name="amount"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="Valor"
+                  onInput={applyCurrencyMaskInput}
+                  required
+                />
                 {!txIsCashTab ? (
                   <>
                     <select
@@ -5061,7 +5318,9 @@ export default function App() {
                     <input name="notes" type="text" placeholder="Obs (opcional)" />
                   </>
                 ) : null}
-                <button type="submit">Salvar lançamento</button>
+                <button type="submit" disabled={isPendingAction("createTransaction")}>
+                  {isPendingAction("createTransaction") ? "Salvando..." : "Salvar lançamento"}
+                </button>
               </form>
                 ) : (
                   <p>Sem permissão para incluir lançamentos.</p>
@@ -5171,12 +5430,13 @@ export default function App() {
                         <td>
                           {commitmentEdit?.id === t.id ? (
                             <input
-                              type="number"
-                              step="0.01"
-                              min="0.01"
+                              type="text"
+                              inputMode="numeric"
                               value={String(commitmentEdit.amount || "")}
                               onChange={(e) =>
-                                setCommitmentEdit((prev) => (prev ? { ...prev, amount: e.target.value } : prev))
+                                setCommitmentEdit((prev) =>
+                                  prev ? { ...prev, amount: formatCurrencyInputValue(e.target.value) } : prev
+                                )
                               }
                             />
                           ) : (
@@ -5188,14 +5448,18 @@ export default function App() {
                             "-"
                           ) : String(t.source_type || "") === "credit_commitment" ? (
                             canDeleteLancamentos ? (
-                              <button type="button" className="danger" onClick={() => onDeleteCreditCommitment(t)}>Excluir</button>
+                                <button type="button" className="danger" onClick={() => onDeleteCreditCommitment(t)} disabled={isPendingAction(`deleteCreditCommitment-${String(t.id || "").replace(/^ccf-/, "")}-single`) || isPendingAction(`deleteCreditCommitment-${String(t.id || "").replace(/^ccf-/, "")}-future`)}>
+                                  Excluir
+                                </button>
                             ) : (
                               "-"
                             )
                           ) : commitmentEdit?.id === t.id ? (
                             <>
                               {canAddLancamentos ? (
-                                <button type="button" className="tx-action-primary" onClick={onConfirmPayCommitment}>Confirmar</button>
+                                <button type="button" className="tx-action-primary" onClick={onConfirmPayCommitment} disabled={isPendingAction(`payCommitment-${commitmentEdit?.id}`)}>
+                                  {isPendingAction(`payCommitment-${commitmentEdit?.id}`) ? "Confirmando..." : "Confirmar"}
+                                </button>
                               ) : null}
                               <button
                                 type="button"
@@ -5218,14 +5482,16 @@ export default function App() {
                                   onClick={() => onDeleteCommitment(t)}
                                   style={{ marginLeft: canAddLancamentos ? 8 : 0 }}
                                 >
-                                  Excluir
+                                  {isPendingAction(`deleteTransaction-${t.id}-single`) || isPendingAction(`deleteTransaction-${t.id}-future`) ? "Excluindo..." : "Excluir"}
                                 </button>
                               ) : null}
                               {!canAddLancamentos && !canDeleteLancamentos ? "-" : null}
                             </>
                           ) : (
                             canDeleteLancamentos ? (
-                              <button type="button" onClick={() => onDeleteTransaction(t.id)}>Excluir</button>
+                              <button type="button" onClick={() => onDeleteTransaction(t.id)} disabled={isPendingAction(`deleteTransaction-${t.id}-single`)}>
+                                {isPendingAction(`deleteTransaction-${t.id}-single`) ? "Excluindo..." : "Excluir"}
+                              </button>
                             ) : (
                               "-"
                             )
@@ -5257,8 +5523,12 @@ export default function App() {
                   disabled={!canAddRelatorios}
                   onChange={(e) => setTxCsvFile(e.target.files?.[0] || null)}
                 />
-                <button onClick={onPreviewTransactionsCsv} disabled={!canAddRelatorios}>Prévia lançamentos</button>
-                <button onClick={onImportTransactionsCsv} disabled={!canAddRelatorios}>Importar lançamentos</button>
+                <button onClick={onPreviewTransactionsCsv} disabled={!canAddRelatorios || isPendingAction("previewTransactionsCsv")}>
+                  {isPendingAction("previewTransactionsCsv") ? "Gerando prévia..." : "Prévia lançamentos"}
+                </button>
+                <button onClick={onImportTransactionsCsv} disabled={!canAddRelatorios || isPendingAction("importTransactionsCsv")}>
+                  {isPendingAction("importTransactionsCsv") ? "Importando..." : "Importar lançamentos"}
+                </button>
               </div>
             </section>
 
@@ -5272,8 +5542,12 @@ export default function App() {
                   disabled={!canAddRelatorios}
                   onChange={(e) => setAssetCsvFile(e.target.files?.[0] || null)}
                 />
-                <button onClick={onPreviewAssetsCsv} disabled={!canAddRelatorios}>Prévia ativos</button>
-                <button onClick={onImportAssetsCsv} disabled={!canAddRelatorios}>Importar ativos</button>
+                <button onClick={onPreviewAssetsCsv} disabled={!canAddRelatorios || isPendingAction("previewAssetsCsv")}>
+                  {isPendingAction("previewAssetsCsv") ? "Gerando prévia..." : "Prévia ativos"}
+                </button>
+                <button onClick={onImportAssetsCsv} disabled={!canAddRelatorios || isPendingAction("importAssetsCsv")}>
+                  {isPendingAction("importAssetsCsv") ? "Importando..." : "Importar ativos"}
+                </button>
               </div>
             </section>
 
@@ -5287,8 +5561,12 @@ export default function App() {
                   disabled={!canAddRelatorios}
                   onChange={(e) => setTradeCsvFile(e.target.files?.[0] || null)}
                 />
-                <button onClick={onPreviewTradesCsv} disabled={!canAddRelatorios}>Prévia operações</button>
-                <button onClick={onImportTradesCsv} disabled={!canAddRelatorios}>Importar operações</button>
+                <button onClick={onPreviewTradesCsv} disabled={!canAddRelatorios || isPendingAction("previewTradesCsv")}>
+                  {isPendingAction("previewTradesCsv") ? "Gerando prévia..." : "Prévia operações"}
+                </button>
+                <button onClick={onImportTradesCsv} disabled={!canAddRelatorios || isPendingAction("importTradesCsv")}>
+                  {isPendingAction("importTradesCsv") ? "Importando..." : "Importar operações"}
+                </button>
               </div>
             </section>
 
@@ -5397,11 +5675,10 @@ export default function App() {
                     <h3>Divergência de rentabilidade</h3>
                     <div className="tx-form invest-divergence-form">
                       <input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
+                        inputMode="decimal"
                         value={investDivergenceThreshold}
-                        onChange={(e) => setInvestDivergenceThreshold(e.target.value)}
+                        onChange={(e) => setInvestDivergenceThreshold(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 2, maxIntegerDigits: 3 }))}
                         placeholder="Limiar de divergência (%)"
                       />
                       <button type="button" onClick={onLoadInvestDivergenceReport} disabled={investDivergenceRunning}>
@@ -5477,30 +5754,30 @@ export default function App() {
                     ) : null}
                     {assetCreateIsFixedIncome && assetCreateRentabilityType === "PREFIXADO" ? (
                       <input
-                        type="number"
-                        step="0.00000001"
+                        type="text"
+                        inputMode="decimal"
                         value={assetCreateFixedRate}
-                        onChange={(e) => setAssetCreateFixedRate(e.target.value)}
+                        onChange={(e) => setAssetCreateFixedRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Taxa anual (%)"
                       />
                     ) : null}
                     {assetCreateIsFixedIncome &&
                     (assetCreateRentabilityType === "PCT_CDI" || assetCreateRentabilityType === "PCT_SELIC") ? (
                       <input
-                        type="number"
-                        step="0.00000001"
+                        type="text"
+                        inputMode="decimal"
                         value={assetCreateIndexPct}
-                        onChange={(e) => setAssetCreateIndexPct(e.target.value)}
+                        onChange={(e) => setAssetCreateIndexPct(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Percentual do índice (%)"
                       />
                     ) : null}
                     {assetCreateIsFixedIncome &&
                     ["CDI_SPREAD", "SELIC_SPREAD", "IPCA_SPREAD"].includes(assetCreateRentabilityType) ? (
                       <input
-                        type="number"
-                        step="0.00000001"
+                        type="text"
+                        inputMode="decimal"
                         value={assetCreateSpreadRate}
-                        onChange={(e) => setAssetCreateSpreadRate(e.target.value)}
+                        onChange={(e) => setAssetCreateSpreadRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Spread anual (%)"
                       />
                     ) : null}
@@ -5521,7 +5798,9 @@ export default function App() {
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
                     </select>
-                    <button type="submit">Salvar ativo</button>
+                    <button type="submit" disabled={isPendingAction("createInvestAsset")}>
+                      {isPendingAction("createInvestAsset") ? "Salvando..." : "Salvar ativo"}
+                    </button>
                   </form>
                 </section>
 
@@ -5575,30 +5854,30 @@ export default function App() {
                     ) : null}
                     {assetEditIsFixedIncome && assetEditRentabilityType === "PREFIXADO" ? (
                       <input
-                        type="number"
-                        step="0.00000001"
+                        type="text"
+                        inputMode="decimal"
                         value={assetEditFixedRate}
-                        onChange={(e) => setAssetEditFixedRate(e.target.value)}
+                        onChange={(e) => setAssetEditFixedRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Taxa anual (%)"
                       />
                     ) : null}
                     {assetEditIsFixedIncome &&
                     (assetEditRentabilityType === "PCT_CDI" || assetEditRentabilityType === "PCT_SELIC") ? (
                       <input
-                        type="number"
-                        step="0.00000001"
+                        type="text"
+                        inputMode="decimal"
                         value={assetEditIndexPct}
-                        onChange={(e) => setAssetEditIndexPct(e.target.value)}
+                        onChange={(e) => setAssetEditIndexPct(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Percentual do índice (%)"
                       />
                     ) : null}
                     {assetEditIsFixedIncome &&
                     ["CDI_SPREAD", "SELIC_SPREAD", "IPCA_SPREAD"].includes(assetEditRentabilityType) ? (
                       <input
-                        type="number"
-                        step="0.00000001"
+                        type="text"
+                        inputMode="decimal"
                         value={assetEditSpreadRate}
-                        onChange={(e) => setAssetEditSpreadRate(e.target.value)}
+                        onChange={(e) => setAssetEditSpreadRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Spread anual (%)"
                       />
                     ) : null}
@@ -5621,7 +5900,9 @@ export default function App() {
                     </select>
                     <input value={`Valor atual: ${assetEditCurrentValueLabel}`} readOnly />
                     <input value={`Última atualização: ${assetEditLastUpdateLabel}`} readOnly />
-                    <button onClick={onUpdateInvestAsset}>Atualizar ativo</button>
+                    <button onClick={onUpdateInvestAsset} disabled={isPendingAction("updateInvestAsset")}>
+                      {isPendingAction("updateInvestAsset") ? "Atualizando..." : "Atualizar ativo"}
+                    </button>
                   </div>
                 </section>
 
@@ -5667,7 +5948,9 @@ export default function App() {
                             <td>{a.current_value == null ? "-" : brl.format(Number(a.current_value || 0))}</td>
                             <td>{formatIsoDatePtBr(a.last_update)}</td>
                             <td>
-                              <button onClick={() => onDeleteInvestAsset(a.id)}>Excluir</button>
+                              <button onClick={() => onDeleteInvestAsset(a.id)} disabled={isPendingAction(`deleteInvestAsset-${a.id}`)}>
+                                {isPendingAction(`deleteInvestAsset-${a.id}`) ? "Excluindo..." : "Excluir"}
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -5716,18 +5999,18 @@ export default function App() {
                       <>
                         <input
                           name="quantity"
-                          type="number"
-                          step={tradeQuantityStep}
-                          min={tradeQuantityMin}
+                          type="text"
+                          inputMode="decimal"
                           placeholder={tradeQuantityPlaceholder}
+                          onInput={(e) => applyDecimalMaskInput(e, { maxDecimals: 8, maxIntegerDigits: 12 })}
                           required
                         />
                         <input
                           name="price"
-                          type="number"
-                          step="0.0001"
-                          min="0.0001"
+                          type="text"
+                          inputMode="numeric"
                           placeholder={tradeAssetIsUsStock ? "Preço (USD)" : "Preço"}
+                          onInput={applyCurrencyMaskInput}
                           required
                         />
                       </>
@@ -5736,10 +6019,10 @@ export default function App() {
                       <>
                         <input
                           name="applied_value"
-                          type="number"
-                          step="0.01"
-                          min="0.01"
+                          type="text"
+                          inputMode="numeric"
                           placeholder={tradeFixedIncomeIsSell ? "Valor bruto do resgate" : "Valor da aplicação"}
+                          onInput={applyCurrencyMaskInput}
                           required
                         />
                       </>
@@ -5747,30 +6030,27 @@ export default function App() {
                     {tradeShowIrIof ? (
                       <input
                         name="ir_iof"
-                        type="number"
-                        step="0.0001"
-                        min="0"
-                        max="100"
+                        type="text"
+                        inputMode="decimal"
                         placeholder="IR/IOF do resgate (%)"
+                        onInput={(e) => applyDecimalMaskInput(e, { maxDecimals: 4, maxIntegerDigits: 3 })}
                       />
                     ) : null}
                     {tradeAssetIsUsStock ? (
                       <input
                         name="exchange_rate"
-                        type="number"
-                        step="0.0001"
-                        min="0.0001"
+                        type="text"
+                        inputMode="decimal"
                         placeholder="Cotação USD/BRL"
                         value={tradeExchangeRate}
-                        onChange={(e) => setTradeExchangeRate(e.target.value)}
+                        onChange={(e) => setTradeExchangeRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 4, maxIntegerDigits: 6 }))}
                         required
                       />
                     ) : null}
                     <input
                       name="fees"
-                      type="number"
-                      step="0.01"
-                      min="0"
+                      type="text"
+                      inputMode="numeric"
                       placeholder={
                         tradeAssetIsFixedIncome
                           ? tradeFixedIncomeIsSell
@@ -5779,23 +6059,26 @@ export default function App() {
                           : "Taxas (opcional, padrão 0)"
                       }
                       aria-label="Taxas"
+                      onInput={applyCurrencyMaskInput}
                     />
                     {tradeShowGenericTaxes ? (
                       <input
                         name="taxes"
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
+                        inputMode="numeric"
                         placeholder={
                           tradeAssetIsFixedIncome
                             ? "Impostos do resgate (opcional)"
                             : "Impostos (opcional, padrão 0)"
                         }
                         aria-label="Impostos"
+                        onInput={applyCurrencyMaskInput}
                       />
                     ) : null}
                     <input name="note" type="text" placeholder="Obs (opcional)" />
-                    <button type="submit">Salvar operação</button>
+                    <button type="submit" disabled={isPendingAction("createInvestTrade")}>
+                      {isPendingAction("createInvestTrade") ? "Salvando..." : "Salvar operação"}
+                    </button>
                   </form>
                   {tradeAssetIsFixedIncome ? (
                     <p className="tx-helper">
@@ -5851,7 +6134,9 @@ export default function App() {
                             </td>
                             <td>{Number(t.fees || 0).toFixed(2)}</td>
                             <td>
-                              <button type="button" onClick={() => onDeleteInvestTrade(t.id)}>Excluir</button>
+                              <button type="button" onClick={() => onDeleteInvestTrade(t.id)} disabled={isPendingAction(`deleteInvestTrade-${t.id}`)}>
+                                {isPendingAction(`deleteInvestTrade-${t.id}`) ? "Excluindo..." : "Excluir"}
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -5897,7 +6182,14 @@ export default function App() {
                         <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
-                    <input name="amount" type="number" step="0.01" min="0.01" placeholder="Valor" required />
+                    <input
+                      name="amount"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="Valor"
+                      onInput={applyCurrencyMaskInput}
+                      required
+                    />
                     <select name="credit_account_id" defaultValue="">
                       <option value="">Conta de crédito (padrão: corretora do ativo)</option>
                       {accounts.map((a) => (
@@ -5907,7 +6199,9 @@ export default function App() {
                       ))}
                     </select>
                     <input name="note" type="text" placeholder="Obs (opcional)" />
-                    <button type="submit">Salvar provento</button>
+                    <button type="submit" disabled={isPendingAction("createInvestIncome")}>
+                      {isPendingAction("createInvestIncome") ? "Salvando..." : "Salvar provento"}
+                    </button>
                   </form>
                   <p className="tx-helper">
                     Se não informar a conta de crédito, o provento será lançado na corretora vinculada ao ativo.
@@ -5951,7 +6245,9 @@ export default function App() {
                             <td>{i.credit_account_name || "-"}</td>
                             <td>{Number(i.amount || 0).toFixed(2)}</td>
                             <td>
-                              <button onClick={() => onDeleteInvestIncome(i.id)}>Excluir</button>
+                              <button onClick={() => onDeleteInvestIncome(i.id)} disabled={isPendingAction(`deleteInvestIncome-${i.id}`)}>
+                                {isPendingAction(`deleteInvestIncome-${i.id}`) ? "Excluindo..." : "Excluir"}
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -5980,19 +6276,17 @@ export default function App() {
                       ))}
                     </select>
                     <input
-                      type="number"
-                      step="1"
-                      min="3"
+                      type="text"
+                      inputMode="numeric"
                       value={quoteTimeout}
-                      onChange={(e) => setQuoteTimeout(e.target.value)}
+                      onChange={(e) => setQuoteTimeout(sanitizeIntegerInputValue(e.target.value, 3))}
                       placeholder="Timeout (s)"
                     />
                     <input
-                      type="number"
-                      step="1"
-                      min="1"
+                      type="text"
+                      inputMode="numeric"
                       value={quoteWorkers}
-                      onChange={(e) => setQuoteWorkers(e.target.value)}
+                      onChange={(e) => setQuoteWorkers(sanitizeIntegerInputValue(e.target.value, 2))}
                       placeholder="Paralelismo"
                     />
                     <button onClick={onUpdateAllInvestPrices} disabled={investPriceUpdateRunning}>
@@ -6051,15 +6345,17 @@ export default function App() {
                     <input name="date" type="date" required />
                     <input
                       name="price"
-                      type="number"
-                      step="0.0001"
-                      min="0.0001"
+                      type="text"
+                      inputMode="numeric"
                       placeholder="Preço unitário"
                       title="Informe o preço por unidade do ativo, não o valor total da posição."
+                      onInput={applyCurrencyMaskInput}
                       required
                     />
                     <input name="source" type="text" placeholder="Fonte" defaultValue="manual" />
-                    <button type="submit">Salvar cotação manual</button>
+                    <button type="submit" disabled={isPendingAction("upsertInvestPrice")}>
+                      {isPendingAction("upsertInvestPrice") ? "Salvando..." : "Salvar cotação manual"}
+                    </button>
                   </form>
                 </section>
                 <section className="card quote-manual-fixed-card">
@@ -6085,17 +6381,25 @@ export default function App() {
                       onChange={(e) => setManualQuoteDate(e.target.value)}
                     />
                     <input
-                      type="number"
-                      step="0.00000001"
+                      type="text"
+                      inputMode={manualQuoteMode === "rentability" ? "decimal" : "numeric"}
                       value={manualQuoteValue}
-                      onChange={(e) => setManualQuoteValue(e.target.value)}
+                      onChange={(e) =>
+                        setManualQuoteValue(
+                          manualQuoteMode === "rentability"
+                            ? sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 12 })
+                            : formatCurrencyInputValue(e.target.value)
+                        )
+                      }
                       placeholder={
                         manualQuoteMode === "rentability"
                           ? "Rentabilidade atual (%)"
                           : "Valor atual"
                       }
                     />
-                    <button type="submit">Salvar atualização manual</button>
+                    <button type="submit" disabled={isPendingAction("updateInvestManualQuote")}>
+                      {isPendingAction("updateInvestManualQuote") ? "Salvando..." : "Salvar atualização manual"}
+                    </button>
                   </form>
                   <p className="tx-helper">
                     {selectedManualQuoteIsManual
@@ -6230,7 +6534,9 @@ export default function App() {
                 >
                   Cancelar
                 </button>
-                <button type="button" onClick={confirmPayInvoiceModal}>Confirmar pagamento</button>
+                <button type="button" onClick={confirmPayInvoiceModal} disabled={isPendingAction(`payInvoice-${payInvoiceTarget?.id}`)}>
+                  {isPendingAction(`payInvoice-${payInvoiceTarget?.id}`) ? "Confirmando..." : "Confirmar pagamento"}
+                </button>
               </div>
             </div>
           </div>

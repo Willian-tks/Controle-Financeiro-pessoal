@@ -137,6 +137,13 @@ body {
   color: #1d3557;
 }
 
+.status-banner-floating {
+  position: sticky;
+  top: 14px;
+  z-index: 90;
+  backdrop-filter: blur(8px);
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -637,6 +644,18 @@ body {
   color: #fff;
   border-color: #1f8cea;
   font-weight: 700;
+}
+
+.tx-form button:disabled,
+.mgr-grid button:disabled,
+.workspace-invite-form button:disabled,
+.workspace-create-form button:disabled,
+.workspace-rename-form button:disabled,
+.tx-table button:disabled,
+.modal-actions button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  filter: saturate(0.8);
 }
 
 .tx-helper {
@@ -1260,6 +1279,10 @@ body {
   border-radius: 18px;
   border: 1px solid rgba(138, 174, 255, 0.28);
   background: rgba(14, 29, 63, 0.78);
+}
+
+.main-dashboard .status-banner-floating {
+  box-shadow: 0 16px 34px rgba(4, 12, 30, 0.35);
 }
 
 .main-dashboard .status-banner.success {
