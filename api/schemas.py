@@ -151,6 +151,8 @@ class AssetCreateRequest(BaseModel):
     principal_amount: float | None = None
     current_value: float | None = None
     last_update: str | None = None
+    fair_price: float | None = None
+    safety_margin_pct: float | None = None
 
 
 class AssetUpdateRequest(BaseModel):
@@ -173,6 +175,13 @@ class AssetUpdateRequest(BaseModel):
     principal_amount: float | None = None
     current_value: float | None = None
     last_update: str | None = None
+    fair_price: float | None = None
+    safety_margin_pct: float | None = None
+
+
+class AssetFairValueUpdateRequest(BaseModel):
+    fair_price: float
+    safety_margin_pct: float
 
 
 class ManualAssetValueUpdateRequest(BaseModel):

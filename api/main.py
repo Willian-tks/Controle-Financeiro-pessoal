@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import calendar
 import logging
 from html import escape
@@ -10,7 +11,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import uuid4
 
 import requests
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import auth
@@ -36,6 +37,7 @@ from tenant import (
 from .schemas import (
     AccountCreateRequest,
     AccountUpdateRequest,
+    AssetFairValueUpdateRequest,
     AssetCreateRequest,
     AssetUpdateRequest,
     CategoryCreateRequest,
@@ -399,6 +401,32 @@ def _validate_asset_rentability(
         "spread_rate": sr,
         "fixed_rate": None,
     }
+
+
+def _validate_asset_fair_value_fields(
+    fair_price: Any,
+    safety_margin_pct: Any,
+) -> dict[str, float | None]:
+    fair = None if fair_price is None else float(fair_price)
+    margin = None if safety_margin_pct is None else float(safety_margin_pct)
+    if fair is not None and fair <= 0:
+        raise HTTPException(status_code=400, detail="Preço justo deve ser maior que zero.")
+    if margin is not None and (margin < 0 or margin > 100):
+        raise HTTPException(status_code=400, detail="Margem de segurança deve estar entre 0 e 100%.")
+    return {
+        "fair_price": fair,
+        "safety_margin_pct": margin,
+    }
+
+
+def _sanitize_download_filename(file_name: str, fallback: str = "avaliacao.pdf") -> str:
+    raw = str(file_name or "").strip()
+    cleaned = re.sub(r'[^A-Za-z0-9._ -]+', "_", raw).strip(" .")
+    if not cleaned:
+        cleaned = fallback
+    if not cleaned.lower().endswith(".pdf"):
+        cleaned = f"{cleaned}.pdf"
+    return cleaned
 
 
 _CURRENT_VALUE_Q = Decimal("0.000001")
@@ -2911,6 +2939,10 @@ def invest_create_asset(
         spread_rate=body.spread_rate,
         fixed_rate=body.fixed_rate,
     )
+    fair_cfg = _validate_asset_fair_value_fields(
+        fair_price=body.fair_price,
+        safety_margin_pct=body.safety_margin_pct,
+    )
 
     created = invest_repo.create_asset(
         symbol=symbol,
@@ -2931,6 +2963,8 @@ def invest_create_asset(
         fixed_rate=rent_cfg["fixed_rate"],
         principal_amount=body.principal_amount,
         current_value=body.current_value,
+        fair_price=fair_cfg["fair_price"],
+        safety_margin_pct=fair_cfg["safety_margin_pct"],
         last_update=(body.last_update or "").strip() or None,
         user_id=uid,
     )
@@ -2993,7 +3027,7 @@ def invest_update_asset(
     for text_field in ["issuer", "rate_type", "maturity_date", "rentability_type", "index_name", "last_update"]:
         if text_field in raw_payload:
             optional_updates[text_field] = (raw_payload.get(text_field) or "").strip() or None
-    for numeric_field in ["rate_value", "index_pct", "spread_rate", "fixed_rate", "principal_amount", "current_value"]:
+    for numeric_field in ["rate_value", "index_pct", "spread_rate", "fixed_rate", "principal_amount", "current_value", "fair_price", "safety_margin_pct"]:
         if numeric_field in raw_payload:
             optional_updates[numeric_field] = raw_payload.get(numeric_field)
     if "source_account_id" in raw_payload:
@@ -3012,6 +3046,12 @@ def invest_update_asset(
     optional_updates["index_pct"] = rent_cfg["index_pct"]
     optional_updates["spread_rate"] = rent_cfg["spread_rate"]
     optional_updates["fixed_rate"] = rent_cfg["fixed_rate"]
+    fair_cfg = _validate_asset_fair_value_fields(
+        fair_price=optional_updates.get("fair_price", asset.get("fair_price")),
+        safety_margin_pct=optional_updates.get("safety_margin_pct", asset.get("safety_margin_pct")),
+    )
+    optional_updates["fair_price"] = fair_cfg["fair_price"]
+    optional_updates["safety_margin_pct"] = fair_cfg["safety_margin_pct"]
     optional_updates.update(
         _resolve_manual_rentability_updates(
             rentability_type=optional_updates.get("rentability_type", asset.get("rentability_type")),
@@ -3036,6 +3076,96 @@ def invest_update_asset(
         **optional_updates,
     )
     return {"ok": True}
+
+
+@app.put("/invest/assets/{asset_id}/fair-value")
+def invest_update_asset_fair_value(
+    asset_id: int,
+    body: AssetFairValueUpdateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    asset = invest_repo.get_asset_by_id(asset_id, user_id=uid)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Ativo não encontrado")
+
+    fair_cfg = _validate_asset_fair_value_fields(
+        fair_price=body.fair_price,
+        safety_margin_pct=body.safety_margin_pct,
+    )
+
+    invest_repo.update_asset_fair_value(
+        asset_id=asset_id,
+        fair_price=float(fair_cfg["fair_price"] or 0.0),
+        safety_margin_pct=float(fair_cfg["safety_margin_pct"] or 0.0),
+        user_id=uid,
+    )
+    return {"ok": True}
+
+
+@app.post("/invest/assets/{asset_id}/valuation-report")
+async def invest_upload_asset_valuation_report(
+    asset_id: int,
+    file: UploadFile = File(...),
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    asset = invest_repo.get_asset_by_id(asset_id, user_id=uid)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Ativo não encontrado")
+    if asset.get("fair_price") in (None, ""):
+        raise HTTPException(status_code=400, detail="Configure o preço justo antes de anexar o PDF de avaliação.")
+
+    file_name = str(file.filename or "").strip()
+    content_type = str(file.content_type or "").strip().lower()
+    if not file_name.lower().endswith(".pdf") and content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Envie um arquivo PDF válido.")
+
+    file_data = await file.read()
+    if not file_data:
+        raise HTTPException(status_code=400, detail="O arquivo enviado está vazio.")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="O PDF deve ter no máximo 10 MB.")
+
+    safe_file_name = _sanitize_download_filename(file_name, fallback=f"avaliacao-{asset.get('symbol') or asset_id}.pdf")
+    invest_repo.upsert_asset_valuation_report(
+        asset_id=asset_id,
+        file_name=safe_file_name,
+        content_type="application/pdf",
+        file_data=file_data,
+        user_id=uid,
+    )
+    report = invest_repo.get_asset_valuation_report(asset_id, user_id=uid) or {}
+    return {
+        "ok": True,
+        "file_name": report.get("file_name") or safe_file_name,
+        "uploaded_at": report.get("uploaded_at"),
+    }
+
+
+@app.get("/invest/assets/{asset_id}/valuation-report")
+def invest_download_asset_valuation_report(
+    asset_id: int,
+    user: dict = Depends(_current_user),
+) -> Response:
+    uid = int(user["id"])
+    asset = invest_repo.get_asset_by_id(asset_id, user_id=uid)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Ativo não encontrado")
+
+    report = invest_repo.get_asset_valuation_report(asset_id, user_id=uid)
+    if not report:
+        raise HTTPException(status_code=404, detail="Nenhum PDF de avaliação foi anexado a este ativo.")
+
+    file_name = _sanitize_download_filename(
+        str(report.get("file_name") or ""),
+        fallback=f"avaliacao-{asset.get('symbol') or asset_id}.pdf",
+    )
+    return Response(
+        content=report.get("file_data") or b"",
+        media_type=str(report.get("content_type") or "application/pdf"),
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @app.post("/invest/assets/{asset_id}/manual-update")

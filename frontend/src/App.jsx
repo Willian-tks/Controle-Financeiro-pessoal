@@ -24,7 +24,7 @@ import cardModelPlatinum from "./cards/Platinum.png";
 import cardModelOrange from "./cards/Orange.png";
 import cardModelVioleta from "./cards/Violeta.png";
 import cardModelVermelho from "./cards/Vermelho.png";
-import { ResponsiveContainer, PieChart, Pie, Sector } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Sector, BarChart, Bar, CartesianGrid, Tooltip, XAxis, YAxis, Cell } from "recharts";
 import {
   clearToken,
   createCard,
@@ -85,6 +85,9 @@ import {
   updateAllInvestRentability,
   updateAllInvestPrices,
   updateInvestAsset,
+  updateInvestAssetFairValue,
+  uploadInvestAssetValuationReport,
+  downloadInvestAssetValuationReport,
   updateInvestManualAssetValue,
   upsertInvestPrice,
   updateCard,
@@ -119,7 +122,13 @@ const PAGE_SUBTITLES = {
   Investimentos: "Ativos, operações, proventos, cotações e carteira",
 };
 
-const INVEST_TABS = ["Resumo", "Ativos", "Operações", "Proventos", "Cotações"];
+const INVEST_TABS = ["Resumo", "Rentabilidade", "Ativos", "Operações", "Proventos", "Cotações"];
+const RENTABILITY_WINDOW_OPTIONS = [
+  { value: "6m", label: "6 meses" },
+  { value: "12m", label: "12 meses" },
+  { value: "24m", label: "24 meses" },
+  { value: "all", label: "Desde o início" },
+];
 const MANAGER_TABS = ["Cadastro de contas", "Cadastro de categorias", "Cadastro cartão de crédito"];
 const QUOTE_GROUP_OPTIONS = ["Ações BR", "FIIs", "Stocks", "Cripto"];
 
@@ -202,6 +211,14 @@ const RENTABILITY_TYPE_LABELS = {
   SELIC_SPREAD: "SELIC + X",
   IPCA_SPREAD: "IPCA + X",
   MANUAL: "Manual",
+};
+const INCOME_TYPE_COLORS = {
+  Dividendos: "#5dd39e",
+  JCP: "#66d5ff",
+  Juros: "#f4c84b",
+  Cupom: "#ff9b71",
+  "Rend. RF": "#8f7dff",
+  "Aluguel (FII)": "#ff7aa2",
 };
 const TX_STATUS_FILTER_OPEN = "__open_commitments__";
 
@@ -354,6 +371,35 @@ function applyIntegerMaskInput(event, maxDigits = 3) {
 
 function applyDecimalMaskInput(event, options = {}) {
   event.target.value = sanitizeDecimalInputValue(event.target.value, options);
+}
+
+function computeFairValueRange(fairPrice, safetyMarginPct) {
+  const fair = Number(fairPrice || 0);
+  const margin = Number(safetyMarginPct || 0);
+  if (!Number.isFinite(fair) || fair <= 0 || !Number.isFinite(margin) || margin < 0) {
+    return { entryPrice: null, ceilingPrice: null };
+  }
+  const factor = margin / 100;
+  return {
+    entryPrice: fair * (1 - factor),
+    ceilingPrice: fair * (1 + factor),
+  };
+}
+
+function getFairValueBiasLabel(currentPrice, entryPrice, ceilingPrice) {
+  const current = Number(currentPrice || 0);
+  const entry = Number(entryPrice || 0);
+  const ceiling = Number(ceilingPrice || 0);
+  if (!Number.isFinite(current) || current <= 0 || !Number.isFinite(entry) || !Number.isFinite(ceiling)) {
+    return { label: "Sem base", tone: "neutral" };
+  }
+  if (current <= entry) {
+    return { label: "Comprar", tone: "buy" };
+  }
+  if (current >= ceiling) {
+    return { label: "Vender", tone: "sell" };
+  }
+  return { label: "Aguardar", tone: "wait" };
 }
 
 function InvestmentPieGradient(props) {
@@ -734,6 +780,22 @@ function formatIsoDatePtBr(value) {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
+function formatMonthYearPtBr(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(raw)) return raw;
+  const dt = new Date(`${raw}-01T00:00:00`);
+  return dt.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
+}
+
+function shiftIsoDateByMonths(value, monthsBack) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "";
+  const [year, month, day] = raw.split("-").map(Number);
+  const dt = new Date(year, month - 1, day);
+  dt.setMonth(dt.getMonth() - Number(monthsBack || 0));
+  return dt.toISOString().slice(0, 10);
+}
+
 function formatPortfolioQty(value) {
   const num = Number(value || 0);
   if (!Number.isFinite(num)) return "-";
@@ -856,6 +918,7 @@ export default function App() {
   const [investSummaryClassFilter, setInvestSummaryClassFilter] = useState("");
   const [dashInvestFocusClass, setDashInvestFocusClass] = useState("");
   const [investPortfolioClassFilter, setInvestPortfolioClassFilter] = useState("");
+  const [investRentabilityWindow, setInvestRentabilityWindow] = useState("12m");
   const [investAssetsClassFilter, setInvestAssetsClassFilter] = useState("");
   const [investTradeDateFrom, setInvestTradeDateFrom] = useState(defaultMonthRange.from);
   const [investTradeDateTo, setInvestTradeDateTo] = useState(defaultMonthRange.to);
@@ -888,6 +951,9 @@ export default function App() {
   const [manualQuoteMode, setManualQuoteMode] = useState("rentability");
   const [manualQuoteValue, setManualQuoteValue] = useState("");
   const [manualQuoteDate, setManualQuoteDate] = useState("");
+  const [fairValueDrafts, setFairValueDrafts] = useState({});
+  const [fairValueClassFilter, setFairValueClassFilter] = useState("");
+  const [fairValueAssetId, setFairValueAssetId] = useState("");
   const [investTab, setInvestTab] = useState("Resumo");
   const [managerTab, setManagerTab] = useState("Cadastro de contas");
   const [manageMsg, setManageMsg] = useState("");
@@ -944,6 +1010,7 @@ export default function App() {
   const [payDate, setPayDate] = useState("");
   const [invoiceCardFilterId, setInvoiceCardFilterId] = useState("");
   const userMenuRef = useRef(null);
+  const valuationReportInputRefs = useRef({});
   const investRentabilityLastSyncRef = useRef(0);
   const investReloadSeqRef = useRef(0);
   const globalActionNoticeTimeoutRef = useRef(null);
@@ -1275,6 +1342,25 @@ export default function App() {
     setAssetEditSpreadRate(cur.spread_rate == null ? "" : formatLocalizedNumber(cur.spread_rate, 8));
     setAssetEditFixedRate(cur.fixed_rate == null ? "" : formatLocalizedNumber(cur.fixed_rate, 8));
   }, [investAssets, assetEditId]);
+
+  useEffect(() => {
+    setFairValueDrafts((prev) => {
+      const next = {};
+      for (const asset of investAssets || []) {
+        const key = String(asset?.id || "");
+        if (!key) continue;
+        next[key] = {
+          fair_price:
+            prev[key]?.fair_price ??
+            (asset?.fair_price == null ? "" : formatLocalizedNumber(asset.fair_price, 2)),
+          safety_margin_pct:
+            prev[key]?.safety_margin_pct ??
+            (asset?.safety_margin_pct == null ? "20,00" : formatLocalizedNumber(asset.safety_margin_pct, 2)),
+        };
+      }
+      return next;
+    });
+  }, [investAssets]);
 
   useEffect(() => {
     if (isFixedIncomeClass(assetCreateClass || "")) {
@@ -1792,6 +1878,65 @@ export default function App() {
     );
     return [...classes].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [investPortfolio]);
+  const latestInvestPriceByAssetId = useMemo(() => {
+    const map = new Map();
+    for (const row of investPrices || []) {
+      const assetId = Number(row?.asset_id || 0);
+      if (!assetId) continue;
+      const dateKey = String(row?.date || "");
+      const current = map.get(assetId);
+      if (!current || dateKey > current.date) {
+        map.set(assetId, {
+          date: dateKey,
+          price: Number(row?.price || 0),
+        });
+      }
+    }
+    return map;
+  }, [investPrices]);
+  const fairValueAssets = useMemo(() => {
+    return (investAssets || [])
+      .filter((asset) => {
+        const cls = classKey(asset?.asset_class || "");
+        return !["renda_fixa", "tesouro_direto", "fundos", "coe", "caixa"].includes(cls);
+      })
+      .map((asset) => {
+        const latestPrice = latestInvestPriceByAssetId.get(Number(asset?.id || 0));
+        const currentPriceRaw =
+          Number(asset?.current_value || 0) > 0
+            ? Number(asset.current_value)
+            : Number(latestPrice?.price || 0);
+        const fairPrice = Number(asset?.fair_price || 0);
+        const safetyMarginPct = Number(asset?.safety_margin_pct || 0);
+        const { entryPrice, ceilingPrice } = computeFairValueRange(fairPrice, safetyMarginPct);
+        const bias = getFairValueBiasLabel(currentPriceRaw, entryPrice, ceilingPrice);
+        return {
+          ...asset,
+          currentPrice: Number.isFinite(currentPriceRaw) && currentPriceRaw > 0 ? currentPriceRaw : null,
+          fairPrice: Number.isFinite(fairPrice) && fairPrice > 0 ? fairPrice : null,
+          safetyMarginPct: Number.isFinite(safetyMarginPct) ? safetyMarginPct : null,
+          entryPrice,
+          ceilingPrice,
+          bias,
+          priceRefDate: latestPrice?.date || asset?.last_update || "",
+        };
+      })
+      .sort((a, b) => String(a.symbol || "").localeCompare(String(b.symbol || ""), "pt-BR"));
+  }, [investAssets, latestInvestPriceByAssetId]);
+  const fairValueClassOptions = useMemo(() => {
+    const classes = new Set(fairValueAssets.map((asset) => String(asset.asset_class || "").trim()).filter(Boolean));
+    return [...classes].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [fairValueAssets]);
+  const fairValueAssetOptions = useMemo(() => {
+    if (!fairValueClassFilter) return [];
+    return fairValueAssets.filter((asset) => String(asset.asset_class || "") === fairValueClassFilter);
+  }, [fairValueAssets, fairValueClassFilter]);
+  const selectedFairValueAsset = useMemo(() => {
+    return fairValueAssets.find((asset) => String(asset.id) === String(fairValueAssetId)) || null;
+  }, [fairValueAssets, fairValueAssetId]);
+  const configuredFairValueAssets = useMemo(() => {
+    return fairValueAssets.filter((asset) => asset.fairPrice != null && asset.safetyMarginPct != null);
+  }, [fairValueAssets]);
   useEffect(() => {
     if (!investSummaryClassFilter) return;
     if (!investSummaryClassOptions.includes(investSummaryClassFilter)) {
@@ -1804,6 +1949,21 @@ export default function App() {
       setInvestPortfolioClassFilter("");
     }
   }, [investPortfolioClassFilter, investSummaryClassOptions]);
+  useEffect(() => {
+    if (!fairValueClassFilter) return;
+    if (!fairValueClassOptions.includes(fairValueClassFilter)) {
+      setFairValueClassFilter("");
+    }
+  }, [fairValueClassFilter, fairValueClassOptions]);
+  useEffect(() => {
+    if (!fairValueClassFilter) {
+      setFairValueAssetId("");
+      return;
+    }
+    if (!fairValueAssetOptions.some((asset) => String(asset.id) === String(fairValueAssetId))) {
+      setFairValueAssetId("");
+    }
+  }, [fairValueAssetId, fairValueAssetOptions, fairValueClassFilter]);
   const investSummaryPositionsFiltered = useMemo(() => {
     const rows = investPortfolio?.positions || [];
     if (!investSummaryClassFilter) return rows;
@@ -1845,6 +2005,102 @@ export default function App() {
     if (!investPortfolioClassFilter) return rows;
     return rows.filter((p) => String(p.asset_class || "") === investPortfolioClassFilter);
   }, [investTab, investSummaryClassFilter, investSummaryPositionsFiltered, investPortfolio, investPortfolioClassFilter]);
+  const investRentabilityWindowStart = useMemo(() => {
+    const allDates = [
+      ...(investTrades || []).map((row) => String(row?.date || "").trim()),
+      ...(investIncomes || []).map((row) => String(row?.date || "").trim()),
+      ...((investPortfolio?.positions || []).map((row) => String(row?.value_ref_date || "").trim())),
+    ].filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value));
+    const latestDate = allDates.sort().at(-1) || "";
+    if (!latestDate || investRentabilityWindow === "all") return "";
+    if (investRentabilityWindow === "24m") return shiftIsoDateByMonths(latestDate, 24);
+    if (investRentabilityWindow === "12m") return shiftIsoDateByMonths(latestDate, 12);
+    return shiftIsoDateByMonths(latestDate, 6);
+  }, [investIncomes, investPortfolio, investRentabilityWindow, investTrades]);
+  const investRentabilityActiveClasses = useMemo(() => {
+    if (!investRentabilityWindowStart) {
+      return new Set((investPortfolio?.positions || []).map((row) => String(row?.asset_class || "").trim()).filter(Boolean));
+    }
+    const active = new Set();
+    for (const row of investTrades || []) {
+      const date = String(row?.date || "").trim();
+      const assetClass = String(row?.asset_class || "").trim();
+      if (assetClass && date && date >= investRentabilityWindowStart) {
+        active.add(assetClass);
+      }
+    }
+    for (const row of investIncomes || []) {
+      const date = String(row?.date || "").trim();
+      const assetId = Number(row?.asset_id || 0);
+      if (!assetId || !date || date < investRentabilityWindowStart) continue;
+      const asset = (investAssets || []).find((item) => Number(item?.id || 0) === assetId);
+      const assetClass = String(asset?.asset_class || "").trim();
+      if (assetClass) active.add(assetClass);
+    }
+    for (const row of investPortfolio?.positions || []) {
+      const valueRefDate = String(row?.value_ref_date || "").trim();
+      const assetClass = String(row?.asset_class || "").trim();
+      if (assetClass && valueRefDate && valueRefDate >= investRentabilityWindowStart) {
+        active.add(assetClass);
+      }
+    }
+    return active;
+  }, [investAssets, investIncomes, investPortfolio, investRentabilityWindowStart, investTrades]);
+  const investRentabilityByClass = useMemo(() => {
+    const rows = (investPortfolio?.positions || []).filter((row) => {
+      const assetClass = String(row?.asset_class || "").trim();
+      return assetClass && investRentabilityActiveClasses.has(assetClass);
+    });
+    const grouped = new Map();
+    for (const row of rows) {
+      const assetClass = String(row?.asset_class || "").trim() || "Outros";
+      const base = grouped.get(assetClass) || {
+        asset_class: assetClass,
+        assets_count: 0,
+        total_invested: 0,
+        total_market: 0,
+        total_income: 0,
+        total_realized: 0,
+        total_unrealized: 0,
+        total_return: 0,
+        total_return_pct: 0,
+      };
+      base.assets_count += 1;
+      base.total_invested += Number(row?.cost_basis || 0) || 0;
+      base.total_market += Number(row?.market_value || 0) || 0;
+      base.total_income += Number(row?.income || 0) || 0;
+      base.total_realized += Number(row?.realized_pnl || 0) || 0;
+      base.total_unrealized += Number(row?.unrealized_pnl || 0) || 0;
+      grouped.set(assetClass, base);
+    }
+    const list = Array.from(grouped.values()).map((item) => {
+      const totalReturn = Number(item.total_income || 0) + Number(item.total_realized || 0) + Number(item.total_unrealized || 0);
+      const totalInvested = Number(item.total_invested || 0);
+      const totalReturnPct = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
+      return {
+        ...item,
+        total_invested: normalizeMoneyValue(item.total_invested),
+        total_market: normalizeMoneyValue(item.total_market),
+        total_income: normalizeMoneyValue(item.total_income),
+        total_realized: normalizeMoneyValue(item.total_realized),
+        total_unrealized: normalizeMoneyValue(item.total_unrealized),
+        total_return: normalizeMoneyValue(totalReturn),
+        total_return_pct: Number.isFinite(totalReturnPct) ? totalReturnPct : 0,
+      };
+    });
+    list.sort((a, b) => b.total_return_pct - a.total_return_pct);
+    return list;
+  }, [investPortfolio, investRentabilityActiveClasses]);
+  const investRentabilityHighlights = useMemo(() => {
+    const rows = investRentabilityByClass.filter((item) => Number(item.total_invested || 0) > 0);
+    const best = rows.length ? rows[0] : null;
+    const worst = rows.length ? rows[rows.length - 1] : null;
+    return {
+      classes_count: investRentabilityByClass.length,
+      best,
+      worst,
+    };
+  }, [investRentabilityByClass]);
   const assetCreateIsFixedIncome = useMemo(
     () => isFixedIncomeClass(assetCreateClass),
     [assetCreateClass]
@@ -1919,6 +2175,74 @@ export default function App() {
       return true;
     });
   }, [investIncomes, investIncomeDateFrom, investIncomeDateTo]);
+  const investIncomeTypesVisible = useMemo(() => {
+    const orderedMeta = Array.isArray(investMeta?.income_types) ? investMeta.income_types : [];
+    const seen = new Set();
+    const out = [];
+    for (const type of orderedMeta) {
+      if ((investIncomesVisible || []).some((item) => String(item?.type || "") === String(type || ""))) {
+        seen.add(String(type));
+        out.push(String(type));
+      }
+    }
+    for (const item of investIncomesVisible || []) {
+      const type = String(item?.type || "").trim();
+      if (type && !seen.has(type)) {
+        seen.add(type);
+        out.push(type);
+      }
+    }
+    return out;
+  }, [investIncomesVisible, investMeta?.income_types]);
+  const investIncomeHistory = useMemo(() => {
+    const buckets = new Map();
+    for (const income of investIncomesVisible || []) {
+      const date = String(income?.date || "").trim();
+      const monthKey = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(0, 7) : "";
+      if (!monthKey) continue;
+      const amount = Number(income?.amount || 0);
+      const type = String(income?.type || "").trim() || "Outros";
+      const base = buckets.get(monthKey) || { month: monthKey, amount: 0, count: 0 };
+      const safeAmount = Number.isFinite(amount) ? amount : 0;
+      base.amount += safeAmount;
+      base.count += 1;
+      base[type] = Number(base[type] || 0) + safeAmount;
+      buckets.set(monthKey, base);
+    }
+    for (const row of buckets.values()) {
+      for (const type of investIncomeTypesVisible) {
+        if (!Object.prototype.hasOwnProperty.call(row, type)) {
+          row[type] = 0;
+        }
+      }
+    }
+    return Array.from(buckets.values()).sort((a, b) => String(a.month).localeCompare(String(b.month)));
+  }, [investIncomesVisible, investIncomeTypesVisible]);
+  const investIncomeTypeTotals = useMemo(
+    () =>
+      investIncomeTypesVisible.map((type) => ({
+        type,
+        total: (investIncomesVisible || []).reduce(
+          (acc, item) => acc + (String(item?.type || "").trim() === type ? Number(item?.amount || 0) || 0 : 0),
+          0
+        ),
+      })),
+    [investIncomeTypesVisible, investIncomesVisible]
+  );
+  const investIncomeHistorySummary = useMemo(() => {
+    const total = investIncomeHistory.reduce((acc, row) => acc + Number(row?.amount || 0), 0);
+    const peak = investIncomeHistory.reduce(
+      (best, row) => (Number(row?.amount || 0) > Number(best?.amount || 0) ? row : best),
+      null
+    );
+    const average = investIncomeHistory.length ? total / investIncomeHistory.length : 0;
+    return {
+      total,
+      average,
+      peakAmount: Number(peak?.amount || 0),
+      peakMonth: peak?.month || "",
+    };
+  }, [investIncomeHistory]);
   useEffect(() => {
     if (!tradeAssetId) return;
     const stillValid = tradeAssetOptions.some((a) => String(a.id) === String(tradeAssetId));
@@ -3258,6 +3582,106 @@ export default function App() {
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
+  }
+
+  function onChangeFairValueDraft(assetId, field, value) {
+    const key = String(assetId || "");
+    if (!key) return;
+    setFairValueDrafts((prev) => {
+      const base = prev[key] || { fair_price: "", safety_margin_pct: "20,00" };
+      return {
+        ...prev,
+        [key]: {
+          ...base,
+          [field]:
+            field === "fair_price"
+              ? formatCurrencyInputValue(value)
+              : sanitizeDecimalInputValue(value, { maxDecimals: 2, maxIntegerDigits: 3 }),
+        },
+      };
+    });
+  }
+
+  async function onSaveAssetFairValue(asset) {
+    if (!canEditInvestimentos) {
+      setInvestMsg("Sem permissão para salvar preço justo.");
+      return;
+    }
+    const key = String(asset?.id || "");
+    const draft = fairValueDrafts[key] || {};
+    const fairPrice = parseLocaleNumber(draft.fair_price || "");
+    const safetyMarginPct = parseLocaleNumber(draft.safety_margin_pct || "");
+    if (!Number.isFinite(fairPrice) || fairPrice <= 0) {
+      setInvestMsg("Informe um preço justo válido.");
+      return;
+    }
+    if (!Number.isFinite(safetyMarginPct) || safetyMarginPct < 0 || safetyMarginPct > 100) {
+      setInvestMsg("Informe uma margem de segurança entre 0% e 100%.");
+      return;
+    }
+    await withPendingAction(`fairValue-${key}`, async () => {
+      try {
+        await updateInvestAssetFairValue(Number(asset.id), {
+          fair_price: fairPrice,
+          safety_margin_pct: safetyMarginPct,
+        });
+        setInvestMsg(`Preço justo de ${asset.symbol} salvo.`);
+        showGlobalSuccess(`Preço justo de ${asset.symbol} salvo.`);
+        await reloadInvestData();
+      } catch (err) {
+        setInvestMsg(String(err.message || err));
+      }
+    });
+  }
+
+  function triggerAssetValuationReportSelect(assetId) {
+    const key = String(assetId || "");
+    if (!key || !canEditInvestimentos || isPendingAction(`fairValueReportUpload-${key}`)) return;
+    valuationReportInputRefs.current[key]?.click?.();
+  }
+
+  async function onUploadAssetValuationReport(asset, file) {
+    const key = String(asset?.id || "");
+    if (!key || !file) return;
+    if (!canEditInvestimentos) {
+      setInvestMsg("Sem permissão para anexar PDF de avaliação.");
+      return;
+    }
+    const fileName = String(file.name || "").trim();
+    if (!fileName.toLowerCase().endsWith(".pdf")) {
+      setInvestMsg("Envie um arquivo PDF válido.");
+      return;
+    }
+    await withPendingAction(`fairValueReportUpload-${key}`, async () => {
+      try {
+        await uploadInvestAssetValuationReport(Number(asset.id), file);
+        setInvestMsg(`PDF de avaliação de ${asset.symbol} salvo.`);
+        showGlobalSuccess(`PDF de avaliação de ${asset.symbol} salvo.`);
+        await reloadInvestData();
+      } catch (err) {
+        setInvestMsg(String(err.message || err));
+      }
+    });
+  }
+
+  async function onDownloadAssetValuationReport(asset) {
+    const key = String(asset?.id || "");
+    if (!key) return;
+    await withPendingAction(`fairValueReportDownload-${key}`, async () => {
+      try {
+        const { blob, fileName } = await downloadInvestAssetValuationReport(Number(asset.id));
+        const objectUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = fileName || `avaliacao-${asset.symbol || asset.id}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000);
+      } catch (err) {
+        setInvestMsg(String(err.message || err));
+      }
     });
   }
 
@@ -5670,6 +6094,187 @@ export default function App() {
                     <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_unrealized))}</strong>
                   </article>
                 </section>
+                <section className="card">
+                  <div className="fair-value-head">
+                    <div>
+                      <h3>Preço justo e viés</h3>
+                      <p className="tx-helper">
+                        Regra aplicada: cotação atual menor ou igual ao preço de entrada = Comprar; maior ou igual ao preço teto = Vender; entre os dois = Aguardar.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="tx-form fair-value-form">
+                    <select
+                      value={fairValueClassFilter}
+                      onChange={(e) => {
+                        setFairValueClassFilter(e.target.value);
+                        setFairValueAssetId("");
+                      }}
+                    >
+                      <option value="" disabled>Classe do ativo</option>
+                      {fairValueClassOptions.map((assetClass) => (
+                        <option key={assetClass} value={assetClass}>{assetClass}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={fairValueAssetId}
+                      onChange={(e) => setFairValueAssetId(e.target.value)}
+                      disabled={!fairValueClassFilter}
+                    >
+                      <option value="" disabled>
+                        {!fairValueClassFilter ? "Selecione a classe primeiro" : "Selecione o ativo"}
+                      </option>
+                      {fairValueAssetOptions.map((asset) => (
+                        <option key={asset.id} value={asset.id}>{asset.symbol} - {asset.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={selectedFairValueAsset ? fairValueDrafts[String(selectedFairValueAsset.id)]?.fair_price || "" : ""}
+                      onChange={(e) => selectedFairValueAsset && onChangeFairValueDraft(selectedFairValueAsset.id, "fair_price", e.target.value)}
+                      placeholder="Preço justo"
+                      disabled={!selectedFairValueAsset || !canEditInvestimentos || isPendingAction(`fairValue-${selectedFairValueAsset?.id}`)}
+                    />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={selectedFairValueAsset ? fairValueDrafts[String(selectedFairValueAsset.id)]?.safety_margin_pct || "20,00" : ""}
+                      onChange={(e) => selectedFairValueAsset && onChangeFairValueDraft(selectedFairValueAsset.id, "safety_margin_pct", e.target.value)}
+                      placeholder="Margem de segurança (%)"
+                      disabled={!selectedFairValueAsset || !canEditInvestimentos || isPendingAction(`fairValue-${selectedFairValueAsset?.id}`)}
+                    />
+                    <button
+                      type="button"
+                      className="tx-action-primary"
+                      onClick={() => selectedFairValueAsset && onSaveAssetFairValue(selectedFairValueAsset)}
+                      disabled={!selectedFairValueAsset || !canEditInvestimentos || isPendingAction(`fairValue-${selectedFairValueAsset?.id}`)}
+                    >
+                      {isPendingAction(`fairValue-${selectedFairValueAsset?.id}`) ? "Salvando..." : "Salvar preço justo"}
+                    </button>
+                  </div>
+                  {selectedFairValueAsset ? (
+                    <div className="fair-value-preview-grid">
+                      <div className="card">
+                        <h4>Ativo selecionado</h4>
+                        <strong>{selectedFairValueAsset.symbol}</strong>
+                        <p>{selectedFairValueAsset.name}</p>
+                      </div>
+                      <div className="card">
+                        <h4>Entrada</h4>
+                        <strong>{selectedFairValueAsset.entryPrice == null ? "-" : brl.format(selectedFairValueAsset.entryPrice)}</strong>
+                      </div>
+                      <div className="card">
+                        <h4>Cotação atual</h4>
+                        <strong>{selectedFairValueAsset.currentPrice == null ? "-" : brl.format(selectedFairValueAsset.currentPrice)}</strong>
+                      </div>
+                      <div className="card">
+                        <h4>Teto</h4>
+                        <strong>{selectedFairValueAsset.ceilingPrice == null ? "-" : brl.format(selectedFairValueAsset.ceilingPrice)}</strong>
+                      </div>
+                      <div className="card">
+                        <h4>Viés</h4>
+                        <span className={`fair-value-bias ${selectedFairValueAsset.bias.tone}`}>{selectedFairValueAsset.bias.label}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="tx-table-wrap fair-value-table-wrap">
+                    <table className="tx-table fair-value-table">
+                      <thead>
+                        <tr>
+                          <th>Ativo</th>
+                          <th>Preço justo</th>
+                          <th>Margem (%)</th>
+                          <th>Entrada</th>
+                          <th>Cotação atual</th>
+                          <th>Teto</th>
+                          <th>Viés</th>
+                          <th>Relatório PDF</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {configuredFairValueAssets.map((asset) => {
+                          const uploadPending = isPendingAction(`fairValueReportUpload-${asset.id}`);
+                          const downloadPending = isPendingAction(`fairValueReportDownload-${asset.id}`);
+                          return (
+                            <tr key={`fair-value-${asset.id}`}>
+                              <td>
+                                <strong>{asset.symbol}</strong>
+                                <div>{asset.name}</div>
+                              </td>
+                              <td>{asset.fairPrice == null ? "-" : brl.format(asset.fairPrice)}</td>
+                              <td>{asset.safetyMarginPct == null ? "-" : `${formatLocalizedNumber(asset.safetyMarginPct, 2)}%`}</td>
+                              <td>{asset.entryPrice == null ? "-" : brl.format(asset.entryPrice)}</td>
+                              <td>
+                                {asset.currentPrice == null ? "-" : brl.format(asset.currentPrice)}
+                                {asset.priceRefDate ? <div>{formatIsoDatePtBr(asset.priceRefDate)}</div> : null}
+                              </td>
+                              <td>{asset.ceilingPrice == null ? "-" : brl.format(asset.ceilingPrice)}</td>
+                              <td>
+                                <span className={`fair-value-bias ${asset.bias.tone}`}>{asset.bias.label}</span>
+                              </td>
+                              <td className="fair-value-report-cell">
+                                <input
+                                  ref={(node) => {
+                                    if (node) {
+                                      valuationReportInputRefs.current[String(asset.id)] = node;
+                                    } else {
+                                      delete valuationReportInputRefs.current[String(asset.id)];
+                                    }
+                                  }}
+                                  type="file"
+                                  accept="application/pdf,.pdf"
+                                  className="fair-value-report-input"
+                                  onChange={(e) => {
+                                    const selectedFile = e.target.files?.[0] || null;
+                                    if (selectedFile) {
+                                      onUploadAssetValuationReport(asset, selectedFile);
+                                    }
+                                    e.target.value = "";
+                                  }}
+                                />
+                                <div className="fair-value-report-actions">
+                                  <button
+                                    type="button"
+                                    className="tx-action-neutral fair-value-report-icon-btn"
+                                    disabled={uploadPending || !canEditInvestimentos}
+                                    onClick={() => triggerAssetValuationReportSelect(asset.id)}
+                                    aria-label={asset.valuation_report_uploaded_at ? "Trocar PDF do relatório" : "Enviar PDF do relatório"}
+                                    title={asset.valuation_report_uploaded_at ? "Trocar PDF" : "Enviar PDF"}
+                                  >
+                                    {uploadPending ? "..." : <span className="fair-value-report-icon" aria-hidden="true" />}
+                                  </button>
+                                  {asset.valuation_report_uploaded_at ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="tx-action-primary fair-value-report-download-btn"
+                                        disabled={downloadPending}
+                                        onClick={() => onDownloadAssetValuationReport(asset)}
+                                        aria-label="Baixar PDF do relatório"
+                                        title="Baixar PDF"
+                                      >
+                                        <span className="fair-value-download-icon" aria-hidden="true" />
+                                      </button>
+                                      <div className="fair-value-report-meta">
+                                        {formatIsoDatePtBr(asset.valuation_report_uploaded_at)}
+                                      </div>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {!configuredFairValueAssets.length ? (
+                          <tr>
+                            <td colSpan={8}>Nenhum ativo configurado com preço justo ainda.</td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
                 {investDivergenceOpen ? (
                   <section className="card">
                     <h3>Divergência de rentabilidade</h3>
@@ -5721,6 +6326,172 @@ export default function App() {
                     </div>
                   </section>
                 ) : null}
+                <section className="card">
+                  <h3>Carteira (consolidado)</h3>
+                  <div className="tx-form invest-portfolio-toolbar">
+                    <select
+                      className="invoice-filter-select"
+                      value={investPortfolioClassFilter}
+                      onChange={(e) => setInvestPortfolioClassFilter(e.target.value)}
+                    >
+                      <option value="">Todas as classes</option>
+                      {investSummaryClassOptions.map((cls) => (
+                        <option key={cls} value={cls}>{cls}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="tx-table-wrap portfolio-table-wrap">
+                    <table className="tx-table portfolio-table">
+                      <thead>
+                        <tr>
+                          <th>Ativo</th>
+                          <th>Classe</th>
+                          <th>Qtd</th>
+                          <th>Custo</th>
+                          <th>Mercado</th>
+                          <th>Líquido</th>
+                          <th>Origem</th>
+                          <th>Data</th>
+                          <th>P&amp;L</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {investPortfolioPositionsVisible.map((p) => (
+                          <tr key={`${p.asset_id}-${p.symbol}`}>
+                            <td>{p.symbol}</td>
+                            <td>{p.asset_class}</td>
+                            <td>{formatPortfolioQty(p.qty)}</td>
+                            <td>{brl.format(Number(p.cost_basis || 0))}</td>
+                            <td>{brl.format(Number((p.market_value_gross ?? p.market_value) || 0))}</td>
+                            <td>{brl.format(Number((p.estimated_net_value ?? p.market_value) || 0))}</td>
+                            <td>{formatValueOriginLabel(p.value_origin)}</td>
+                            <td>{formatIsoDatePtBr(p.value_ref_date)}</td>
+                            <td>{brl.format(Number(p.unrealized_pnl || 0))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="tx-helper">
+                    Mercado Bruto representa o valor atual do ativo antes de descontos de saída. Líquido Estimado replica o bruto enquanto não houver regra fiscal configurada por ativo.
+                  </p>
+                </section>
+              </>
+            ) : null}
+
+            {investTab === "Rentabilidade" ? (
+              <>
+                <section className="card">
+                  <div className="rentability-head">
+                    <div>
+                      <h3>Rentabilidade por carteira</h3>
+                      <p className="tx-helper">
+                        Indicadores consolidados por classe de ativo, usando custo, valor de mercado, proventos e P&amp;L da carteira.
+                      </p>
+                    </div>
+                    <div className="rentability-window-shortcuts" role="tablist" aria-label="Janela de rentabilidade">
+                      {RENTABILITY_WINDOW_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`rentability-window-chip ${investRentabilityWindow === option.value ? "active" : ""}`}
+                          onClick={() => setInvestRentabilityWindow(option.value)}
+                          aria-pressed={investRentabilityWindow === option.value}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="tx-helper rentability-window-helper">
+                    Janela aplicada: {RENTABILITY_WINDOW_OPTIONS.find((option) => option.value === investRentabilityWindow)?.label || "Desde o início"}.
+                    A análise cruza operações, proventos e posição consolidada atual para destacar as classes com atividade no período.
+                  </p>
+                  <section className="rentability-highlight-grid">
+                    <article className="card rentability-highlight-card">
+                      <span className="rentability-highlight-label">Carteiras monitoradas</span>
+                      <strong>{investRentabilityHighlights.classes_count}</strong>
+                      <p>Classes com posição consolidada na carteira.</p>
+                    </article>
+                    <article className="card rentability-highlight-card">
+                      <span className="rentability-highlight-label">Melhor desempenho</span>
+                      <strong>{investRentabilityHighlights.best ? `${Number(investRentabilityHighlights.best.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
+                      <p>{investRentabilityHighlights.best?.asset_class || "Sem dados"}</p>
+                    </article>
+                    <article className="card rentability-highlight-card">
+                      <span className="rentability-highlight-label">Pior desempenho</span>
+                      <strong>{investRentabilityHighlights.worst ? `${Number(investRentabilityHighlights.worst.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
+                      <p>{investRentabilityHighlights.worst?.asset_class || "Sem dados"}</p>
+                    </article>
+                  </section>
+                  {investRentabilityByClass.length ? (
+                    <div className="chart-box rentability-chart">
+                      <ResponsiveContainer width="100%" height={320}>
+                        <BarChart data={investRentabilityByClass} barCategoryGap={18}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="asset_class" />
+                          <YAxis tickFormatter={(value) => `${Number(value || 0).toFixed(0)}%`} width={72} />
+                          <Tooltip
+                            formatter={(value) => [`${Number(value || 0).toFixed(2)}%`, "Rentabilidade"]}
+                            labelFormatter={(value) => String(value || "")}
+                          />
+                          <Bar dataKey="total_return_pct" radius={[12, 12, 0, 0]}>
+                            {investRentabilityByClass.map((item) => (
+                              <Cell
+                                key={`rentability-bar-${item.asset_class}`}
+                                fill={Number(item.total_return_pct || 0) >= 0 ? "#5dd39e" : "#ff7b7b"}
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <p>Sem dados consolidados de rentabilidade por classe.</p>
+                  )}
+                </section>
+                <section className="card">
+                  <h3>Indicadores por tipo de carteira</h3>
+                  <div className="tx-table-wrap">
+                    <table className="tx-table rentability-table">
+                      <thead>
+                        <tr>
+                          <th>Classe</th>
+                          <th>Ativos</th>
+                          <th>Investido</th>
+                          <th>Mercado</th>
+                          <th>Proventos</th>
+                          <th>Realizado</th>
+                          <th>P&amp;L não realizado</th>
+                          <th>Retorno total</th>
+                          <th>Rentabilidade</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {investRentabilityByClass.map((row) => (
+                          <tr key={`rentability-${row.asset_class}`}>
+                            <td>{row.asset_class}</td>
+                            <td>{row.assets_count}</td>
+                            <td>{brl.format(Number(row.total_invested || 0))}</td>
+                            <td>{brl.format(Number(row.total_market || 0))}</td>
+                            <td>{brl.format(Number(row.total_income || 0))}</td>
+                            <td>{brl.format(Number(row.total_realized || 0))}</td>
+                            <td>{brl.format(Number(row.total_unrealized || 0))}</td>
+                            <td>{brl.format(Number(row.total_return || 0))}</td>
+                            <td className={Number(row.total_return_pct || 0) >= 0 ? "rentability-positive" : "rentability-negative"}>
+                              {Number(row.total_return_pct || 0).toFixed(2)}%
+                            </td>
+                          </tr>
+                        ))}
+                        {!investRentabilityByClass.length ? (
+                          <tr>
+                            <td colSpan={9}>Nenhuma carteira consolidada para exibir.</td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
               </>
             ) : null}
 
@@ -6209,6 +6980,80 @@ export default function App() {
                 </section>
 
                 <section className="card">
+                  <div className="income-history-head">
+                    <div>
+                      <h3>Histórico de proventos</h3>
+                      <p className="tx-helper">
+                        Evolução mensal dos proventos recebidos dentro do período filtrado.
+                      </p>
+                    </div>
+                  </div>
+                  <section className="income-history-kpis">
+                    <article className="card income-history-kpi">
+                      <span className="income-history-kpi-label">Total do período</span>
+                      <strong>{brl.format(Number(investIncomeHistorySummary.total || 0))}</strong>
+                    </article>
+                    <article className="card income-history-kpi">
+                      <span className="income-history-kpi-label">Média mensal</span>
+                      <strong>{brl.format(Number(investIncomeHistorySummary.average || 0))}</strong>
+                    </article>
+                    <article className="card income-history-kpi">
+                      <span className="income-history-kpi-label">Pico mensal</span>
+                      <strong>{brl.format(Number(investIncomeHistorySummary.peakAmount || 0))}</strong>
+                      <p>{investIncomeHistorySummary.peakMonth ? formatMonthYearPtBr(investIncomeHistorySummary.peakMonth) : "-"}</p>
+                    </article>
+                  </section>
+                  {investIncomeTypeTotals.length ? (
+                    <div className="income-history-type-list">
+                      {investIncomeTypeTotals.map((item) => (
+                        <article key={item.type} className="income-history-type-chip">
+                          <span
+                            className="income-history-type-dot"
+                            style={{ background: INCOME_TYPE_COLORS[item.type] || "#8aa7ff" }}
+                            aria-hidden="true"
+                          />
+                          <span className="income-history-type-name">{item.type}</span>
+                          <strong>{brl.format(Number(item.total || 0))}</strong>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                  {investIncomeHistory.length ? (
+                    <div className="chart-box income-history-chart">
+                      <ResponsiveContainer width="100%" height={320}>
+                        <BarChart data={investIncomeHistory} barCategoryGap={18}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="month" tickFormatter={formatMonthYearPtBr} />
+                          <YAxis tickFormatter={(value) => brl.format(Number(value || 0))} width={104} />
+                          <Tooltip
+                            cursor={{ fill: "rgba(120, 170, 255, 0.10)" }}
+                            labelFormatter={(value) => formatMonthYearPtBr(value)}
+                            formatter={(value, name) => [brl.format(Number(value || 0)), String(name || "Proventos")]}
+                          />
+                          {investIncomeTypesVisible.map((type, index) => (
+                            <Bar
+                              key={type}
+                              dataKey={type}
+                              name={type}
+                              stackId="income-total"
+                              radius={index === investIncomeTypesVisible.length - 1 ? [12, 12, 0, 0] : [0, 0, 0, 0]}
+                              fill={INCOME_TYPE_COLORS[type] || "#8aa7ff"}
+                            />
+                          ))}
+                          <defs>
+                            <linearGradient id="incomeHistoryBarFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#66d5ff" stopOpacity={0.96} />
+                              <stop offset="100%" stopColor="#4e7ff3" stopOpacity={0.74} />
+                            </linearGradient>
+                          </defs>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <p>Sem histórico de proventos para o período selecionado.</p>
+                  )}
+                </section>
+                <section className="card">
                   <h3>Proventos recentes</h3>
                   <div className="tx-form invest-date-filter-form">
                     <input
@@ -6434,57 +7279,6 @@ export default function App() {
               </section>
             ) : null}
 
-            <section className="card">
-              <h3>Carteira (consolidado)</h3>
-              <div className="tx-form invest-portfolio-toolbar">
-                <select
-                  className="invoice-filter-select"
-                  value={investPortfolioClassFilter}
-                  onChange={(e) => setInvestPortfolioClassFilter(e.target.value)}
-                >
-                  <option value="">Todas as classes</option>
-                  {investSummaryClassOptions.map((cls) => (
-                    <option key={cls} value={cls}>{cls}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="tx-table-wrap portfolio-table-wrap">
-                <table className="tx-table portfolio-table">
-                  <thead>
-                    <tr>
-                      <th>Ativo</th>
-                      <th>Classe</th>
-                      <th>Qtd</th>
-                      <th>Custo</th>
-                      <th>Mercado</th>
-                      <th>Líquido</th>
-                      <th>Origem</th>
-                      <th>Data</th>
-                      <th>P&amp;L</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {investPortfolioPositionsVisible.map((p) => (
-                      <tr key={`${p.asset_id}-${p.symbol}`}>
-                        <td>{p.symbol}</td>
-                        <td>{p.asset_class}</td>
-                        <td>{formatPortfolioQty(p.qty)}</td>
-                        <td>{brl.format(Number(p.cost_basis || 0))}</td>
-                        <td>{brl.format(Number((p.market_value_gross ?? p.market_value) || 0))}</td>
-                        <td>{brl.format(Number((p.estimated_net_value ?? p.market_value) || 0))}</td>
-                        <td>{formatValueOriginLabel(p.value_origin)}</td>
-                        <td>{formatIsoDatePtBr(p.value_ref_date)}</td>
-                        <td>{brl.format(Number(p.unrealized_pnl || 0))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="tx-helper">
-                Mercado Bruto representa o valor atual do ativo antes de descontos de saída. Líquido Estimado replica o bruto enquanto não houver regra fiscal configurada por ativo.
-              </p>
-              {investMsg ? <p>{investMsg}</p> : null}
-            </section>
           </>
         ) : null}
 

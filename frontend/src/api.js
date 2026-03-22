@@ -324,6 +324,47 @@ export function updateInvestAsset(id, payload) {
   });
 }
 
+export function updateInvestAssetFairValue(id, payload) {
+  return req(`/invest/assets/${id}/fair-value`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadInvestAssetValuationReport(id, file) {
+  const token = getToken();
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${API_BASE}/invest/assets/${id}/valuation-report`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: fd,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function downloadInvestAssetValuationReport(id) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/invest/assets/${id}/valuation-report`, {
+    method: "GET",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `HTTP ${res.status}`);
+  }
+  const disposition = String(res.headers.get("Content-Disposition") || "");
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob: await res.blob(),
+    fileName: match?.[1] || `avaliacao-${id}.pdf`,
+  };
+}
+
 export function updateInvestManualAssetValue(id, payload) {
   return req(`/invest/assets/${id}/manual-update`, {
     method: "POST",

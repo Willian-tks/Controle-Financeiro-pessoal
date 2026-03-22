@@ -128,10 +128,14 @@ def list_assets(user_id: int | None = None):
         SELECT
             a.*,
             ac.name AS broker_account,
-            sc.name AS source_account
+            sc.name AS source_account,
+            avr.file_name AS valuation_report_file_name,
+            avr.content_type AS valuation_report_content_type,
+            avr.uploaded_at AS valuation_report_uploaded_at
         FROM assets a
         LEFT JOIN accounts ac ON ac.id = a.broker_account_id AND ac.user_id = a.user_id
         LEFT JOIN accounts sc ON sc.id = a.source_account_id AND sc.user_id = a.user_id
+        LEFT JOIN asset_valuation_reports avr ON avr.asset_id = a.id AND avr.user_id = a.user_id
         WHERE a.user_id = ?
         ORDER BY a.asset_class, a.symbol
         """,
@@ -160,6 +164,8 @@ def create_asset(
     fixed_rate=None,
     principal_amount=None,
     current_value=None,
+    fair_price=None,
+    safety_margin_pct=None,
     last_update=None,
     user_id: int | None = None,
 ):
@@ -177,9 +183,9 @@ def create_asset(
             (
                 symbol, name, asset_class, sector, currency, broker_account_id, source_account_id,
                 issuer, rate_type, rate_value, maturity_date, rentability_type, index_name,
-                index_pct, spread_rate, fixed_rate, principal_amount, current_value, last_update, user_id
+                index_pct, spread_rate, fixed_rate, principal_amount, current_value, fair_price, safety_margin_pct, last_update, user_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol.strip().upper(),
@@ -200,6 +206,8 @@ def create_asset(
                 fixed_rate,
                 principal_amount,
                 current_value,
+                fair_price,
+                safety_margin_pct,
                 last_update,
                 uid,
             ),
@@ -718,6 +726,8 @@ def update_asset(
     fixed_rate: float | None | object = _UNSET,
     principal_amount: float | None | object = _UNSET,
     current_value: float | None | object = _UNSET,
+    fair_price: float | None | object = _UNSET,
+    safety_margin_pct: float | None | object = _UNSET,
     last_update: str | None | object = _UNSET,
     user_id: int | None = None,
 ):
@@ -747,6 +757,8 @@ def update_asset(
             ("fixed_rate", fixed_rate),
             ("principal_amount", principal_amount),
             ("current_value", current_value),
+            ("fair_price", fair_price),
+            ("safety_margin_pct", safety_margin_pct),
             ("last_update", last_update),
         ]
         for col, value in optional_fields:
@@ -764,6 +776,78 @@ def update_asset(
             params,
         )
         conn.commit()
+
+
+def update_asset_fair_value(
+    asset_id: int,
+    fair_price: float,
+    safety_margin_pct: float,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
+    with get_conn() as conn:
+        cur = conn.cursor()
+        _cur_exec(
+            cur,
+            """
+            UPDATE assets
+            SET fair_price = ?, safety_margin_pct = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (fair_price, safety_margin_pct, asset_id, uid),
+        )
+        conn.commit()
+
+
+def upsert_asset_valuation_report(
+    asset_id: int,
+    file_name: str,
+    content_type: str,
+    file_data: bytes,
+    user_id: int | None = None,
+):
+    uid = _uid(user_id)
+    with get_conn() as conn:
+        existing = _exec(
+            conn,
+            "SELECT id FROM asset_valuation_reports WHERE asset_id = ? AND user_id = ?",
+            (asset_id, uid),
+        ).fetchone()
+        if existing:
+            _exec(
+                conn,
+                """
+                UPDATE asset_valuation_reports
+                SET file_name = ?, content_type = ?, file_data = ?, uploaded_at = CURRENT_TIMESTAMP
+                WHERE asset_id = ? AND user_id = ?
+                """,
+                (file_name, content_type, file_data, asset_id, uid),
+            )
+        else:
+            _exec(
+                conn,
+                """
+                INSERT INTO asset_valuation_reports(asset_id, file_name, content_type, file_data, user_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (asset_id, file_name, content_type, file_data, uid),
+            )
+        conn.commit()
+
+
+def get_asset_valuation_report(asset_id: int, user_id: int | None = None):
+    uid = _uid(user_id)
+    with get_conn() as conn:
+        row = _exec(
+            conn,
+            """
+            SELECT id, asset_id, file_name, content_type, file_data, uploaded_at
+            FROM asset_valuation_reports
+            WHERE asset_id = ? AND user_id = ?
+            """,
+            (asset_id, uid),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def get_asset_by_id(asset_id: int, user_id: int | None = None):
