@@ -1,0 +1,11 @@
+[Unit]
+Description=Run DOMUS quote update job every 30 minutes during market hours
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 10,11,12,13,14,15,16:05,35:00
+OnCalendar=Mon..Fri *-*-* 17:05:00
+Persistent=true
+Unit=domus-update-quotes.service
+
+[Install]
+WantedBy=timers.target

@@ -113,6 +113,47 @@ sudo systemctl status controle-financeiro-api
 
 Se o usuario de execucao nao for `www-data`, ajuste o arquivo do service antes.
 
+### Timer de cotacoes
+
+Para atualizar cotacoes automaticamente no VPS, copie tambem o job e o timer:
+
+```bash
+sudo cp deploy/systemd/domus-update-quotes.service /etc/systemd/system/
+sudo cp deploy/systemd/domus-update-quotes.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable domus-update-quotes.timer
+sudo systemctl start domus-update-quotes.timer
+sudo systemctl status domus-update-quotes.timer
+```
+
+O timer foi configurado para rodar:
+
+- segunda a sexta
+- a cada 30 minutos
+- das `10:05` ate `16:35`
+- com uma execucao final `17:05` para consolidar o fechamento
+
+O job roda localmente no backend, sem expor endpoint publico, e respeita por padrao a janela do mercado no fuso `America/Sao_Paulo`.
+
+Variaveis opcionais no `.env` para ajustar a rotina:
+
+```env
+QUOTE_JOB_TZ=America/Sao_Paulo
+QUOTE_JOB_START_AT=10:00
+QUOTE_JOB_END_AT=17:10
+QUOTE_JOB_TIMEOUT_S=25
+QUOTE_JOB_MAX_WORKERS=4
+QUOTE_JOB_LOCK_FILE=/tmp/domus-update-quotes.lock
+```
+
+Validacoes uteis:
+
+```bash
+systemctl list-timers | grep domus-update-quotes
+sudo systemctl start domus-update-quotes.service
+journalctl -u domus-update-quotes.service -n 50 --no-pager
+```
+
 ## 6. Nginx
 
 Copie a configuracao:
@@ -161,6 +202,7 @@ printf 'VITE_API_BASE_URL=\n' > .env.production
 npm run build
 sudo systemctl reload nginx
 sudo systemctl restart controle-financeiro-api
+sudo systemctl restart domus-update-quotes.timer
 ```
 
 Se `npm run build` falhar com `vite: Permission denied`:

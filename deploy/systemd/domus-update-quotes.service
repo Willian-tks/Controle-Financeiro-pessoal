@@ -1,0 +1,11 @@
+[Unit]
+Description=DOMUS quote update job
+After=network.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/apps/domus
+EnvironmentFile=/opt/apps/domus/.env
+ExecStart=/opt/apps/domus/.venv/bin/python /opt/apps/domus/update_quotes_job.py

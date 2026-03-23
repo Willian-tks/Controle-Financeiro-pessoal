@@ -3744,6 +3744,8 @@ export default function App() {
       showGlobalSuccess("Conta salva.");
       await reloadAllData();
       await reloadCardsData();
+      await reloadDashboard();
+      await reloadInvestData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
@@ -3771,6 +3773,8 @@ export default function App() {
       showGlobalSuccess("Conta atualizada.");
       await reloadAllData();
       await reloadCardsData();
+      await reloadDashboard();
+      await reloadInvestData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
@@ -3790,6 +3794,8 @@ export default function App() {
       showGlobalSuccess("Conta excluída.");
       await reloadAllData();
       await reloadCardsData();
+      await reloadDashboard();
+      await reloadInvestData();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
@@ -3818,6 +3824,7 @@ export default function App() {
       setManageMsg("Categoria salva.");
       showGlobalSuccess("Categoria salva.");
       await reloadAllData();
+      await reloadDashboard();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
@@ -3839,6 +3846,7 @@ export default function App() {
       setManageMsg("Categoria atualizada.");
       showGlobalSuccess("Categoria atualizada.");
       await reloadAllData();
+      await reloadDashboard();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
@@ -3857,6 +3865,7 @@ export default function App() {
       setManageMsg("Categoria excluída.");
       showGlobalSuccess("Categoria excluída.");
       await reloadAllData();
+      await reloadDashboard();
     } catch (err) {
       setManageMsg(String(err.message || err));
     }
@@ -5796,16 +5805,17 @@ export default function App() {
               <div className="tx-table-wrap">
                 <table className="tx-table">
                   <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Data</th>
-                      <th>Descrição</th>
-                      <th>Conta</th>
-                      <th>Categoria</th>
-                      <th>Status</th>
-                      <th>Valor</th>
-                      <th>Ação</th>
-                    </tr>
+                        <tr>
+                          <th>ID</th>
+                          <th>Data</th>
+                          <th>Descrição</th>
+                          <th>Conta</th>
+                          <th>Cartão</th>
+                          <th>Categoria</th>
+                          <th>Status</th>
+                          <th>Valor</th>
+                          <th>Ação</th>
+                        </tr>
                   </thead>
                   <tbody>
                     {transactionsVisibleOrdered.map((t) => (
@@ -5849,6 +5859,7 @@ export default function App() {
                             t.account || "-"
                           )}
                         </td>
+                        <td>{t.card_name || "-"}</td>
                         <td>{t.category || "-"}</td>
                         <td>{t.charge_status || "-"}</td>
                         <td>

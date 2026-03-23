@@ -2237,9 +2237,10 @@ def create_transaction(
 
             today = _date.today()
             start_y, start_m = int(today.year), int(today.month)
-            # Para compromissos agendados, a 1a parcela deve cair no vencimento do mes corrente
-            # se esse vencimento ainda nao passou. O fechamento nao deve empurrar o compromisso.
-            if int(today.day) > int(due_day):
+            # Para compromissos em cartao, o fechamento define a primeira fatura.
+            # Se o compromisso for criado depois do fechamento, a 1a parcela vai
+            # para o proximo ciclo, mesmo que o vencimento do mes atual ainda nao tenha passado.
+            if int(today.day) > int(cycle_day):
                 start_y, start_m = _add_months(start_y, start_m, 1)
 
             # Replica o valor informado em cada mês do parcelamento.
