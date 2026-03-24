@@ -41,6 +41,13 @@ INCOME_TYPES = {
     "Aluguel (FII)": "FII_RENT",
 }
 
+USER_OBJECTIVES = {
+    "accumulate": "Acumular",
+    "hold": "Segurar",
+    "reduce": "Reduzir",
+    "exit": "Sair",
+}
+
 
 _UNSET = object()
 _USE_WORKSPACE_SCOPE: ContextVar[bool] = ContextVar("invest_repo_use_workspace_scope", default=False)
@@ -167,6 +174,7 @@ def create_asset(
     current_value=None,
     fair_price=None,
     safety_margin_pct=None,
+    user_objective=None,
     last_update=None,
     user_id: int | None = None,
 ):
@@ -184,9 +192,9 @@ def create_asset(
             (
                 symbol, name, asset_class, sector, currency, broker_account_id, source_account_id,
                 issuer, rate_type, rate_value, maturity_date, rentability_type, index_name,
-                index_pct, spread_rate, fixed_rate, principal_amount, current_value, fair_price, safety_margin_pct, last_update, user_id
+                index_pct, spread_rate, fixed_rate, principal_amount, current_value, fair_price, safety_margin_pct, user_objective, last_update, user_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol.strip().upper(),
@@ -209,6 +217,7 @@ def create_asset(
                 current_value,
                 fair_price,
                 safety_margin_pct,
+                user_objective,
                 last_update,
                 uid,
             ),
@@ -810,6 +819,7 @@ def update_asset(
     current_value: float | None | object = _UNSET,
     fair_price: float | None | object = _UNSET,
     safety_margin_pct: float | None | object = _UNSET,
+    user_objective: str | None | object = _UNSET,
     last_update: str | None | object = _UNSET,
     user_id: int | None = None,
 ):
@@ -841,6 +851,7 @@ def update_asset(
             ("current_value", current_value),
             ("fair_price", fair_price),
             ("safety_margin_pct", safety_margin_pct),
+            ("user_objective", user_objective),
             ("last_update", last_update),
         ]
         for col, value in optional_fields:
@@ -862,21 +873,28 @@ def update_asset(
 
 def update_asset_fair_value(
     asset_id: int,
-    fair_price: float,
-    safety_margin_pct: float,
+    fair_price: float | None,
+    safety_margin_pct: float | None,
+    user_objective: str | None | object = _UNSET,
     user_id: int | None = None,
 ):
     uid = _uid(user_id)
     with get_conn() as conn:
         cur = conn.cursor()
+        updates = ["fair_price = ?", "safety_margin_pct = ?"]
+        params: list = [fair_price, safety_margin_pct]
+        if user_objective is not _UNSET:
+            updates.append("user_objective = ?")
+            params.append(user_objective)
+        params.extend([asset_id, uid])
         _cur_exec(
             cur,
-            """
+            f"""
             UPDATE assets
-            SET fair_price = ?, safety_margin_pct = ?
+            SET {", ".join(updates)}
             WHERE id = ? AND user_id = ?
             """,
-            (fair_price, safety_margin_pct, asset_id, uid),
+            params,
         )
         conn.commit()
 

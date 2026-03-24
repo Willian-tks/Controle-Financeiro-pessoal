@@ -10,6 +10,7 @@ import icUsuario from "./icons/usuario.png";
 import icDespesa from "./icons/despesa_2.png";
 import icReceita from "./icons/receita_2.png";
 import icSaldo from "./icons/saldo_2.png";
+import downloadIcon from "./download.svg";
 import bankInterLogo from "./banks/banco-inter-logo.svg";
 import bankBradescoLogo from "./banks/bradesco-logo.svg";
 import bankItauLogo from "./banks/itau-logo.svg";
@@ -124,6 +125,12 @@ const PAGE_SUBTITLES = {
 };
 
 const INVEST_TABS = ["Resumo", "Rentabilidade", "Ativos", "Operações", "Proventos", "Cotações"];
+const USER_OBJECTIVE_OPTIONS = [
+  { value: "accumulate", label: "Acumular" },
+  { value: "hold", label: "Segurar" },
+  { value: "reduce", label: "Reduzir" },
+  { value: "exit", label: "Sair" },
+];
 const RENTABILITY_WINDOW_OPTIONS = [
   { value: "6m", label: "6 meses" },
   { value: "12m", label: "12 meses" },
@@ -411,6 +418,18 @@ function getFairValueBiasLabel(currentPrice, entryPrice, ceilingPrice) {
     return { label: "Vender", tone: "sell" };
   }
   return { label: "Aguardar", tone: "wait" };
+}
+
+function formatUserObjectiveLabel(value) {
+  return USER_OBJECTIVE_OPTIONS.find((option) => option.value === String(value || "").trim().toLowerCase())?.label || "-";
+}
+
+function getUserObjectiveTone(value) {
+  const objective = String(value || "").trim().toLowerCase();
+  if (objective === "accumulate") return "buy";
+  if (objective === "reduce" || objective === "exit") return "sell";
+  if (objective === "hold") return "wait";
+  return "neutral";
 }
 
 function InvestmentPieGradient(props) {
@@ -964,6 +983,7 @@ export default function App() {
   const [manualQuoteValue, setManualQuoteValue] = useState("");
   const [manualQuoteDate, setManualQuoteDate] = useState("");
   const [fairValueDrafts, setFairValueDrafts] = useState({});
+  const [fairValueInlineEditId, setFairValueInlineEditId] = useState("");
   const [fairValueClassFilter, setFairValueClassFilter] = useState("");
   const [fairValueAssetId, setFairValueAssetId] = useState("");
   const [investTab, setInvestTab] = useState("Resumo");
@@ -1369,6 +1389,9 @@ export default function App() {
           safety_margin_pct:
             prev[key]?.safety_margin_pct ??
             (asset?.safety_margin_pct == null ? "20,00" : formatLocalizedNumber(asset.safety_margin_pct, 2)),
+          user_objective:
+            prev[key]?.user_objective ??
+            String(asset?.user_objective || "").trim().toLowerCase(),
         };
       }
       return next;
@@ -1923,6 +1946,18 @@ export default function App() {
         const safetyMarginPct = Number(asset?.safety_margin_pct || 0);
         const { entryPrice, ceilingPrice } = computeFairValueRange(fairPrice, safetyMarginPct);
         const bias = getFairValueBiasLabel(currentPriceRaw, entryPrice, ceilingPrice);
+        const technicalSignal = {
+          code:
+            bias.tone === "buy"
+              ? "buy"
+              : bias.tone === "sell"
+                ? "sell"
+                : bias.tone === "wait"
+                  ? "wait"
+                  : "neutral",
+          label: bias.label,
+          tone: bias.tone,
+        };
         return {
           ...asset,
           currentPrice: Number.isFinite(currentPriceRaw) && currentPriceRaw > 0 ? currentPriceRaw : null,
@@ -1931,6 +1966,8 @@ export default function App() {
           entryPrice,
           ceilingPrice,
           bias,
+          technicalSignal,
+          userObjective: String(asset?.user_objective || "").trim().toLowerCase() || null,
           priceRefDate: latestPrice?.date || asset?.last_update || "",
         };
       })
@@ -3637,7 +3674,7 @@ export default function App() {
     const key = String(assetId || "");
     if (!key) return;
     setFairValueDrafts((prev) => {
-      const base = prev[key] || { fair_price: "", safety_margin_pct: "20,00" };
+      const base = prev[key] || { fair_price: "", safety_margin_pct: "20,00", user_objective: "" };
       return {
         ...prev,
         [key]: {
@@ -3645,7 +3682,9 @@ export default function App() {
           [field]:
             field === "fair_price"
               ? formatCurrencyInputValue(value)
-              : sanitizeDecimalInputValue(value, { maxDecimals: 2, maxIntegerDigits: 3 }),
+              : field === "safety_margin_pct"
+                ? sanitizeDecimalInputValue(value, { maxDecimals: 2, maxIntegerDigits: 3 })
+                : String(value || "").trim().toLowerCase(),
         },
       };
     });
@@ -3654,39 +3693,95 @@ export default function App() {
   async function onSaveAssetFairValue(asset) {
     if (!canEditInvestimentos) {
       setInvestMsg("Sem permissão para salvar preço justo.");
-      return;
+      return false;
     }
     const key = String(asset?.id || "");
     const draft = fairValueDrafts[key] || {};
     const fairPrice = parseLocaleNumber(draft.fair_price || "");
     const safetyMarginPct = parseLocaleNumber(draft.safety_margin_pct || "");
+    const userObjective = String(draft.user_objective || "").trim().toLowerCase() || null;
     if (!Number.isFinite(fairPrice) || fairPrice <= 0) {
       setInvestMsg("Informe um preço justo válido.");
-      return;
+      return false;
     }
     if (!Number.isFinite(safetyMarginPct) || safetyMarginPct < 0 || safetyMarginPct > 100) {
       setInvestMsg("Informe uma margem de segurança entre 0% e 100%.");
-      return;
+      return false;
     }
+    let saved = false;
     await withPendingAction(`fairValue-${key}`, async () => {
       try {
         await updateInvestAssetFairValue(Number(asset.id), {
           fair_price: fairPrice,
           safety_margin_pct: safetyMarginPct,
+          user_objective: userObjective,
         });
         setInvestMsg(`Preço justo de ${asset.symbol} salvo.`);
         showGlobalSuccess(`Preço justo de ${asset.symbol} salvo.`);
         await reloadInvestData();
+        setFairValueInlineEditId("");
+        saved = true;
       } catch (err) {
         setInvestMsg(String(err.message || err));
       }
     });
+    return saved;
   }
 
   function triggerAssetValuationReportSelect(assetId) {
     const key = String(assetId || "");
     if (!key || !canEditInvestimentos || isPendingAction(`fairValueReportUpload-${key}`)) return;
     valuationReportInputRefs.current[key]?.click?.();
+  }
+
+  function onEditFairValueAsset(asset) {
+    if (!asset?.id) return;
+    const key = String(asset.id);
+    setFairValueDrafts((prev) => ({
+      ...prev,
+      [key]: {
+        fair_price: asset?.fairPrice == null ? "" : formatLocalizedNumber(asset.fairPrice, 2),
+        safety_margin_pct: asset?.safetyMarginPct == null ? "20,00" : formatLocalizedNumber(asset.safetyMarginPct, 2),
+        user_objective: String(asset?.userObjective || "").trim().toLowerCase(),
+      },
+    }));
+    setFairValueInlineEditId(key);
+  }
+
+  async function onToggleInlineFairValueEdit(asset) {
+    const key = String(asset?.id || "");
+    if (!key) return;
+    if (fairValueInlineEditId === key) {
+      await onSaveAssetFairValue(asset);
+      return;
+    }
+    onEditFairValueAsset(asset);
+  }
+
+  async function onDeleteAssetFairValue(asset) {
+    const key = String(asset?.id || "");
+    if (!key) return;
+    if (!canEditInvestimentos) {
+      setInvestMsg("Sem permissão para excluir preço justo.");
+      return;
+    }
+    const confirmed = window.confirm(`Excluir a configuração de preço justo de ${asset.symbol}?`);
+    if (!confirmed) return;
+    await withPendingAction(`fairValueDelete-${key}`, async () => {
+      try {
+        await updateInvestAssetFairValue(Number(asset.id), {
+          fair_price: null,
+          safety_margin_pct: null,
+          user_objective: asset?.userObjective || null,
+        });
+        setFairValueInlineEditId("");
+        setInvestMsg(`Preço justo de ${asset.symbol} excluído.`);
+        showGlobalSuccess(`Preço justo de ${asset.symbol} excluído.`);
+        await reloadInvestData();
+      } catch (err) {
+        setInvestMsg(String(err.message || err));
+      }
+    });
   }
 
   async function onUploadAssetValuationReport(asset, file) {
@@ -6158,7 +6253,7 @@ export default function App() {
                     <div>
                       <h3>Preço justo e viés</h3>
                       <p className="tx-helper">
-                        Regra aplicada: cotação atual menor ou igual ao preço de entrada = Comprar; maior ou igual ao preço teto = Vender; entre os dois = Aguardar.
+                        Regra aplicada: cotação atual menor ou igual ao preço de entrada = Comprar; maior ou igual ao preço teto = Vender; entre os dois = Aguardar. O sinal técnico é automático; o objetivo do usuário é manual.
                       </p>
                     </div>
                   </div>
@@ -6203,6 +6298,16 @@ export default function App() {
                       placeholder="Margem de segurança (%)"
                       disabled={!selectedFairValueAsset || !canEditInvestimentos || isPendingAction(`fairValue-${selectedFairValueAsset?.id}`)}
                     />
+                    <select
+                      value={selectedFairValueAsset ? fairValueDrafts[String(selectedFairValueAsset.id)]?.user_objective || "" : ""}
+                      onChange={(e) => selectedFairValueAsset && onChangeFairValueDraft(selectedFairValueAsset.id, "user_objective", e.target.value)}
+                      disabled={!selectedFairValueAsset || !canEditInvestimentos || isPendingAction(`fairValue-${selectedFairValueAsset?.id}`)}
+                    >
+                      <option value="">Objetivo do usuário</option>
+                      {USER_OBJECTIVE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
                     <button
                       type="button"
                       className="tx-action-primary"
@@ -6232,8 +6337,12 @@ export default function App() {
                         <strong>{selectedFairValueAsset.ceilingPrice == null ? "-" : brl.format(selectedFairValueAsset.ceilingPrice)}</strong>
                       </div>
                       <div className="card">
-                        <h4>Viés</h4>
-                        <span className={`fair-value-bias ${selectedFairValueAsset.bias.tone}`}>{selectedFairValueAsset.bias.label}</span>
+                        <h4>Sinal técnico</h4>
+                        <span className={`fair-value-bias ${selectedFairValueAsset.technicalSignal.tone}`}>{selectedFairValueAsset.technicalSignal.label}</span>
+                      </div>
+                      <div className="card">
+                        <h4>Objetivo do usuário</h4>
+                        <strong>{formatUserObjectiveLabel(selectedFairValueAsset.userObjective)}</strong>
                       </div>
                     </div>
                   ) : null}
@@ -6247,21 +6356,38 @@ export default function App() {
                           <th>Entrada</th>
                           <th>Cotação atual</th>
                           <th>Teto</th>
-                          <th>Viés</th>
+                          <th>Sinal técnico</th>
+                          <th>Objetivo</th>
                           <th>Relatório PDF</th>
+                          <th>Ações</th>
                         </tr>
                       </thead>
                       <tbody>
                         {configuredFairValueAssets.map((asset) => {
                           const uploadPending = isPendingAction(`fairValueReportUpload-${asset.id}`);
                           const downloadPending = isPendingAction(`fairValueReportDownload-${asset.id}`);
+                          const fairValuePending = isPendingAction(`fairValue-${asset.id}`);
+                          const fairValueDeletePending = isPendingAction(`fairValueDelete-${asset.id}`);
+                          const isInlineEditing = fairValueInlineEditId === String(asset.id);
                           return (
                             <tr key={`fair-value-${asset.id}`}>
                               <td>
                                 <strong>{asset.symbol}</strong>
                                 <div>{asset.name}</div>
                               </td>
-                              <td>{asset.fairPrice == null ? "-" : brl.format(asset.fairPrice)}</td>
+                              <td>
+                                {isInlineEditing ? (
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={fairValueDrafts[String(asset.id)]?.fair_price || ""}
+                                    onChange={(e) => onChangeFairValueDraft(asset.id, "fair_price", e.target.value)}
+                                    disabled={!canEditInvestimentos || fairValuePending}
+                                  />
+                                ) : (
+                                  asset.fairPrice == null ? "-" : brl.format(asset.fairPrice)
+                                )}
+                              </td>
                               <td>{asset.safetyMarginPct == null ? "-" : `${formatLocalizedNumber(asset.safetyMarginPct, 2)}%`}</td>
                               <td>{asset.entryPrice == null ? "-" : brl.format(asset.entryPrice)}</td>
                               <td>
@@ -6270,7 +6396,12 @@ export default function App() {
                               </td>
                               <td>{asset.ceilingPrice == null ? "-" : brl.format(asset.ceilingPrice)}</td>
                               <td>
-                                <span className={`fair-value-bias ${asset.bias.tone}`}>{asset.bias.label}</span>
+                                <span className={`fair-value-bias ${asset.technicalSignal.tone}`}>{asset.technicalSignal.label}</span>
+                              </td>
+                              <td>
+                                <span className={`fair-value-bias ${getUserObjectiveTone(asset.userObjective)}`}>
+                                  {formatUserObjectiveLabel(asset.userObjective)}
+                                </span>
                               </td>
                               <td className="fair-value-report-cell">
                                 <input
@@ -6304,7 +6435,7 @@ export default function App() {
                                     {uploadPending ? "..." : <span className="fair-value-report-icon" aria-hidden="true" />}
                                   </button>
                                   {asset.valuation_report_uploaded_at ? (
-                                    <>
+                                    <div className="fair-value-report-download-group">
                                       <button
                                         type="button"
                                         className="tx-action-primary fair-value-report-download-btn"
@@ -6313,13 +6444,33 @@ export default function App() {
                                         aria-label="Baixar PDF do relatório"
                                         title="Baixar PDF"
                                       >
-                                        <span className="fair-value-download-icon" aria-hidden="true" />
+                                        <img src={downloadIcon} alt="" className="fair-value-download-icon" aria-hidden="true" />
                                       </button>
                                       <div className="fair-value-report-meta">
                                         {formatIsoDatePtBr(asset.valuation_report_uploaded_at)}
                                       </div>
-                                    </>
+                                    </div>
                                   ) : null}
+                                </div>
+                              </td>
+                              <td>
+                                <div className="fair-value-row-actions">
+                                  <button
+                                    type="button"
+                                    className={isInlineEditing ? "tx-action-primary fair-value-edit-btn" : "tx-action-neutral fair-value-edit-btn"}
+                                    onClick={() => onToggleInlineFairValueEdit(asset)}
+                                    disabled={!canEditInvestimentos || fairValuePending || fairValueDeletePending}
+                                  >
+                                    {fairValuePending ? "Salvando..." : isInlineEditing ? "Salvar" : "Editar"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="danger fair-value-delete-btn"
+                                    onClick={() => onDeleteAssetFairValue(asset)}
+                                    disabled={!canEditInvestimentos || fairValuePending || fairValueDeletePending}
+                                  >
+                                    {fairValueDeletePending ? "Excluindo..." : "Excluir"}
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -6327,7 +6478,7 @@ export default function App() {
                         })}
                         {!configuredFairValueAssets.length ? (
                           <tr>
-                            <td colSpan={8}>Nenhum ativo configurado com preço justo ainda.</td>
+                            <td colSpan={10}>Nenhum ativo configurado com preço justo ainda.</td>
                           </tr>
                         ) : null}
                       </tbody>
@@ -6406,6 +6557,7 @@ export default function App() {
                           <th>Ativo</th>
                           <th>Classe</th>
                           <th>Qtd</th>
+                          <th>Custo médio</th>
                           <th>Custo</th>
                           <th>Mercado</th>
                           <th>Líquido</th>
@@ -6420,6 +6572,7 @@ export default function App() {
                             <td>{p.symbol}</td>
                             <td>{p.asset_class}</td>
                             <td>{formatPortfolioQty(p.qty)}</td>
+                            <td>{brl.format(Number(p.avg_cost || 0))}</td>
                             <td>{brl.format(Number(p.cost_basis || 0))}</td>
                             <td>{brl.format(Number((p.market_value_gross ?? p.market_value) || 0))}</td>
                             <td>{brl.format(Number((p.estimated_net_value ?? p.market_value) || 0))}</td>

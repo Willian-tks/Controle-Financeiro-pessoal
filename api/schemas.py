@@ -153,6 +153,7 @@ class AssetCreateRequest(BaseModel):
     last_update: str | None = None
     fair_price: float | None = None
     safety_margin_pct: float | None = None
+    user_objective: str | None = None
 
 
 class AssetUpdateRequest(BaseModel):
@@ -177,11 +178,13 @@ class AssetUpdateRequest(BaseModel):
     last_update: str | None = None
     fair_price: float | None = None
     safety_margin_pct: float | None = None
+    user_objective: str | None = None
 
 
 class AssetFairValueUpdateRequest(BaseModel):
-    fair_price: float
-    safety_margin_pct: float
+    fair_price: float | None = None
+    safety_margin_pct: float | None = None
+    user_objective: str | None = None
 
 
 class ManualAssetValueUpdateRequest(BaseModel):

@@ -1252,10 +1252,12 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 92px;
-  padding: 6px 10px;
+  min-width: 74px;
+  padding: 4px 8px;
   border-radius: 999px;
   font-weight: 700;
+  font-size: 0.92rem;
+  line-height: 1.15;
 }
 
 .fair-value-bias.buy {
@@ -1293,8 +1295,15 @@ body {
 .fair-value-report-actions {
   display: flex;
   align-items: center;
+  gap: 14px;
+  flex-wrap: nowrap;
+}
+
+.fair-value-report-download-group {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  white-space: nowrap;
 }
 
 .fair-value-report-actions button {
@@ -1380,69 +1389,65 @@ body {
 }
 
 .fair-value-report-download-btn {
-  width: 42px;
-  min-width: 42px;
-  min-height: 42px;
+  width: 38px;
+  min-width: 38px;
+  min-height: 38px;
   padding: 0;
-  border-radius: 50%;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  line-height: 1;
 }
 
 .fair-value-download-icon {
-  display: inline-block;
+  display: block;
   width: 16px;
   height: 16px;
-  position: relative;
-}
-
-.fair-value-download-icon::before {
-  content: "";
-  position: absolute;
-  left: 7px;
-  top: 1px;
-  width: 2px;
-  height: 8px;
-  background: currentColor;
-  border-radius: 999px;
-}
-
-.fair-value-download-icon::after {
-  content: "";
-  position: absolute;
-  left: 3px;
-  top: 7px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: rotate(45deg);
-}
-
-.fair-value-report-download-btn span::before {
-  box-shadow: none;
-}
-
-.fair-value-report-download-btn {
-  position: relative;
-}
-
-.fair-value-report-download-btn::after {
-  content: "";
-  position: absolute;
-  left: 11px;
-  right: 11px;
-  bottom: 11px;
-  height: 2px;
-  background: currentColor;
-  border-radius: 999px;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
 }
 
 .fair-value-report-meta {
   color: var(--text-muted);
   font-size: 12px;
-  white-space: normal;
-  flex: 1 1 100%;
+  white-space: nowrap;
+}
+
+.fair-value-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fair-value-row-actions .fair-value-edit-btn,
+.fair-value-row-actions .fair-value-delete-btn {
+  min-width: 76px;
+}
+
+.main-dashboard .fair-value-row-actions .fair-value-edit-btn {
+  border-color: rgba(121, 178, 255, 0.46);
+  background: linear-gradient(135deg, rgba(44, 151, 231, 0.9), rgba(86, 132, 245, 0.9));
+  color: #eef7ff;
+  box-shadow: 0 10px 22px rgba(16, 60, 146, 0.24);
+}
+
+.main-dashboard .fair-value-row-actions .fair-value-edit-btn:hover:not(:disabled) {
+  border-color: rgba(148, 209, 255, 0.68);
+  box-shadow: 0 14px 28px rgba(16, 60, 146, 0.3);
+}
+
+.main-dashboard .fair-value-row-actions .fair-value-delete-btn {
+  border-color: rgba(255, 168, 183, 0.5);
+  background: linear-gradient(135deg, rgba(184, 55, 83, 0.86), rgba(146, 36, 67, 0.86));
+  color: #ffe4eb;
+  box-shadow: 0 10px 22px rgba(88, 14, 36, 0.26);
+}
+
+.main-dashboard .fair-value-row-actions .fair-value-delete-btn:hover:not(:disabled) {
+  border-color: rgba(255, 196, 207, 0.7);
+  box-shadow: 0 14px 28px rgba(88, 14, 36, 0.34);
 }
 
 .tabs-card {

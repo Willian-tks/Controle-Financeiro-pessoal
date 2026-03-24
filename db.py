@@ -277,6 +277,7 @@ def _sqlite_schema(cur):
         current_value REAL,
         fair_price REAL,
         safety_margin_pct REAL,
+        user_objective TEXT,
         last_update TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY(broker_account_id) REFERENCES accounts(id)
@@ -554,6 +555,7 @@ def _postgres_schema(cur):
         current_value DOUBLE PRECISION,
         fair_price DOUBLE PRECISION,
         safety_margin_pct DOUBLE PRECISION,
+        user_objective TEXT,
         last_update TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         CONSTRAINT fk_assets_broker FOREIGN KEY (broker_account_id) REFERENCES accounts(id)
@@ -917,6 +919,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS current_value DOUBLE PRECISION")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS fair_price DOUBLE PRECISION")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS safety_margin_pct DOUBLE PRECISION")
+    cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_objective TEXT")
     cur.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS last_update TEXT")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS asset_valuation_reports (
@@ -1129,6 +1132,7 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "assets", "current_value REAL")
     _add_column_sqlite(cur, "assets", "fair_price REAL")
     _add_column_sqlite(cur, "assets", "safety_margin_pct REAL")
+    _add_column_sqlite(cur, "assets", "user_objective TEXT")
     _add_column_sqlite(cur, "assets", "last_update TEXT")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS asset_valuation_reports (
@@ -1411,6 +1415,7 @@ def _rebuild_sqlite_unique_tables(cur):
             current_value REAL,
             fair_price REAL,
             safety_margin_pct REAL,
+            user_objective TEXT,
             last_update TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             user_id INTEGER,
@@ -1421,13 +1426,13 @@ def _rebuild_sqlite_unique_tables(cur):
         INSERT INTO assets_new(
             id, symbol, name, asset_class, sector, currency,
             broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date,
-            rentability_type, index_name, index_pct, spread_rate, fixed_rate, principal_amount, current_value, fair_price, safety_margin_pct, last_update,
+            rentability_type, index_name, index_pct, spread_rate, fixed_rate, principal_amount, current_value, fair_price, safety_margin_pct, user_objective, last_update,
             created_at, user_id
         )
         SELECT
             id, symbol, name, asset_class, sector, currency,
             broker_account_id, source_account_id, issuer, rate_type, rate_value, maturity_date,
-            rentability_type, index_name, index_pct, spread_rate, fixed_rate, principal_amount, current_value, fair_price, safety_margin_pct, last_update,
+            rentability_type, index_name, index_pct, spread_rate, fixed_rate, principal_amount, current_value, fair_price, safety_margin_pct, user_objective, last_update,
             created_at, user_id
         FROM assets
         """)

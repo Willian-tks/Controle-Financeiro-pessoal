@@ -453,6 +453,17 @@ def _validate_asset_fair_value_fields(
     }
 
 
+def _validate_asset_user_objective(user_objective: Any) -> str | None:
+    if user_objective is None:
+        return None
+    objective = str(user_objective or "").strip().lower()
+    if not objective:
+        return None
+    if objective not in invest_repo.USER_OBJECTIVES:
+        raise HTTPException(status_code=400, detail="Objetivo do usuário inválido.")
+    return objective
+
+
 def _sanitize_download_filename(file_name: str, fallback: str = "avaliacao.pdf") -> str:
     raw = str(file_name or "").strip()
     cleaned = re.sub(r'[^A-Za-z0-9._ -]+', "_", raw).strip(" .")
@@ -2978,6 +2989,7 @@ def invest_create_asset(
         fair_price=body.fair_price,
         safety_margin_pct=body.safety_margin_pct,
     )
+    user_objective = _validate_asset_user_objective(body.user_objective)
 
     created = invest_repo.create_asset(
         symbol=symbol,
@@ -3000,6 +3012,7 @@ def invest_create_asset(
         current_value=body.current_value,
         fair_price=fair_cfg["fair_price"],
         safety_margin_pct=fair_cfg["safety_margin_pct"],
+        user_objective=user_objective,
         last_update=(body.last_update or "").strip() or None,
         user_id=uid,
     )
@@ -3059,9 +3072,12 @@ def invest_update_asset(
         else body.dict(exclude_unset=True)
     )
     optional_updates: dict[str, Any] = {}
-    for text_field in ["issuer", "rate_type", "maturity_date", "rentability_type", "index_name", "last_update"]:
+    for text_field in ["issuer", "rate_type", "maturity_date", "rentability_type", "index_name", "last_update", "user_objective"]:
         if text_field in raw_payload:
-            optional_updates[text_field] = (raw_payload.get(text_field) or "").strip() or None
+            if text_field == "user_objective":
+                optional_updates[text_field] = _validate_asset_user_objective(raw_payload.get(text_field))
+            else:
+                optional_updates[text_field] = (raw_payload.get(text_field) or "").strip() or None
     for numeric_field in ["rate_value", "index_pct", "spread_rate", "fixed_rate", "principal_amount", "current_value", "fair_price", "safety_margin_pct"]:
         if numeric_field in raw_payload:
             optional_updates[numeric_field] = raw_payload.get(numeric_field)
@@ -3087,6 +3103,8 @@ def invest_update_asset(
     )
     optional_updates["fair_price"] = fair_cfg["fair_price"]
     optional_updates["safety_margin_pct"] = fair_cfg["safety_margin_pct"]
+    if "user_objective" not in optional_updates and "user_objective" in asset:
+        optional_updates["user_objective"] = _validate_asset_user_objective(asset.get("user_objective"))
     optional_updates.update(
         _resolve_manual_rentability_updates(
             rentability_type=optional_updates.get("rentability_type", asset.get("rentability_type")),
@@ -3128,11 +3146,13 @@ def invest_update_asset_fair_value(
         fair_price=body.fair_price,
         safety_margin_pct=body.safety_margin_pct,
     )
+    user_objective = _validate_asset_user_objective(body.user_objective)
 
     invest_repo.update_asset_fair_value(
         asset_id=asset_id,
-        fair_price=float(fair_cfg["fair_price"] or 0.0),
-        safety_margin_pct=float(fair_cfg["safety_margin_pct"] or 0.0),
+        fair_price=None if fair_cfg["fair_price"] is None else float(fair_cfg["fair_price"]),
+        safety_margin_pct=None if fair_cfg["safety_margin_pct"] is None else float(fair_cfg["safety_margin_pct"]),
+        user_objective=user_objective,
         user_id=uid,
     )
     return {"ok": True}
