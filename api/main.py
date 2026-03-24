@@ -6,9 +6,10 @@ import calendar
 import logging
 from html import escape
 from typing import Any
-from datetime import date as _date, timedelta
+from datetime import date as _date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import requests
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
@@ -76,6 +77,9 @@ from .security import create_token, verify_token
 app = FastAPI(title="Controle Financeiro API", version="0.1.0")
 VALID_VIEWS = {"caixa", "competencia", "futuro"}
 logger = logging.getLogger(__name__)
+QUOTE_JOB_TIMEZONE = "America/Sao_Paulo"
+QUOTE_JOB_START_AT = time(hour=10, minute=0)
+QUOTE_JOB_END_AT = time(hour=17, minute=10)
 
 
 def _cors_origins() -> list[str]:
@@ -135,6 +139,36 @@ def _norm_account_type(value: Any) -> str:
     if raw == "dinheiro":
         return "Dinheiro"
     return str(value or "").strip()
+
+
+def _quote_job_schedule_context(now: datetime | None = None) -> dict[str, str]:
+    tz = ZoneInfo(QUOTE_JOB_TIMEZONE)
+    base_now = now.astimezone(tz) if isinstance(now, datetime) else datetime.now(tz)
+    current = base_now
+    for _ in range(10):
+        if current.weekday() < 5:
+            start_dt = datetime.combine(current.date(), QUOTE_JOB_START_AT, tzinfo=tz)
+            end_dt = datetime.combine(current.date(), QUOTE_JOB_END_AT, tzinfo=tz)
+            if base_now <= start_dt:
+                next_run = start_dt
+            elif base_now <= end_dt:
+                next_run = base_now
+            else:
+                current = current + timedelta(days=1)
+                continue
+            return {
+                "timezone": QUOTE_JOB_TIMEZONE,
+                "start_at": QUOTE_JOB_START_AT.strftime("%H:%M"),
+                "end_at": QUOTE_JOB_END_AT.strftime("%H:%M"),
+                "next_run_at": next_run.isoformat(),
+            }
+        current = current + timedelta(days=1)
+    return {
+        "timezone": QUOTE_JOB_TIMEZONE,
+        "start_at": QUOTE_JOB_START_AT.strftime("%H:%M"),
+        "end_at": QUOTE_JOB_END_AT.strftime("%H:%M"),
+        "next_run_at": base_now.isoformat(),
+    }
 
 
 def _norm_currency(value: Any) -> str:
@@ -3517,6 +3551,8 @@ def invest_update_all_prices(
     user: dict = Depends(_current_user),
 ) -> dict:
     uid = int(user["id"])
+    workspace_id = _current_workspace_id_from_user(user)
+    now_tz = ZoneInfo(QUOTE_JOB_TIMEZONE)
     assets = invest_repo.list_assets(user_id=uid) or []
     include_groups = {
         str(g or "").strip()
@@ -3526,13 +3562,28 @@ def invest_update_all_prices(
     if include_groups:
         assets = [a for a in assets if _quote_group_for_asset(dict(a)) in include_groups]
     if not assets:
+        if workspace_id:
+            stamp = datetime.now(now_tz).isoformat()
+            invest_repo.upsert_quote_job_status(
+                workspace_id=int(workspace_id),
+                last_started_at=stamp,
+                last_finished_at=stamp,
+                last_status="skipped",
+                last_reason="no_assets",
+                last_saved_total=0,
+                last_total=0,
+                last_error_total=0,
+                last_run_scope="manual",
+            )
         return {"ok": True, "saved": 0, "total": 0, "report": []}
+    started_at = datetime.now(now_tz).isoformat()
     report = invest_quotes.update_all_prices(
         assets=[dict(a) for a in assets],
         timeout_s=body.timeout_s,
         max_workers=body.max_workers,
     )
     saved = 0
+    error_total = 0
     for r in report:
         if r.get("ok"):
             invest_repo.upsert_price(
@@ -3543,7 +3594,34 @@ def invest_update_all_prices(
                 user_id=uid,
             )
             saved += 1
+        else:
+            error_total += 1
+    if workspace_id:
+        invest_repo.upsert_quote_job_status(
+            workspace_id=int(workspace_id),
+            last_started_at=started_at,
+            last_finished_at=datetime.now(now_tz).isoformat(),
+            last_status="success" if error_total == 0 else "warning",
+            last_reason=None,
+            last_saved_total=saved,
+            last_total=len(report),
+            last_error_total=error_total,
+            last_run_scope="manual",
+        )
     return {"ok": True, "saved": saved, "total": len(report), "report": report}
+
+
+@app.get("/invest/prices/job-status")
+def invest_get_quote_job_status(user: dict = Depends(_current_user)) -> dict:
+    workspace_id = _current_workspace_id_from_user(user)
+    base = _quote_job_schedule_context()
+    if not workspace_id:
+        return base
+    status = invest_repo.get_quote_job_status(int(workspace_id)) or {}
+    return {
+        **base,
+        **status,
+    }
 
 
 @app.middleware("http")

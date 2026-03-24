@@ -438,6 +438,10 @@ export function updateAllInvestPrices(payload = {}) {
   });
 }
 
+export function getInvestPriceJobStatus() {
+  return req("/invest/prices/job-status");
+}
+
 export function updateAllInvestRentability(payload = {}, timeoutMs = 0) {
   return req("/invest/rentability/update-all", {
     method: "POST",

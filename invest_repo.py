@@ -2,6 +2,7 @@
 from tenant import get_current_user_id, get_current_workspace_id
 import re
 from contextvars import ContextVar
+from datetime import datetime
 
 ASSET_CLASSES = {
     "Ações BR": "ACAO_BR",
@@ -502,6 +503,87 @@ def list_prices(asset_id: int | None = None, limit: int = 200, user_id: int | No
     rows = _exec(conn, q, params).fetchall()
     conn.close()
     return rows
+
+
+def upsert_quote_job_status(
+    *,
+    workspace_id: int,
+    last_started_at: str | None = None,
+    last_finished_at: str | None = None,
+    last_status: str | None = None,
+    last_reason: str | None = None,
+    last_saved_total: int = 0,
+    last_total: int = 0,
+    last_error_total: int = 0,
+    last_run_scope: str | None = None,
+):
+    conn = get_conn()
+    updated_at = datetime.utcnow().isoformat()
+    conn.execute(
+        """
+        INSERT INTO quote_job_status(
+            workspace_id,
+            last_started_at,
+            last_finished_at,
+            last_status,
+            last_reason,
+            last_saved_total,
+            last_total,
+            last_error_total,
+            last_run_scope,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET
+            last_started_at=excluded.last_started_at,
+            last_finished_at=excluded.last_finished_at,
+            last_status=excluded.last_status,
+            last_reason=excluded.last_reason,
+            last_saved_total=excluded.last_saved_total,
+            last_total=excluded.last_total,
+            last_error_total=excluded.last_error_total,
+            last_run_scope=excluded.last_run_scope,
+            updated_at=excluded.updated_at
+        """,
+        (
+            int(workspace_id),
+            last_started_at,
+            last_finished_at,
+            last_status,
+            last_reason,
+            int(last_saved_total or 0),
+            int(last_total or 0),
+            int(last_error_total or 0),
+            last_run_scope,
+            updated_at,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_quote_job_status(workspace_id: int) -> dict | None:
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT
+            workspace_id,
+            last_started_at,
+            last_finished_at,
+            last_status,
+            last_reason,
+            last_saved_total,
+            last_total,
+            last_error_total,
+            last_run_scope,
+            updated_at
+        FROM quote_job_status
+        WHERE workspace_id = ?
+        """,
+        (int(workspace_id),),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row is not None else None
 
 
 def insert_income(

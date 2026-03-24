@@ -55,6 +55,7 @@ import {
   getInvestIncomes,
   getInvestMeta,
   getInvestPortfolio,
+  getInvestPriceJobStatus,
   getInvestPrices,
   getInvestRentabilityDivergenceReport,
   getInvestSummary,
@@ -249,6 +250,16 @@ function formatIsoDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatIsoDateTimePtBr(value) {
+  if (!value) return "";
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toLocaleString("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
 
 function isIsoDateWithinRange(value, from, to) {
@@ -893,6 +904,7 @@ export default function App() {
   const [investDivergenceOpen, setInvestDivergenceOpen] = useState(false);
   const [investPriceUpdateReport, setInvestPriceUpdateReport] = useState([]);
   const [investPriceUpdateRunning, setInvestPriceUpdateRunning] = useState(false);
+  const [investPriceJobStatus, setInvestPriceJobStatus] = useState(null);
   const [investRentabilitySyncRunning, setInvestRentabilitySyncRunning] = useState(false);
   const [investMeta, setInvestMeta] = useState({ asset_classes: [], asset_sectors: [], income_types: [] });
   const [investAssets, setInvestAssets] = useState([]);
@@ -1021,6 +1033,7 @@ export default function App() {
     setInvestTrades([]);
     setInvestIncomes([]);
     setInvestPrices([]);
+    setInvestPriceJobStatus(null);
     setInvestPortfolio({ positions: [] });
     setInvestSummaryData({
       assets_count: 0,
@@ -2323,6 +2336,38 @@ export default function App() {
     [investManualQuoteAssets, manualQuoteAssetId]
   );
   const selectedManualQuoteIsManual = String(selectedManualQuoteAsset?.rentability_type || "").trim().toUpperCase() === "MANUAL";
+  const investQuoteStatusNotice = useMemo(() => {
+    const status = investPriceJobStatus;
+    if (!status) return null;
+    const parts = [];
+    const lastFinishedAt = formatIsoDateTimePtBr(status.last_finished_at);
+    const nextRunAt = formatIsoDateTimePtBr(status.next_run_at);
+    if (lastFinishedAt) {
+      const scopeLabel = String(status.last_run_scope || "").trim() === "manual" ? "manual" : "automática";
+      const total = Number(status.last_total || 0);
+      const saved = Number(status.last_saved_total || 0);
+      if (total > 0) {
+        parts.push(`Última cotação ${scopeLabel}: ${lastFinishedAt}; ativos salvos: ${saved}/${total}.`);
+      } else {
+        parts.push(`Última cotação ${scopeLabel}: ${lastFinishedAt}.`);
+      }
+    } else {
+      parts.push("Ainda não há cotação automática registrada neste workspace.");
+    }
+    if (nextRunAt) {
+      parts.push(`Próxima janela prevista: ${nextRunAt} (${status.start_at || "10:00"} às ${status.end_at || "17:10"}).`);
+    }
+    if (status.last_status === "warning" && Number(status.last_error_total || 0) > 0) {
+      parts.push(`Falhas na última execução: ${Number(status.last_error_total || 0)}.`);
+    }
+    if (status.last_status === "error" && status.last_reason) {
+      parts.push(`Última falha: ${String(status.last_reason)}.`);
+    }
+    return {
+      level: ["warning", "error"].includes(String(status.last_status || "").trim()) ? "warning" : "success",
+      message: parts.join(" "),
+    };
+  }, [investPriceJobStatus]);
   useEffect(() => {
     if (!investManualQuoteAssets.length) {
       setManualQuoteAssetId("");
@@ -2881,11 +2926,12 @@ export default function App() {
       getInvestTrades(),
       getInvestIncomes(),
       getInvestPrices(),
+      getInvestPriceJobStatus(),
       getInvestPortfolio(),
       getInvestSummary(),
     ]);
     if (requestSeq !== investReloadSeqRef.current) return;
-    const [metaRes, assetsRes, tradesRes, incomesRes, pricesRes, portfolioRes, summaryRes] = results;
+    const [metaRes, assetsRes, tradesRes, incomesRes, pricesRes, quoteJobStatusRes, portfolioRes, summaryRes] = results;
     const hasAnySuccess = results.some((item) => item.status === "fulfilled");
     const hasAnyFailure = results.some((item) => item.status === "rejected");
     const meta = metaRes.status === "fulfilled" ? metaRes.value : null;
@@ -2893,6 +2939,7 @@ export default function App() {
     const trades = tradesRes.status === "fulfilled" ? tradesRes.value : [];
     const incomes = incomesRes.status === "fulfilled" ? incomesRes.value : [];
     const prices = pricesRes.status === "fulfilled" ? pricesRes.value : [];
+    const quoteJobStatus = quoteJobStatusRes.status === "fulfilled" ? quoteJobStatusRes.value : null;
     const portfolio = portfolioRes.status === "fulfilled" ? portfolioRes.value : { positions: [] };
     const summary = summaryRes.status === "fulfilled" ? summaryRes.value : null;
     setInvestMeta(meta || { asset_classes: [], asset_sectors: [], income_types: [] });
@@ -2900,6 +2947,7 @@ export default function App() {
     setInvestTrades(trades || []);
     setInvestIncomes(incomes || []);
     setInvestPrices(prices || []);
+    setInvestPriceJobStatus(quoteJobStatus || null);
     setInvestPortfolio(portfolio || { positions: [] });
     setInvestSummaryData(
       summary || {
@@ -7124,6 +7172,11 @@ export default function App() {
                       <p className="tx-helper">Atualize uma classe por vez para manter o processo previsível e facilitar a futura automação.</p>
                     </div>
                   </div>
+                  {investQuoteStatusNotice?.message ? (
+                    <section className={`status-banner ${investQuoteStatusNotice.level === "warning" ? "warning" : "success"}`}>
+                      <p className="status-msg">{investQuoteStatusNotice.message}</p>
+                    </section>
+                  ) : null}
                   <div className="tx-form quote-auto-form">
                     <select value={quoteGroup} onChange={(e) => setQuoteGroup(e.target.value)}>
                       <option value="" disabled>Selecione a classe</option>

@@ -371,6 +371,20 @@ def _sqlite_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date);")
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS quote_job_status (
+        workspace_id INTEGER PRIMARY KEY,
+        last_started_at TEXT,
+        last_finished_at TEXT,
+        last_status TEXT,
+        last_reason TEXT,
+        last_saved_total INTEGER NOT NULL DEFAULT 0,
+        last_total INTEGER NOT NULL DEFAULT 0,
+        last_error_total INTEGER NOT NULL DEFAULT 0,
+        last_run_scope TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
 
 
 def _postgres_schema(cur):
@@ -645,6 +659,20 @@ def _postgres_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date);")
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS quote_job_status (
+        workspace_id BIGINT PRIMARY KEY,
+        last_started_at TEXT,
+        last_finished_at TEXT,
+        last_status TEXT,
+        last_reason TEXT,
+        last_saved_total INTEGER NOT NULL DEFAULT 0,
+        last_total INTEGER NOT NULL DEFAULT 0,
+        last_error_total INTEGER NOT NULL DEFAULT 0,
+        last_run_scope TEXT,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
 
 
 def _row_value(row: Any, key: str, default: Any = None) -> Any:

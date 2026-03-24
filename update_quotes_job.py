@@ -158,6 +158,17 @@ def run_job(
         try:
             set_current_workspace_id(workspace_id)
             set_current_user_id(owner_user_id)
+            invest_repo.upsert_quote_job_status(
+                workspace_id=workspace_id,
+                last_started_at=now.isoformat(),
+                last_finished_at=None,
+                last_status="running",
+                last_reason=None,
+                last_saved_total=0,
+                last_total=0,
+                last_error_total=0,
+                last_run_scope="automatic",
+            )
             assets = [dict(a) for a in (invest_repo.list_assets(user_id=owner_user_id) or [])]
             workspace_info["assets"] = len(assets)
             summary["assets_total"] += len(assets)
@@ -165,6 +176,17 @@ def run_job(
             if not assets:
                 workspace_info["skipped"] = True
                 workspace_info["skip_reason"] = "no_assets"
+                invest_repo.upsert_quote_job_status(
+                    workspace_id=workspace_id,
+                    last_started_at=now.isoformat(),
+                    last_finished_at=datetime.now(tz).isoformat(),
+                    last_status="skipped",
+                    last_reason="no_assets",
+                    last_saved_total=0,
+                    last_total=0,
+                    last_error_total=0,
+                    last_run_scope="automatic",
+                )
                 summary["skipped_workspaces"] += 1
                 summary["workspaces"].append(workspace_info)
                 continue
@@ -193,11 +215,34 @@ def run_job(
             summary["processed_workspaces"] += 1
             summary["saved_total"] += workspace_info["saved"]
             summary["error_total"] += workspace_info["errors"]
+            invest_repo.upsert_quote_job_status(
+                workspace_id=workspace_id,
+                last_started_at=now.isoformat(),
+                last_finished_at=datetime.now(tz).isoformat(),
+                last_status="success" if workspace_info["errors"] == 0 else "warning",
+                last_reason=None,
+                last_saved_total=workspace_info["saved"],
+                last_total=workspace_info["quotes"],
+                last_error_total=workspace_info["errors"],
+                last_run_scope="automatic",
+            )
             summary["workspaces"].append(workspace_info)
         except Exception as exc:
             workspace_info["errors"] += 1
             workspace_info["error"] = str(exc)
             summary["error_total"] += 1
+            if workspace_id > 0:
+                invest_repo.upsert_quote_job_status(
+                    workspace_id=workspace_id,
+                    last_started_at=now.isoformat(),
+                    last_finished_at=datetime.now(tz).isoformat(),
+                    last_status="error",
+                    last_reason=str(exc),
+                    last_saved_total=workspace_info["saved"],
+                    last_total=workspace_info["quotes"],
+                    last_error_total=workspace_info["errors"],
+                    last_run_scope="automatic",
+                )
             summary["workspaces"].append(workspace_info)
         finally:
             clear_tenant_context()
