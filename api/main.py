@@ -2825,10 +2825,41 @@ def invest_list_index_rates(
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = Query(default=1000, ge=1, le=10000),
+    auto_sync: bool = Query(default=False),
     user: dict = Depends(_current_user),
 ) -> list[dict]:
     uid = int(user["id"])
     try:
+        idx = str(index_name or "").strip()
+        if auto_sync and idx:
+            target_to = str(date_to or "").strip() or _date.today().isoformat()
+            latest = None
+            try:
+                existing = invest_index_rates.list_index_rates(
+                    index_name=idx,
+                    date_from=None,
+                    date_to=target_to,
+                    limit=1,
+                    user_id=uid,
+                )
+                latest = str(existing[0].get("ref_date") or "").strip() if existing else None
+            except Exception:
+                latest = None
+
+            if latest:
+                start = (_date.fromisoformat(latest) + timedelta(days=1)).isoformat()
+            else:
+                start = str(date_from or "").strip() or f"{_date.today().year - 1}-01-01"
+
+            if start <= target_to:
+                invest_index_rates.sync_from_bcb(
+                    index_names=[idx],
+                    date_from=start,
+                    date_to=target_to,
+                    timeout_s=20.0,
+                    user_id=uid,
+                )
+
         rows = invest_index_rates.list_index_rates(
             index_name=index_name,
             date_from=date_from,
@@ -3435,17 +3466,17 @@ def invest_portfolio_timeseries(
         return []
 
     rows = []
-    baseline = None
     for _, row in df.iterrows():
-        raw_value = float(row.get("invest_market_value") or 0.0)
-        if baseline is None and raw_value > 0:
-            baseline = raw_value
-        return_pct = ((raw_value / baseline) - 1.0) * 100.0 if baseline and baseline > 0 else 0.0
         rows.append(
             {
                 "date": row.get("date").strftime("%Y-%m-%d") if hasattr(row.get("date"), "strftime") else str(row.get("date") or "")[:10],
-                "market_value": raw_value,
-                "return_pct": float(return_pct),
+                "market_value": float(row.get("invest_market_value") or 0.0),
+                "invested_amount": float(row.get("invested_amount") or 0.0),
+                "income_amount": float(row.get("income_amount") or 0.0),
+                "realized_pnl": float(row.get("realized_pnl") or 0.0),
+                "unrealized_pnl": float(row.get("unrealized_pnl") or 0.0),
+                "total_return": float(row.get("total_return") or 0.0),
+                "return_pct": float(row.get("return_pct") or 0.0),
             }
         )
     return rows

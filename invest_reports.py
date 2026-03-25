@@ -379,12 +379,31 @@ def investments_value_timeseries(
         selected = str(asset_class).strip()
         tdf = tdf[tdf["asset_class"].astype(str) == selected].copy() if not tdf.empty else tdf
     if tdf.empty:
-        dates = pd.date_range(date_from, date_to, freq="D")
-        return pd.DataFrame({"date": dates, "invest_market_value": 0.0})
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "invest_market_value",
+                "invested_amount",
+                "income_amount",
+                "realized_pnl",
+                "unrealized_pnl",
+                "total_return",
+                "return_pct",
+            ]
+        )
 
     tdf = tdf.copy()
     tdf["date"] = pd.to_datetime(tdf["date"])
-    dates = pd.date_range(date_from, date_to, freq="D")
+    first_trade_date = tdf["date"].min()
+    requested_start = pd.to_datetime(date_from)
+    effective_start = first_trade_date if pd.isna(requested_start) else max(first_trade_date, requested_start)
+    dates = pd.date_range(effective_start, date_to, freq="D")
+    assets = df_assets(user_id=user_id)
+    if asset_class and not assets.empty:
+        assets = assets[assets["asset_class"].astype(str) == selected].copy()
+    incomes_df = df_income(None, date_to, user_id=user_id)
+    if asset_class and not incomes_df.empty:
+        incomes_df = incomes_df[incomes_df["asset_class"].astype(str) == selected].copy()
     out = []
 
     for d in dates:
@@ -392,7 +411,6 @@ def investments_value_timeseries(
         t_day = tdf[tdf["date"] <= d].copy()
         pos = positions_avg_cost(t_day)
         if pos.empty:
-            out.append({"date": d, "invest_market_value": 0.0})
             continue
 
         prices = df_prices_upto(d_str, user_id=user_id)
@@ -406,6 +424,15 @@ def investments_value_timeseries(
         else:
             pos["snapshot_price"] = 0.0
 
+        if not assets.empty:
+            pos = pos.merge(
+                assets.rename(columns={"id": "asset_id"})[["asset_id", "currency"]],
+                on="asset_id",
+                how="left",
+            )
+        else:
+            pos["currency"] = None
+
         pos["price"] = pd.to_numeric(pos["price"], errors="coerce").fillna(0.0)
         pos["snapshot_price"] = pd.to_numeric(pos.get("snapshot_price", 0.0), errors="coerce").fillna(0.0)
         cls_norm = pos.get("asset_class", "").astype(str).map(_norm_asset_class)
@@ -414,10 +441,38 @@ def investments_value_timeseries(
         pos.loc[fixed_income_mask & missing_price_mask, "price"] = pd.to_numeric(
             pos.get("avg_cost", 0.0), errors="coerce"
         ).fillna(0.0)
-        pos["market_value"] = pos["qty"] * pos["price"]
+        fx = pd.to_numeric(pos.get("last_fx", 1.0), errors="coerce").fillna(1.0)
+        is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
+        fx_factor = fx.where(is_usd_asset, 1.0)
+        pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
         pos.loc[fixed_income_mask & (pos["snapshot_price"] > 0), "market_value"] = pos.loc[
             fixed_income_mask & (pos["snapshot_price"] > 0), "snapshot_price"
         ]
-        out.append({"date": d, "invest_market_value": float(pos["market_value"].sum())})
+        income_amount = 0.0
+        if incomes_df is not None and not incomes_df.empty:
+            income_amount = float(
+                pd.to_numeric(
+                    incomes_df[incomes_df["date"] <= d]["amount"],
+                    errors="coerce",
+                ).fillna(0.0).sum()
+            )
+        invested_amount = float(pd.to_numeric(pos.get("cost_basis", 0.0), errors="coerce").fillna(0.0).sum())
+        market_value = float(pd.to_numeric(pos.get("market_value", 0.0), errors="coerce").fillna(0.0).sum())
+        realized_pnl = float(pd.to_numeric(pos.get("realized_pnl", 0.0), errors="coerce").fillna(0.0).sum())
+        unrealized_pnl = market_value - invested_amount
+        total_return = income_amount + realized_pnl + unrealized_pnl
+        return_pct = (total_return / invested_amount * 100.0) if invested_amount > 0 else 0.0
+        out.append(
+            {
+                "date": d,
+                "invest_market_value": market_value,
+                "invested_amount": invested_amount,
+                "income_amount": income_amount,
+                "realized_pnl": realized_pnl,
+                "unrealized_pnl": unrealized_pnl,
+                "total_return": total_return,
+                "return_pct": return_pct,
+            }
+        )
 
     return pd.DataFrame(out)

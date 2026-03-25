@@ -2240,6 +2240,41 @@ export default function App() {
     () => investRentabilityByClass.find((item) => String(item.asset_class) === String(investBenchmarkClass)) || null,
     [investBenchmarkClass, investRentabilityByClass]
   );
+  const selectedBenchmarkClassStartDate = useMemo(() => {
+    const selectedClass = String(selectedBenchmarkOption?.asset_class || "").trim();
+    if (!selectedClass) return "";
+    const assetIds = new Set(
+      (investAssets || [])
+        .filter((asset) => String(asset?.asset_class || "").trim() === selectedClass)
+        .map((asset) => Number(asset?.id || 0))
+        .filter((value) => value > 0)
+    );
+    const dates = [];
+    for (const row of investTrades || []) {
+      const assetClass = String(row?.asset_class || "").trim();
+      const tradeDate = String(row?.date || "").trim();
+      if (assetClass === selectedClass && /^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) {
+        dates.push(tradeDate);
+      }
+    }
+    for (const row of investIncomes || []) {
+      const incomeDate = String(row?.date || "").trim();
+      const assetId = Number(row?.asset_id || 0);
+      if (assetIds.has(assetId) && /^\d{4}-\d{2}-\d{2}$/.test(incomeDate)) {
+        dates.push(incomeDate);
+      }
+    }
+    dates.sort();
+    return dates[0] || "";
+  }, [investAssets, investIncomes, investTrades, selectedBenchmarkOption]);
+  const investBenchmarkDateFrom = useMemo(() => {
+    if (selectedBenchmarkClassStartDate && investRentabilityWindowStart) {
+      return selectedBenchmarkClassStartDate > investRentabilityWindowStart
+        ? selectedBenchmarkClassStartDate
+        : investRentabilityWindowStart;
+    }
+    return selectedBenchmarkClassStartDate || investRentabilityWindowStart || "";
+  }, [investRentabilityWindowStart, selectedBenchmarkClassStartDate]);
   const benchmarkSeriesData = useMemo(() => {
     const rows = Array.isArray(investBenchmarkRates) ? [...investBenchmarkRates] : [];
     rows.sort((a, b) => String(a.ref_date || "").localeCompare(String(b.ref_date || "")));
@@ -2290,6 +2325,10 @@ export default function App() {
     }
     return Array.from(byDate.values()).sort((a, b) => String(a.ref_date).localeCompare(String(b.ref_date)));
   }, [benchmarkSeriesData, investBenchmarkPortfolioSeries]);
+  const hasSufficientPortfolioBenchmarkHistory = useMemo(() => {
+    const positivePoints = (investBenchmarkPortfolioSeries || []).filter((row) => Number(row?.market_value || 0) > 0);
+    return positivePoints.length >= 2;
+  }, [investBenchmarkPortfolioSeries]);
   const selectedBenchmarkReturnPct = benchmarkSeriesData.length
     ? Number(benchmarkSeriesData[benchmarkSeriesData.length - 1]?.benchmark_return_pct || 0)
     : 0;
@@ -2326,7 +2365,7 @@ export default function App() {
       return;
     }
     const dateTo = new Date().toISOString().slice(0, 10);
-    const dateFrom = investRentabilityWindowStart || shiftIsoDateByMonths(dateTo, 12) || dateTo;
+    const dateFrom = investBenchmarkDateFrom || shiftIsoDateByMonths(dateTo, 12) || dateTo;
     let cancelled = false;
     (async () => {
       try {
@@ -2337,6 +2376,7 @@ export default function App() {
           date_from: dateFrom,
           date_to: dateTo,
           limit: 10000,
+          auto_sync: true,
         });
         const portfolioRows = await getInvestPortfolioTimeseries({
           date_from: dateFrom,
@@ -2359,7 +2399,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [investRentabilityWindowStart, investTab, page, selectedBenchmarkOption, user]);
+  }, [investBenchmarkDateFrom, investTab, page, selectedBenchmarkOption, user]);
   const assetCreateIsFixedIncome = useMemo(
     () => isFixedIncomeClass(assetCreateClass),
     [assetCreateClass]
@@ -6972,6 +7012,7 @@ export default function App() {
                                 dot={false}
                                 activeDot={{ r: 4 }}
                                 connectNulls
+                                hide={!hasSufficientPortfolioBenchmarkHistory}
                               />
                               <Line
                                 type="monotone"
@@ -6996,6 +7037,9 @@ export default function App() {
                     )}
                     {investBenchmarkLoading ? <p className="tx-helper">Carregando benchmark...</p> : null}
                     {!investBenchmarkLoading && investBenchmarkError ? <p className="tx-helper">{investBenchmarkError}</p> : null}
+                    {!investBenchmarkLoading && !hasSufficientPortfolioBenchmarkHistory ? (
+                      <p className="tx-helper">Linha da carteira ainda com histórico insuficiente nesta classe. O card resume a rentabilidade atual corretamente, mas a curva só fica confiável com mais pontos salvos em `prices`.</p>
+                    ) : null}
                   </section>
                   {investRentabilityByClass.length ? (
                     <div className="chart-box rentability-chart">

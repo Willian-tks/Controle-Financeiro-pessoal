@@ -448,6 +448,7 @@ export function getInvestIndexRates(params = {}) {
   if (params.date_from) search.set("date_from", String(params.date_from));
   if (params.date_to) search.set("date_to", String(params.date_to));
   if (params.limit) search.set("limit", String(params.limit));
+  if (params.auto_sync) search.set("auto_sync", "true");
   const suffix = search.toString() ? `?${search.toString()}` : "";
   return req(`/invest/index-rates${suffix}`);
 }
