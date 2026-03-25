@@ -442,6 +442,25 @@ export function getInvestPriceJobStatus() {
   return req("/invest/prices/job-status");
 }
 
+export function getInvestIndexRates(params = {}) {
+  const search = new URLSearchParams();
+  if (params.index_name) search.set("index_name", String(params.index_name));
+  if (params.date_from) search.set("date_from", String(params.date_from));
+  if (params.date_to) search.set("date_to", String(params.date_to));
+  if (params.limit) search.set("limit", String(params.limit));
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return req(`/invest/index-rates${suffix}`);
+}
+
+export function getInvestPortfolioTimeseries(params = {}) {
+  const search = new URLSearchParams();
+  if (params.date_from) search.set("date_from", String(params.date_from));
+  if (params.date_to) search.set("date_to", String(params.date_to));
+  if (params.asset_class) search.set("asset_class", String(params.asset_class));
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return req(`/invest/portfolio/timeseries${suffix}`);
+}
+
 export function updateAllInvestRentability(payload = {}, timeoutMs = 0) {
   return req("/invest/rentability/update-all", {
     method: "POST",

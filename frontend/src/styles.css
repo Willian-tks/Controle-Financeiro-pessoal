@@ -1128,12 +1128,70 @@ body {
   line-height: 1.05;
 }
 
+.rentability-highlight-value {
+  display: block;
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .rentability-highlight-card p {
   margin: 8px 0 0;
   color: var(--text-muted);
 }
 
 .rentability-chart {
+  min-height: 320px;
+}
+
+.benchmark-comparison-card {
+  margin-bottom: 14px;
+}
+
+.benchmark-comparison-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.benchmark-comparison-filter {
+  min-width: 220px;
+  display: grid;
+  gap: 6px;
+}
+
+.benchmark-comparison-filter label {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.benchmark-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.benchmark-summary-item {
+  padding: 16px;
+}
+
+.benchmark-summary-item strong {
+  display: block;
+  font-size: clamp(22px, 2vw, 32px);
+  line-height: 1.05;
+}
+
+.benchmark-summary-item p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+}
+
+.benchmark-comparison-chart {
   min-height: 320px;
 }
 
@@ -2681,6 +2739,17 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .benchmark-comparison-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .benchmark-comparison-filter,
+  .benchmark-summary-grid,
+  .rentability-highlight-grid {
+    grid-template-columns: 1fr;
+  }
+
   .table-toolbar {
     margin-bottom: 12px;
   }
@@ -2931,6 +3000,11 @@ body {
   .portfolio-table td {
     font-size: 13px;
     padding: 7px 5px;
+  }
+
+  .benchmark-summary-item strong,
+  .rentability-highlight-card strong {
+    font-size: clamp(24px, 8vw, 34px);
   }
 
   .dash-filter-form,

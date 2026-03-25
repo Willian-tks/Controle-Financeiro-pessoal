@@ -25,7 +25,7 @@ import cardModelPlatinum from "./cards/Platinum.png";
 import cardModelOrange from "./cards/Orange.png";
 import cardModelVioleta from "./cards/Violeta.png";
 import cardModelVermelho from "./cards/Vermelho.png";
-import { ResponsiveContainer, PieChart, Pie, Sector, BarChart, Bar, CartesianGrid, Tooltip, XAxis, YAxis, Cell } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Sector, BarChart, Bar, CartesianGrid, Tooltip, XAxis, YAxis, Cell, LineChart, Line, Legend } from "recharts";
 import {
   clearToken,
   createCard,
@@ -55,7 +55,9 @@ import {
   getInvestAssets,
   getInvestIncomes,
   getInvestMeta,
+  getInvestIndexRates,
   getInvestPortfolio,
+  getInvestPortfolioTimeseries,
   getInvestPriceJobStatus,
   getInvestPrices,
   getInvestRentabilityDivergenceReport,
@@ -219,6 +221,17 @@ const RENTABILITY_TYPE_LABELS = {
   SELIC_SPREAD: "SELIC + X",
   IPCA_SPREAD: "IPCA + X",
   MANUAL: "Manual",
+};
+const BENCHMARK_BY_ASSET_CLASS = {
+  "Ações BR": { benchmark: "IBOV", ready: true, indexName: "IBOV", seriesMode: "level" },
+  FIIs: { benchmark: "IFIX", ready: true, indexName: "IFIX", seriesMode: "level" },
+  "Stocks US": { benchmark: "S&P 500", ready: true, indexName: "SP500", seriesMode: "level" },
+  "Renda Fixa": { benchmark: "CDI", ready: true, indexName: "CDI", seriesMode: "rate" },
+  "Tesouro Direto": { benchmark: "CDI", ready: true, indexName: "CDI", seriesMode: "rate" },
+  Cripto: { benchmark: "Índice Cripto", ready: true, indexName: "CRYPTO", seriesMode: "level" },
+  BDRs: { benchmark: "Índice Internacional", ready: true, indexName: "GLOBAL", seriesMode: "level" },
+  Fundos: { benchmark: "CDI", ready: true, indexName: "CDI", seriesMode: "rate" },
+  Coe: { benchmark: "CDI", ready: true, indexName: "CDI", seriesMode: "rate" },
 };
 const INCOME_TYPE_COLORS = {
   Dividendos: "#5dd39e",
@@ -950,6 +963,11 @@ export default function App() {
   const [dashInvestFocusClass, setDashInvestFocusClass] = useState("");
   const [investPortfolioClassFilter, setInvestPortfolioClassFilter] = useState("");
   const [investRentabilityWindow, setInvestRentabilityWindow] = useState("12m");
+  const [investBenchmarkClass, setInvestBenchmarkClass] = useState("");
+  const [investBenchmarkRates, setInvestBenchmarkRates] = useState([]);
+  const [investBenchmarkPortfolioSeries, setInvestBenchmarkPortfolioSeries] = useState([]);
+  const [investBenchmarkLoading, setInvestBenchmarkLoading] = useState(false);
+  const [investBenchmarkError, setInvestBenchmarkError] = useState("");
   const [investAssetsClassFilter, setInvestAssetsClassFilter] = useState("");
   const [investTradeDateFrom, setInvestTradeDateFrom] = useState(defaultMonthRange.from);
   const [investTradeDateTo, setInvestTradeDateTo] = useState(defaultMonthRange.to);
@@ -1045,6 +1063,7 @@ export default function App() {
   const valuationReportInputRefs = useRef({});
   const investRentabilityLastSyncRef = useRef(0);
   const investReloadSeqRef = useRef(0);
+  const investQuoteAutoRunRef = useRef("");
   const globalActionNoticeTimeoutRef = useRef(null);
 
   function clearInvestState() {
@@ -1055,6 +1074,10 @@ export default function App() {
     setInvestPrices([]);
     setInvestPriceJobStatus(null);
     setInvestPortfolio({ positions: [] });
+    setInvestBenchmarkRates([]);
+    setInvestBenchmarkPortfolioSeries([]);
+    setInvestBenchmarkError("");
+    setInvestBenchmarkLoading(false);
     setInvestSummaryData({
       assets_count: 0,
       total_invested: 0,
@@ -1721,6 +1744,16 @@ export default function App() {
     (async () => {
       try {
         await reloadInvestData({ syncRentability: true });
+        if (cancelled || !canAddInvestimentos) return;
+        const workspaceKey = String(user?.current_workspace_id || user?.workspace_id || user?.id || "");
+        const autoRunKey = `${workspaceKey}:${new Date().toISOString().slice(0, 10)}`;
+        if (investQuoteAutoRunRef.current === autoRunKey) return;
+        investQuoteAutoRunRef.current = autoRunKey;
+        await runInvestPriceUpdate({
+          includeGroups: QUOTE_GROUP_OPTIONS,
+          silentSuccess: true,
+          reloadAfter: true,
+        });
       } catch (err) {
         if (cancelled) return;
         setInvestMsg(String(err.message || err));
@@ -1729,7 +1762,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [page, user]);
+  }, [canAddInvestimentos, page, user]);
 
   useEffect(() => {
     if (!txIsExpenseCredit) return;
@@ -2096,13 +2129,15 @@ export default function App() {
     }
     return active;
   }, [investAssets, investIncomes, investPortfolio, investRentabilityWindowStart, investTrades]);
-  const investRentabilityByClass = useMemo(() => {
-    const rows = (investPortfolio?.positions || []).filter((row) => {
+  const investRentabilityPositions = useMemo(() => {
+    return (investPortfolio?.positions || []).filter((row) => {
       const assetClass = String(row?.asset_class || "").trim();
       return assetClass && investRentabilityActiveClasses.has(assetClass);
     });
+  }, [investPortfolio, investRentabilityActiveClasses]);
+  const investRentabilityByClass = useMemo(() => {
     const grouped = new Map();
-    for (const row of rows) {
+    for (const row of investRentabilityPositions) {
       const assetClass = String(row?.asset_class || "").trim() || "Outros";
       const base = grouped.get(assetClass) || {
         asset_class: assetClass,
@@ -2123,10 +2158,13 @@ export default function App() {
       base.total_unrealized += Number(row?.unrealized_pnl || 0) || 0;
       grouped.set(assetClass, base);
     }
-    const list = Array.from(grouped.values()).map((item) => {
+    const groupedValues = Array.from(grouped.values());
+    const totalMarketAllClasses = groupedValues.reduce((acc, item) => acc + (Number(item.total_market || 0) || 0), 0);
+    const list = groupedValues.map((item) => {
       const totalReturn = Number(item.total_income || 0) + Number(item.total_realized || 0) + Number(item.total_unrealized || 0);
       const totalInvested = Number(item.total_invested || 0);
       const totalReturnPct = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
+      const participationPct = totalMarketAllClasses > 0 ? (Number(item.total_market || 0) / totalMarketAllClasses) * 100 : 0;
       return {
         ...item,
         total_invested: normalizeMoneyValue(item.total_invested),
@@ -2136,21 +2174,192 @@ export default function App() {
         total_unrealized: normalizeMoneyValue(item.total_unrealized),
         total_return: normalizeMoneyValue(totalReturn),
         total_return_pct: Number.isFinite(totalReturnPct) ? totalReturnPct : 0,
+        participation_pct: Number.isFinite(participationPct) ? participationPct : 0,
       };
     });
     list.sort((a, b) => b.total_return_pct - a.total_return_pct);
     return list;
-  }, [investPortfolio, investRentabilityActiveClasses]);
+  }, [investRentabilityPositions]);
   const investRentabilityHighlights = useMemo(() => {
     const rows = investRentabilityByClass.filter((item) => Number(item.total_invested || 0) > 0);
     const best = rows.length ? rows[0] : null;
     const worst = rows.length ? rows[rows.length - 1] : null;
+    const biggest = rows.length
+      ? [...rows].sort((a, b) => Number(b.participation_pct || 0) - Number(a.participation_pct || 0))[0]
+      : null;
+    const consolidatedInvested = rows.reduce((acc, item) => acc + (Number(item.total_invested || 0) || 0), 0);
+    const consolidatedReturn = rows.reduce((acc, item) => acc + (Number(item.total_return || 0) || 0), 0);
+    const consolidatedReturnPct = consolidatedInvested > 0 ? (consolidatedReturn / consolidatedInvested) * 100 : 0;
+    const bestAsset = [...investRentabilityPositions]
+      .map((row) => {
+        const totalInvested = Number(row?.cost_basis || 0) || 0;
+        const totalIncome = Number(row?.income || 0) || 0;
+        const totalRealized = Number(row?.realized_pnl || 0) || 0;
+        const totalUnrealized = Number(row?.unrealized_pnl || 0) || 0;
+        const totalReturn = totalIncome + totalRealized + totalUnrealized;
+        const totalReturnPct = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
+        return {
+          symbol: String(row?.symbol || "").trim() || "-",
+          asset_class: String(row?.asset_class || "").trim() || "Sem classe",
+          total_return: normalizeMoneyValue(totalReturn),
+          total_return_pct: Number.isFinite(totalReturnPct) ? totalReturnPct : 0,
+          market_value: normalizeMoneyValue(Number(row?.market_value || 0) || 0),
+        };
+      })
+      .filter((row) => Number.isFinite(row.total_return_pct))
+      .sort((a, b) => Number(b.total_return_pct || 0) - Number(a.total_return_pct || 0))[0] || null;
     return {
       classes_count: investRentabilityByClass.length,
       best,
       worst,
+      biggest,
+      consolidated: {
+        total_return: normalizeMoneyValue(consolidatedReturn),
+        total_return_pct: Number.isFinite(consolidatedReturnPct) ? consolidatedReturnPct : 0,
+      },
+      best_asset: bestAsset,
     };
+  }, [investRentabilityByClass, investRentabilityPositions]);
+  const investBenchmarkOptions = useMemo(() => {
+    return investRentabilityByClass.map((row) => {
+      const config = BENCHMARK_BY_ASSET_CLASS[String(row.asset_class || "").trim()] || null;
+      return {
+        asset_class: row.asset_class,
+        benchmark_label: config?.benchmark || "Benchmark",
+        benchmark_ready: Boolean(config?.ready),
+        index_name: config?.indexName || "",
+        series_mode: config?.seriesMode || "level",
+      };
+    });
   }, [investRentabilityByClass]);
+  const selectedBenchmarkOption = useMemo(
+    () => investBenchmarkOptions.find((item) => String(item.asset_class) === String(investBenchmarkClass)) || null,
+    [investBenchmarkClass, investBenchmarkOptions]
+  );
+  const selectedRentabilityClass = useMemo(
+    () => investRentabilityByClass.find((item) => String(item.asset_class) === String(investBenchmarkClass)) || null,
+    [investBenchmarkClass, investRentabilityByClass]
+  );
+  const benchmarkSeriesData = useMemo(() => {
+    const rows = Array.isArray(investBenchmarkRates) ? [...investBenchmarkRates] : [];
+    rows.sort((a, b) => String(a.ref_date || "").localeCompare(String(b.ref_date || "")));
+    if (!rows.length) return [];
+    if ((selectedBenchmarkOption?.series_mode || "level") === "rate") {
+      let acc = 1;
+      return rows.map((row) => {
+        const rate = Number(row?.value || 0);
+        acc *= 1 + rate / 100;
+        return {
+          ref_date: String(row?.ref_date || "").slice(0, 10),
+          benchmark_return_pct: (acc - 1) * 100,
+        };
+      });
+    }
+    const firstValue = Number(rows[0]?.value || 0);
+    if (!Number.isFinite(firstValue) || firstValue <= 0) return [];
+    return rows.map((row) => {
+      const value = Number(row?.value || 0);
+      const benchmarkReturnPct = Number.isFinite(value) && value > 0 ? ((value / firstValue) - 1) * 100 : 0;
+      return {
+        ref_date: String(row?.ref_date || "").slice(0, 10),
+        benchmark_return_pct: benchmarkReturnPct,
+      };
+    });
+  }, [investBenchmarkRates, selectedBenchmarkOption]);
+  const benchmarkComparisonChartData = useMemo(() => {
+    const byDate = new Map();
+    for (const row of benchmarkSeriesData) {
+      const key = String(row?.ref_date || "").slice(0, 10);
+      if (!key) continue;
+      byDate.set(key, {
+        ref_date: key,
+        benchmark_return_pct: Number(row?.benchmark_return_pct || 0),
+        portfolio_return_pct: null,
+      });
+    }
+    for (const row of investBenchmarkPortfolioSeries || []) {
+      const key = String(row?.date || "").slice(0, 10);
+      if (!key) continue;
+      const current = byDate.get(key) || {
+        ref_date: key,
+        benchmark_return_pct: null,
+        portfolio_return_pct: null,
+      };
+      current.portfolio_return_pct = Number(row?.return_pct || 0);
+      byDate.set(key, current);
+    }
+    return Array.from(byDate.values()).sort((a, b) => String(a.ref_date).localeCompare(String(b.ref_date)));
+  }, [benchmarkSeriesData, investBenchmarkPortfolioSeries]);
+  const selectedBenchmarkReturnPct = benchmarkSeriesData.length
+    ? Number(benchmarkSeriesData[benchmarkSeriesData.length - 1]?.benchmark_return_pct || 0)
+    : 0;
+  const selectedBenchmarkGapPct = selectedRentabilityClass
+    ? Number(selectedRentabilityClass.total_return_pct || 0) - selectedBenchmarkReturnPct
+    : 0;
+  useEffect(() => {
+    if (!investBenchmarkOptions.length) {
+      setInvestBenchmarkClass("");
+      return;
+    }
+    const current = investBenchmarkOptions.find((item) => String(item.asset_class) === String(investBenchmarkClass)) || null;
+    const firstReady = investBenchmarkOptions.find((item) => item.benchmark_ready) || null;
+    if (firstReady && (!current || !current.benchmark_ready)) {
+      setInvestBenchmarkClass(String(firstReady.asset_class || ""));
+      return;
+    }
+    if (current) {
+      return;
+    }
+    const preferred =
+      firstReady ||
+      investBenchmarkOptions.find((item) => String(item.asset_class || "").trim() === String(investRentabilityHighlights.biggest?.asset_class || "").trim()) ||
+      investBenchmarkOptions[0];
+    setInvestBenchmarkClass(String(preferred?.asset_class || ""));
+  }, [investBenchmarkClass, investBenchmarkOptions, investRentabilityHighlights.biggest]);
+  useEffect(() => {
+    if (!user || page !== "Investimentos" || investTab !== "Rentabilidade") return;
+    if (!selectedBenchmarkOption?.benchmark_ready || !selectedBenchmarkOption?.index_name) {
+      setInvestBenchmarkRates([]);
+      setInvestBenchmarkPortfolioSeries([]);
+      setInvestBenchmarkError("");
+      setInvestBenchmarkLoading(false);
+      return;
+    }
+    const dateTo = new Date().toISOString().slice(0, 10);
+    const dateFrom = investRentabilityWindowStart || shiftIsoDateByMonths(dateTo, 12) || dateTo;
+    let cancelled = false;
+    (async () => {
+      try {
+        setInvestBenchmarkLoading(true);
+        setInvestBenchmarkError("");
+        const rows = await getInvestIndexRates({
+          index_name: selectedBenchmarkOption.index_name,
+          date_from: dateFrom,
+          date_to: dateTo,
+          limit: 10000,
+        });
+        const portfolioRows = await getInvestPortfolioTimeseries({
+          date_from: dateFrom,
+          date_to: dateTo,
+          asset_class: selectedBenchmarkOption.asset_class,
+        });
+        if (cancelled) return;
+        setInvestBenchmarkRates(Array.isArray(rows) ? rows : []);
+        setInvestBenchmarkPortfolioSeries(Array.isArray(portfolioRows) ? portfolioRows : []);
+      } catch (err) {
+        if (cancelled) return;
+        setInvestBenchmarkRates([]);
+        setInvestBenchmarkPortfolioSeries([]);
+        setInvestBenchmarkError(String(err.message || err));
+      } finally {
+        if (cancelled) return;
+        setInvestBenchmarkLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [investRentabilityWindowStart, investTab, page, selectedBenchmarkOption, user]);
   const assetCreateIsFixedIncome = useMemo(
     () => isFixedIncomeClass(assetCreateClass),
     [assetCreateClass]
@@ -3833,30 +4042,43 @@ export default function App() {
       setInvestMsg("Sem permissão para atualizar cotações.");
       return;
     }
+    if (!quoteGroup) {
+      setInvestMsg("Selecione uma classe para atualização.");
+      return;
+    }
+    await runInvestPriceUpdate({
+      includeGroups: [quoteGroup],
+      silentSuccess: false,
+      reloadAfter: true,
+    });
+  }
+
+  async function runInvestPriceUpdate({ includeGroups = [], silentSuccess = true, reloadAfter = true } = {}) {
     setInvestMsg("");
     setInvestPriceUpdateReport([]);
     setInvestPriceUpdateRunning(true);
     const timeout = Number(sanitizeIntegerInputValue(quoteTimeout || "25", 3));
     const workers = Number(sanitizeIntegerInputValue(quoteWorkers || "4", 2));
-    if (!quoteGroup) {
-      setInvestMsg("Selecione uma classe para atualização.");
-      setInvestPriceUpdateRunning(false);
-      return;
-    }
     try {
       const out = await updateAllInvestPrices({
         timeout_s: Number.isFinite(timeout) ? timeout : 25,
         max_workers: Number.isFinite(workers) ? workers : 4,
-        include_groups: [quoteGroup],
+        include_groups: Array.isArray(includeGroups) ? includeGroups : [],
       });
       const report = Array.isArray(out.report) ? out.report : [];
       const failed = report.filter((row) => !row?.ok).length;
       setInvestPriceUpdateReport(report);
       setInvestMsg(`Cotações salvas: ${out.saved}/${out.total}${failed ? ` | Falhas: ${failed}` : ""}`);
-      showGlobalSuccess("Cotações atualizadas.");
-      await reloadInvestData();
+      if (!silentSuccess) {
+        showGlobalSuccess("Cotações atualizadas.");
+      }
+      if (reloadAfter) {
+        await reloadInvestData();
+      }
+      return out;
     } catch (err) {
       setInvestMsg(String(err.message || err));
+      throw err;
     } finally {
       setInvestPriceUpdateRunning(false);
     }
@@ -6628,13 +6850,152 @@ export default function App() {
                     <article className="card rentability-highlight-card">
                       <span className="rentability-highlight-label">Melhor desempenho</span>
                       <strong>{investRentabilityHighlights.best ? `${Number(investRentabilityHighlights.best.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
+                      <span className="rentability-highlight-value">
+                        {investRentabilityHighlights.best ? `Valor: ${brl.format(Number(investRentabilityHighlights.best.total_return || 0))}` : "Valor: -"}
+                      </span>
+                      <span className="rentability-highlight-value">
+                        {investRentabilityHighlights.best ? `Participação: ${Number(investRentabilityHighlights.best.participation_pct || 0).toFixed(2)}%` : "Participação: -"}
+                      </span>
                       <p>{investRentabilityHighlights.best?.asset_class || "Sem dados"}</p>
                     </article>
                     <article className="card rentability-highlight-card">
                       <span className="rentability-highlight-label">Pior desempenho</span>
                       <strong>{investRentabilityHighlights.worst ? `${Number(investRentabilityHighlights.worst.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
+                      <span className="rentability-highlight-value">
+                        {investRentabilityHighlights.worst ? `Valor: ${brl.format(Number(investRentabilityHighlights.worst.total_return || 0))}` : "Valor: -"}
+                      </span>
+                      <span className="rentability-highlight-value">
+                        {investRentabilityHighlights.worst ? `Participação: ${Number(investRentabilityHighlights.worst.participation_pct || 0).toFixed(2)}%` : "Participação: -"}
+                      </span>
                       <p>{investRentabilityHighlights.worst?.asset_class || "Sem dados"}</p>
                     </article>
+                    <article className="card rentability-highlight-card">
+                      <span className="rentability-highlight-label">Maior participação</span>
+                      <strong>{investRentabilityHighlights.biggest ? `${Number(investRentabilityHighlights.biggest.participation_pct || 0).toFixed(2)}%` : "-"}</strong>
+                      <span className="rentability-highlight-value">
+                        {investRentabilityHighlights.biggest ? `Mercado: ${brl.format(Number(investRentabilityHighlights.biggest.total_market || 0))}` : "Mercado: -"}
+                      </span>
+                      <p>{investRentabilityHighlights.biggest?.asset_class || "Sem dados"}</p>
+                    </article>
+                    <article className="card rentability-highlight-card">
+                      <span className="rentability-highlight-label">Rentabilidade consolidada</span>
+                      <strong>{`${Number(investRentabilityHighlights.consolidated?.total_return_pct || 0).toFixed(2)}%`}</strong>
+                      <span className="rentability-highlight-value">
+                        {`Valor: ${brl.format(Number(investRentabilityHighlights.consolidated?.total_return || 0))}`}
+                      </span>
+                      <p>No per&iacute;odo selecionado.</p>
+                    </article>
+                    <article className="card rentability-highlight-card">
+                      <span className="rentability-highlight-label">Melhor ativo</span>
+                      <strong>{investRentabilityHighlights.best_asset ? `${Number(investRentabilityHighlights.best_asset.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
+                      <span className="rentability-highlight-value">
+                        {investRentabilityHighlights.best_asset ? `Valor: ${brl.format(Number(investRentabilityHighlights.best_asset.total_return || 0))}` : "Valor: -"}
+                      </span>
+                      <p>
+                        {investRentabilityHighlights.best_asset
+                          ? `${investRentabilityHighlights.best_asset.symbol} | ${investRentabilityHighlights.best_asset.asset_class}`
+                          : "Sem dados"}
+                      </p>
+                    </article>
+                  </section>
+                  <section className="card benchmark-comparison-card">
+                    <div className="benchmark-comparison-head">
+                      <div>
+                        <h3>Carteira x Benchmark</h3>
+                        <p className="tx-helper">
+                          MVP seguro: neste quadro o histórico já está disponível para classes comparadas com CDI. As demais classes mostram o benchmark-alvo, mas aguardam integração histórica.
+                        </p>
+                      </div>
+                      <div className="benchmark-comparison-filter">
+                        <label htmlFor="benchmark-class-select">Classe</label>
+                        <select
+                          id="benchmark-class-select"
+                          className="invoice-filter-select"
+                          value={investBenchmarkClass}
+                          onChange={(e) => setInvestBenchmarkClass(e.target.value)}
+                        >
+                          {investBenchmarkOptions.map((item) => (
+                            <option key={item.asset_class} value={item.asset_class}>
+                              {item.asset_class} {item.benchmark_ready ? "" : "(em preparação)"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="benchmark-summary-grid">
+                      <article className="card benchmark-summary-item">
+                        <span className="rentability-highlight-label">Minha carteira</span>
+                        <strong>{selectedRentabilityClass ? `${Number(selectedRentabilityClass.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
+                        <p>{selectedRentabilityClass ? `Valor: ${brl.format(Number(selectedRentabilityClass.total_return || 0))}` : "Sem dados"}</p>
+                      </article>
+                      <article className="card benchmark-summary-item">
+                        <span className="rentability-highlight-label">Benchmark</span>
+                        <strong>{selectedBenchmarkOption ? selectedBenchmarkOption.benchmark_label : "-"}</strong>
+                        <p>
+                          {selectedBenchmarkOption?.benchmark_ready
+                            ? `${selectedBenchmarkReturnPct.toFixed(2)}% no período`
+                            : "Histórico ainda não disponível no DOMUS"}
+                        </p>
+                      </article>
+                      <article className="card benchmark-summary-item">
+                        <span className="rentability-highlight-label">Gap</span>
+                        <strong>{selectedBenchmarkOption?.benchmark_ready ? `${selectedBenchmarkGapPct >= 0 ? "+" : ""}${selectedBenchmarkGapPct.toFixed(2)} p.p.` : "-"}</strong>
+                        <p>
+                          {selectedBenchmarkOption
+                            ? `Benchmark-alvo: ${selectedBenchmarkOption.benchmark_label}`
+                            : "Selecione uma classe"}
+                        </p>
+                      </article>
+                    </div>
+                    {selectedBenchmarkOption?.benchmark_ready ? (
+                      benchmarkComparisonChartData.length ? (
+                        <div className="chart-box benchmark-comparison-chart">
+                          <ResponsiveContainer width="100%" height={320}>
+                            <LineChart data={benchmarkComparisonChartData}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                              <XAxis dataKey="ref_date" tickFormatter={(value) => formatMonthYearPtBr(String(value || "").slice(0, 7))} />
+                              <YAxis tickFormatter={(value) => `${Number(value || 0).toFixed(0)}%`} width={72} />
+                              <Tooltip
+                                formatter={(value, name) => {
+                                  const label = name === "portfolio_return_pct" ? "Minha carteira" : selectedBenchmarkOption.benchmark_label;
+                                  return [`${Number(value || 0).toFixed(2)}%`, label];
+                                }}
+                                labelFormatter={(value) => formatIsoDatePtBr(value)}
+                              />
+                              <Legend />
+                              <Line
+                                type="monotone"
+                                dataKey="portfolio_return_pct"
+                                name="Minha carteira"
+                                stroke="#66d5ff"
+                                strokeWidth={3}
+                                dot={false}
+                                activeDot={{ r: 4 }}
+                                connectNulls
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="benchmark_return_pct"
+                                name={selectedBenchmarkOption.benchmark_label}
+                                stroke="#f4c84b"
+                                strokeWidth={3}
+                                dot={false}
+                                activeDot={{ r: 4 }}
+                                connectNulls
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      ) : (
+                        <p className="tx-helper">Sem série histórica suficiente para comparação no período selecionado.</p>
+                      )
+                    ) : (
+                      <p className="tx-helper">
+                        Benchmark configurado para esta classe: <strong>{selectedBenchmarkOption?.benchmark_label || "-"}</strong>. A série histórica ainda não foi integrada ao DOMUS neste MVP.
+                      </p>
+                    )}
+                    {investBenchmarkLoading ? <p className="tx-helper">Carregando benchmark...</p> : null}
+                    {!investBenchmarkLoading && investBenchmarkError ? <p className="tx-helper">{investBenchmarkError}</p> : null}
                   </section>
                   {investRentabilityByClass.length ? (
                     <div className="chart-box rentability-chart">
@@ -6644,7 +7005,13 @@ export default function App() {
                           <XAxis dataKey="asset_class" />
                           <YAxis tickFormatter={(value) => `${Number(value || 0).toFixed(0)}%`} width={72} />
                           <Tooltip
-                            formatter={(value) => [`${Number(value || 0).toFixed(2)}%`, "Rentabilidade"]}
+                            formatter={(value, _name, payload) => {
+                              const row = payload?.payload || {};
+                              return [
+                                `${Number(value || 0).toFixed(2)}% | Participação ${Number(row.participation_pct || 0).toFixed(2)}%`,
+                                "Rentabilidade",
+                              ];
+                            }}
                             labelFormatter={(value) => String(value || "")}
                           />
                           <Bar dataKey="total_return_pct" radius={[12, 12, 0, 0]}>
@@ -6676,6 +7043,7 @@ export default function App() {
                           <th>Realizado</th>
                           <th>P&amp;L não realizado</th>
                           <th>Retorno total</th>
+                          <th>Participação</th>
                           <th>Rentabilidade</th>
                         </tr>
                       </thead>
@@ -6690,6 +7058,7 @@ export default function App() {
                             <td>{brl.format(Number(row.total_realized || 0))}</td>
                             <td>{brl.format(Number(row.total_unrealized || 0))}</td>
                             <td>{brl.format(Number(row.total_return || 0))}</td>
+                            <td>{Number(row.participation_pct || 0).toFixed(2)}%</td>
                             <td className={Number(row.total_return_pct || 0) >= 0 ? "rentability-positive" : "rentability-negative"}>
                               {Number(row.total_return_pct || 0).toFixed(2)}%
                             </td>
@@ -6697,7 +7066,7 @@ export default function App() {
                         ))}
                         {!investRentabilityByClass.length ? (
                           <tr>
-                            <td colSpan={9}>Nenhuma carteira consolidada para exibir.</td>
+                            <td colSpan={10}>Nenhuma carteira consolidada para exibir.</td>
                           </tr>
                         ) : null}
                       </tbody>

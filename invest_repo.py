@@ -425,22 +425,6 @@ def upsert_price(asset_id: int, date: str, price: float, source: str | None = No
         """,
         (int(asset_id), date, float(price), source, uid),
     )
-    _exec(
-        conn,
-        """
-        DELETE FROM prices
-        WHERE user_id = ?
-          AND asset_id = ?
-          AND id NOT IN (
-            SELECT id
-            FROM prices
-            WHERE user_id = ? AND asset_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-          )
-        """,
-        (uid, int(asset_id), uid, int(asset_id)),
-    )
     conn.commit()
     conn.close()
 

@@ -3413,6 +3413,44 @@ def invest_portfolio(user: dict = Depends(_current_user)) -> dict:
     }
 
 
+@app.get("/invest/portfolio/timeseries")
+def invest_portfolio_timeseries(
+    date_from: str,
+    date_to: str,
+    asset_class: str | None = None,
+    user: dict = Depends(_current_user),
+) -> list[dict]:
+    uid = int(user["id"])
+    try:
+        df = invest_reports.investments_value_timeseries(
+            date_from=str(date_from or "").strip(),
+            date_to=str(date_to or "").strip(),
+            asset_class=(str(asset_class or "").strip() or None),
+            user_id=uid,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if df is None or df.empty:
+        return []
+
+    rows = []
+    baseline = None
+    for _, row in df.iterrows():
+        raw_value = float(row.get("invest_market_value") or 0.0)
+        if baseline is None and raw_value > 0:
+            baseline = raw_value
+        return_pct = ((raw_value / baseline) - 1.0) * 100.0 if baseline and baseline > 0 else 0.0
+        rows.append(
+            {
+                "date": row.get("date").strftime("%Y-%m-%d") if hasattr(row.get("date"), "strftime") else str(row.get("date") or "")[:10],
+                "market_value": raw_value,
+                "return_pct": float(return_pct),
+            }
+        )
+    return rows
+
+
 @app.get("/invest/summary")
 def invest_summary(user: dict = Depends(_current_user)) -> dict:
     uid = int(user["id"])

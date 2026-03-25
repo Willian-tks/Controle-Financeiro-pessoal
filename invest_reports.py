@@ -368,8 +368,16 @@ def df_asset_snapshots_upto(up_to_date: str, user_id: int | None = None) -> pd.D
     )
 
 
-def investments_value_timeseries(date_from: str, date_to: str, user_id: int | None = None) -> pd.DataFrame:
+def investments_value_timeseries(
+    date_from: str,
+    date_to: str,
+    asset_class: str | None = None,
+    user_id: int | None = None,
+) -> pd.DataFrame:
     tdf = df_trades(None, date_to, user_id=user_id)
+    if asset_class:
+        selected = str(asset_class).strip()
+        tdf = tdf[tdf["asset_class"].astype(str) == selected].copy() if not tdf.empty else tdf
     if tdf.empty:
         dates = pd.date_range(date_from, date_to, freq="D")
         return pd.DataFrame({"date": dates, "invest_market_value": 0.0})
