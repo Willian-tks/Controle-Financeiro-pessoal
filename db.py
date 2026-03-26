@@ -296,6 +296,23 @@ def _sqlite_schema(cur):
         user_id INTEGER
     );
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS benchmark_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        index_name TEXT NOT NULL,
+        display_name TEXT,
+        provider TEXT,
+        symbol TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        update_at_midday INTEGER NOT NULL DEFAULT 1,
+        update_at_close INTEGER NOT NULL DEFAULT 1,
+        default_asset_class TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        user_id INTEGER,
+        workspace_id INTEGER
+    );
+    """)
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS asset_prices (
@@ -572,6 +589,23 @@ def _postgres_schema(cur):
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         user_id BIGINT
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS benchmark_settings (
+        id BIGSERIAL PRIMARY KEY,
+        index_name TEXT NOT NULL,
+        display_name TEXT,
+        provider TEXT,
+        symbol TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        update_at_midday BOOLEAN NOT NULL DEFAULT TRUE,
+        update_at_close BOOLEAN NOT NULL DEFAULT TRUE,
+        default_asset_class TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_id BIGINT,
+        workspace_id BIGINT
     );
     """)
     cur.execute("""
@@ -1022,6 +1056,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_invoices_workspace ON credit_card_invoices(workspace_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_charges_workspace ON credit_card_charges(workspace_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_workspace ON index_rates(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_benchmark_settings_workspace ON benchmark_settings(workspace_id)")
 
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_workspace_name ON accounts(workspace_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_workspace_name ON categories(workspace_id, name)")
@@ -1029,6 +1064,7 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_prices_workspace_asset_date ON prices(workspace_id, asset_id, date)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_prices_workspace_asset_date ON asset_prices(workspace_id, asset_id, px_date)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_workspace_name_date ON index_rates(workspace_id, index_name, ref_date)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_benchmark_settings_workspace_name ON benchmark_settings(workspace_id, index_name)")
     cur.execute("DROP INDEX IF EXISTS ux_cc_cards_user_acc")
     cur.execute("DROP INDEX IF EXISTS ux_cc_cards_user_name")
     cur.execute("DROP INDEX IF EXISTS ux_cc_cards_user_acc_type")
@@ -1233,6 +1269,7 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "credit_card_invoices", "workspace_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "workspace_id INTEGER")
     _add_column_sqlite(cur, "index_rates", "workspace_id INTEGER")
+    _add_column_sqlite(cur, "benchmark_settings", "workspace_id INTEGER")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)")
@@ -1254,10 +1291,12 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_invoices_workspace ON credit_card_invoices(workspace_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_charges_workspace ON credit_card_charges(workspace_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_workspace ON index_rates(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_benchmark_settings_workspace ON benchmark_settings(workspace_id)")
 
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_workspace_name ON accounts(workspace_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_workspace_name ON categories(workspace_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_assets_workspace_symbol ON assets(workspace_id, symbol)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_benchmark_settings_workspace_name ON benchmark_settings(workspace_id, index_name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_prices_workspace_asset_date ON prices(workspace_id, asset_id, date)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_prices_workspace_asset_date ON asset_prices(workspace_id, asset_id, px_date)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_workspace_name_date ON index_rates(workspace_id, index_name, ref_date)")

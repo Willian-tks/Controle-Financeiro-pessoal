@@ -41,6 +41,8 @@ from .schemas import (
     AssetFairValueUpdateRequest,
     AssetCreateRequest,
     AssetUpdateRequest,
+    BenchmarkSettingUpsertRequest,
+    BenchmarkSyncRequest,
     CategoryCreateRequest,
     CategoryUpdateRequest,
     CreditCardCreateRequest,
@@ -80,6 +82,9 @@ logger = logging.getLogger(__name__)
 QUOTE_JOB_TIMEZONE = "America/Sao_Paulo"
 QUOTE_JOB_START_AT = time(hour=10, minute=0)
 QUOTE_JOB_END_AT = time(hour=17, minute=10)
+BENCHMARK_JOB_TIMEZONE = "America/Sao_Paulo"
+BENCHMARK_JOB_MIDDAY_AT = time(hour=12, minute=0)
+BENCHMARK_JOB_CLOSE_AT = time(hour=17, minute=0)
 
 
 def _cors_origins() -> list[str]:
@@ -168,6 +173,34 @@ def _quote_job_schedule_context(now: datetime | None = None) -> dict[str, str]:
         "start_at": QUOTE_JOB_START_AT.strftime("%H:%M"),
         "end_at": QUOTE_JOB_END_AT.strftime("%H:%M"),
         "next_run_at": base_now.isoformat(),
+    }
+
+
+def _benchmark_job_schedule_context(now: datetime | None = None) -> dict[str, Any]:
+    tz = ZoneInfo(BENCHMARK_JOB_TIMEZONE)
+    base_now = now.astimezone(tz) if isinstance(now, datetime) else datetime.now(tz)
+    slots = [BENCHMARK_JOB_MIDDAY_AT, BENCHMARK_JOB_CLOSE_AT]
+    next_runs: list[str] = []
+    for offset in range(0, 7):
+        candidate_day = base_now.date() + timedelta(days=offset)
+        if candidate_day.weekday() >= 5:
+            continue
+        for slot in slots:
+            run_dt = datetime.combine(candidate_day, slot, tzinfo=tz)
+            if run_dt >= base_now:
+                next_runs.append(run_dt.isoformat())
+            if len(next_runs) >= 2:
+                return {
+                    "timezone": BENCHMARK_JOB_TIMEZONE,
+                    "midday_at": BENCHMARK_JOB_MIDDAY_AT.strftime("%H:%M"),
+                    "close_at": BENCHMARK_JOB_CLOSE_AT.strftime("%H:%M"),
+                    "next_runs": next_runs,
+                }
+    return {
+        "timezone": BENCHMARK_JOB_TIMEZONE,
+        "midday_at": BENCHMARK_JOB_MIDDAY_AT.strftime("%H:%M"),
+        "close_at": BENCHMARK_JOB_CLOSE_AT.strftime("%H:%M"),
+        "next_runs": next_runs,
     }
 
 
@@ -2817,6 +2850,61 @@ def invest_meta(user: dict = Depends(_current_user)) -> dict:
         "income_types": list(invest_repo.INCOME_TYPES.keys()),
         "index_names": list(invest_index_rates.SUPPORTED_INDEX_NAMES),
     }
+
+
+@app.get("/invest/benchmarks/settings")
+def invest_list_benchmark_settings(user: dict = Depends(_current_user)) -> dict:
+    uid = int(user["id"])
+    try:
+        rows = invest_index_rates.list_benchmark_settings(user_id=uid)
+        return {
+            "items": rows,
+            "schedule": _benchmark_job_schedule_context(),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/invest/benchmarks/settings/upsert")
+def invest_upsert_benchmark_setting(
+    body: BenchmarkSettingUpsertRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    try:
+        row = invest_index_rates.upsert_benchmark_setting(
+            index_name=body.index_name,
+            is_active=bool(body.is_active),
+            update_at_midday=bool(body.update_at_midday),
+            update_at_close=bool(body.update_at_close),
+            default_asset_class=(body.default_asset_class or "").strip() or None,
+            display_name=(body.display_name or "").strip() or None,
+            user_id=uid,
+        )
+        return {"ok": True, "item": row}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/invest/benchmarks/sync-active")
+def invest_sync_active_benchmarks(
+    body: BenchmarkSyncRequest | None = None,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    payload = body or BenchmarkSyncRequest()
+    try:
+        out = invest_index_rates.sync_configured_benchmarks(
+            date_from=payload.date_from,
+            date_to=payload.date_to,
+            timeout_s=float(payload.timeout_s) if payload.timeout_s is not None else 20.0,
+            user_id=uid,
+        )
+        return {"ok": True, **out}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/invest/index-rates")

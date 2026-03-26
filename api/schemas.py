@@ -246,6 +246,21 @@ class IndexRatesSyncRequest(BaseModel):
     timeout_s: float | None = None
 
 
+class BenchmarkSettingUpsertRequest(BaseModel):
+    index_name: str
+    is_active: bool = True
+    update_at_midday: bool = True
+    update_at_close: bool = True
+    default_asset_class: str | None = None
+    display_name: str | None = None
+
+
+class BenchmarkSyncRequest(BaseModel):
+    date_from: str | None = None
+    date_to: str | None = None
+    timeout_s: float | None = None
+
+
 class RentabilityUpdateRequest(BaseModel):
     as_of_date: str | None = None
     only_auto: bool = True

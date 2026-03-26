@@ -53,6 +53,7 @@ import {
   getDashboardKpis,
   getDashboardWealthMonthly,
   getInvestAssets,
+  getInvestBenchmarkSettings,
   getInvestIncomes,
   getInvestMeta,
   getInvestIndexRates,
@@ -93,6 +94,8 @@ import {
   uploadInvestAssetValuationReport,
   downloadInvestAssetValuationReport,
   updateInvestManualAssetValue,
+  syncActiveInvestBenchmarks,
+  upsertInvestBenchmarkSetting,
   upsertInvestPrice,
   updateCard,
   updateAccount,
@@ -223,15 +226,25 @@ const RENTABILITY_TYPE_LABELS = {
   MANUAL: "Manual",
 };
 const BENCHMARK_BY_ASSET_CLASS = {
-  "Ações BR": { benchmark: "IBOV", ready: true, indexName: "IBOV", seriesMode: "level" },
-  FIIs: { benchmark: "IFIX", ready: true, indexName: "IFIX", seriesMode: "level" },
-  "Stocks US": { benchmark: "S&P 500", ready: true, indexName: "SP500", seriesMode: "level" },
-  "Renda Fixa": { benchmark: "CDI", ready: true, indexName: "CDI", seriesMode: "rate" },
-  "Tesouro Direto": { benchmark: "CDI", ready: true, indexName: "CDI", seriesMode: "rate" },
-  Cripto: { benchmark: "Índice Cripto", ready: true, indexName: "CRYPTO", seriesMode: "level" },
-  BDRs: { benchmark: "Índice Internacional", ready: true, indexName: "GLOBAL", seriesMode: "level" },
-  Fundos: { benchmark: "CDI", ready: true, indexName: "CDI", seriesMode: "rate" },
-  Coe: { benchmark: "CDI", ready: true, indexName: "CDI", seriesMode: "rate" },
+  "Ações BR": { benchmark: "IBOV", ready: true, indexName: "IBOV" },
+  FIIs: { benchmark: "IFIX", ready: true, indexName: "IFIX" },
+  "Stocks US": { benchmark: "S&P 500", ready: true, indexName: "SP500" },
+  "Renda Fixa": { benchmark: "CDI", ready: true, indexName: "CDI" },
+  "Tesouro Direto": { benchmark: "CDI", ready: true, indexName: "CDI" },
+  Cripto: { benchmark: "Índice Cripto", ready: true, indexName: "CRYPTO" },
+  BDRs: { benchmark: "Índice Internacional", ready: true, indexName: "GLOBAL" },
+  Fundos: { benchmark: "CDI", ready: true, indexName: "CDI" },
+  Coe: { benchmark: "CDI", ready: true, indexName: "CDI" },
+};
+const BENCHMARK_INDEX_META = {
+  CDI: { label: "CDI", seriesMode: "rate" },
+  SELIC: { label: "SELIC", seriesMode: "rate" },
+  IPCA: { label: "IPCA", seriesMode: "rate" },
+  IBOV: { label: "IBOV", seriesMode: "level" },
+  IFIX: { label: "IFIX", seriesMode: "level" },
+  SP500: { label: "S&P 500", seriesMode: "level" },
+  GLOBAL: { label: "Índice Internacional", seriesMode: "level" },
+  CRYPTO: { label: "Índice Cripto", seriesMode: "level" },
 };
 const INCOME_TYPE_COLORS = {
   Dividendos: "#5dd39e",
@@ -280,6 +293,17 @@ function formatIsoDateTimePtBr(value) {
     dateStyle: "short",
     timeStyle: "short",
   });
+}
+
+function formatBenchmarkLatestValue(value, indexName) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  const idx = String(indexName || "").trim().toUpperCase();
+  const formatted = num.toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: idx === "CDI" || idx === "SELIC" || idx === "IPCA" ? 4 : 2,
+  });
+  return idx === "CDI" || idx === "SELIC" || idx === "IPCA" ? `${formatted}%` : formatted;
 }
 
 function isIsoDateWithinRange(value, from, to) {
@@ -964,10 +988,14 @@ export default function App() {
   const [investPortfolioClassFilter, setInvestPortfolioClassFilter] = useState("");
   const [investRentabilityWindow, setInvestRentabilityWindow] = useState("12m");
   const [investBenchmarkClass, setInvestBenchmarkClass] = useState("");
+  const [investBenchmarkIndexName, setInvestBenchmarkIndexName] = useState("");
   const [investBenchmarkRates, setInvestBenchmarkRates] = useState([]);
   const [investBenchmarkPortfolioSeries, setInvestBenchmarkPortfolioSeries] = useState([]);
   const [investBenchmarkLoading, setInvestBenchmarkLoading] = useState(false);
   const [investBenchmarkError, setInvestBenchmarkError] = useState("");
+  const [investBenchmarkSettings, setInvestBenchmarkSettings] = useState([]);
+  const [investBenchmarkSchedule, setInvestBenchmarkSchedule] = useState(null);
+  const [investBenchmarkSyncing, setInvestBenchmarkSyncing] = useState(false);
   const [investAssetsClassFilter, setInvestAssetsClassFilter] = useState("");
   const [investTradeDateFrom, setInvestTradeDateFrom] = useState(defaultMonthRange.from);
   const [investTradeDateTo, setInvestTradeDateTo] = useState(defaultMonthRange.to);
@@ -1074,10 +1102,15 @@ export default function App() {
     setInvestPrices([]);
     setInvestPriceJobStatus(null);
     setInvestPortfolio({ positions: [] });
+    setInvestBenchmarkClass("");
+    setInvestBenchmarkIndexName("");
     setInvestBenchmarkRates([]);
     setInvestBenchmarkPortfolioSeries([]);
     setInvestBenchmarkError("");
     setInvestBenchmarkLoading(false);
+    setInvestBenchmarkSettings([]);
+    setInvestBenchmarkSchedule(null);
+    setInvestBenchmarkSyncing(false);
     setInvestSummaryData({
       assets_count: 0,
       total_invested: 0,
@@ -2220,22 +2253,59 @@ export default function App() {
       best_asset: bestAsset,
     };
   }, [investRentabilityByClass, investRentabilityPositions]);
+  const investBenchmarkActiveSettings = useMemo(() => {
+    return (investBenchmarkSettings || []).filter((item) => Boolean(item?.is_active));
+  }, [investBenchmarkSettings]);
   const investBenchmarkOptions = useMemo(() => {
     return investRentabilityByClass.map((row) => {
-      const config = BENCHMARK_BY_ASSET_CLASS[String(row.asset_class || "").trim()] || null;
+      const assetClass = String(row.asset_class || "").trim();
+      const mapped = BENCHMARK_BY_ASSET_CLASS[assetClass] || null;
+      const explicitSetting = investBenchmarkActiveSettings.find(
+        (item) => String(item?.default_asset_class || "").trim() === assetClass
+      );
+      const defaultSetting = explicitSetting
+        || investBenchmarkActiveSettings.find((item) => String(item?.index_name || "").trim() === String(mapped?.indexName || "").trim())
+        || null;
+      const indexName = String(defaultSetting?.index_name || mapped?.indexName || "").trim();
+      const meta = BENCHMARK_INDEX_META[indexName] || null;
       return {
-        asset_class: row.asset_class,
-        benchmark_label: config?.benchmark || "Benchmark",
-        benchmark_ready: Boolean(config?.ready),
-        index_name: config?.indexName || "",
-        series_mode: config?.seriesMode || "level",
+        asset_class: assetClass,
+        benchmark_label: String(defaultSetting?.display_name || meta?.label || mapped?.benchmark || "Benchmark"),
+        benchmark_ready: Boolean(indexName),
+        index_name: indexName,
+        series_mode: meta?.seriesMode || "level",
       };
     });
-  }, [investRentabilityByClass]);
-  const selectedBenchmarkOption = useMemo(
+  }, [investBenchmarkActiveSettings, investRentabilityByClass]);
+  const selectedBenchmarkClassOption = useMemo(
     () => investBenchmarkOptions.find((item) => String(item.asset_class) === String(investBenchmarkClass)) || null,
     [investBenchmarkClass, investBenchmarkOptions]
   );
+  const investBenchmarkSelectableOptions = useMemo(() => {
+    const selectedClass = String(investBenchmarkClass || "").trim();
+    const rows = investBenchmarkActiveSettings.length ? investBenchmarkActiveSettings : (investBenchmarkSettings || []);
+    return [...rows].sort((a, b) => {
+      const aMatch = String(a?.default_asset_class || "").trim() === selectedClass ? 0 : 1;
+      const bMatch = String(b?.default_asset_class || "").trim() === selectedClass ? 0 : 1;
+      if (aMatch !== bMatch) return aMatch - bMatch;
+      return String(a?.display_name || a?.index_name || "").localeCompare(String(b?.display_name || b?.index_name || ""));
+    });
+  }, [investBenchmarkActiveSettings, investBenchmarkClass, investBenchmarkSettings]);
+  const selectedBenchmarkOption = useMemo(() => {
+    const fallback = selectedBenchmarkClassOption;
+    const selectedSetting = investBenchmarkSelectableOptions.find(
+      (item) => String(item?.index_name || "").trim() === String(investBenchmarkIndexName || "").trim()
+    ) || null;
+    const indexName = String(selectedSetting?.index_name || fallback?.index_name || "").trim();
+    const meta = BENCHMARK_INDEX_META[indexName] || null;
+    return {
+      asset_class: String(investBenchmarkClass || "").trim(),
+      benchmark_label: String(selectedSetting?.display_name || fallback?.benchmark_label || meta?.label || "Benchmark"),
+      benchmark_ready: Boolean(indexName),
+      index_name: indexName,
+      series_mode: meta?.seriesMode || fallback?.series_mode || "level",
+    };
+  }, [investBenchmarkClass, selectedBenchmarkClassOption, investBenchmarkIndexName, investBenchmarkSelectableOptions]);
   const selectedRentabilityClass = useMemo(
     () => investRentabilityByClass.find((item) => String(item.asset_class) === String(investBenchmarkClass)) || null,
     [investBenchmarkClass, investRentabilityByClass]
@@ -2267,14 +2337,26 @@ export default function App() {
     dates.sort();
     return dates[0] || "";
   }, [investAssets, investIncomes, investTrades, selectedBenchmarkOption]);
+  const investBenchmarkTargetDateTo = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const investBenchmarkTargetDateFrom = useMemo(
+    () => shiftIsoDateByMonths(investBenchmarkTargetDateTo, 12) || investBenchmarkTargetDateTo,
+    [investBenchmarkTargetDateTo]
+  );
   const investBenchmarkDateFrom = useMemo(() => {
-    if (selectedBenchmarkClassStartDate && investRentabilityWindowStart) {
-      return selectedBenchmarkClassStartDate > investRentabilityWindowStart
+    if (selectedBenchmarkClassStartDate && investBenchmarkTargetDateFrom) {
+      return selectedBenchmarkClassStartDate > investBenchmarkTargetDateFrom
         ? selectedBenchmarkClassStartDate
-        : investRentabilityWindowStart;
+        : investBenchmarkTargetDateFrom;
     }
-    return selectedBenchmarkClassStartDate || investRentabilityWindowStart || "";
-  }, [investRentabilityWindowStart, selectedBenchmarkClassStartDate]);
+    return selectedBenchmarkClassStartDate || investBenchmarkTargetDateFrom || "";
+  }, [investBenchmarkTargetDateFrom, selectedBenchmarkClassStartDate]);
+  const investBenchmarkIsPartialPeriod = useMemo(() => {
+    return Boolean(
+      selectedBenchmarkClassStartDate &&
+      investBenchmarkTargetDateFrom &&
+      selectedBenchmarkClassStartDate > investBenchmarkTargetDateFrom
+    );
+  }, [investBenchmarkTargetDateFrom, selectedBenchmarkClassStartDate]);
   const benchmarkSeriesData = useMemo(() => {
     const rows = Array.isArray(investBenchmarkRates) ? [...investBenchmarkRates] : [];
     rows.sort((a, b) => String(a.ref_date || "").localeCompare(String(b.ref_date || "")));
@@ -2329,15 +2411,19 @@ export default function App() {
     const positivePoints = (investBenchmarkPortfolioSeries || []).filter((row) => Number(row?.market_value || 0) > 0);
     return positivePoints.length >= 2;
   }, [investBenchmarkPortfolioSeries]);
+  const benchmarkPortfolioLatestPoint = useMemo(
+    () => (investBenchmarkPortfolioSeries || []).at(-1) || null,
+    [investBenchmarkPortfolioSeries]
+  );
+  const selectedBenchmarkPortfolioReturnPct = Number(benchmarkPortfolioLatestPoint?.return_pct || 0);
   const selectedBenchmarkReturnPct = benchmarkSeriesData.length
     ? Number(benchmarkSeriesData[benchmarkSeriesData.length - 1]?.benchmark_return_pct || 0)
     : 0;
-  const selectedBenchmarkGapPct = selectedRentabilityClass
-    ? Number(selectedRentabilityClass.total_return_pct || 0) - selectedBenchmarkReturnPct
-    : 0;
+  const selectedBenchmarkGapPct = selectedBenchmarkPortfolioReturnPct - selectedBenchmarkReturnPct;
   useEffect(() => {
     if (!investBenchmarkOptions.length) {
       setInvestBenchmarkClass("");
+      setInvestBenchmarkIndexName("");
       return;
     }
     const current = investBenchmarkOptions.find((item) => String(item.asset_class) === String(investBenchmarkClass)) || null;
@@ -2356,6 +2442,24 @@ export default function App() {
     setInvestBenchmarkClass(String(preferred?.asset_class || ""));
   }, [investBenchmarkClass, investBenchmarkOptions, investRentabilityHighlights.biggest]);
   useEffect(() => {
+    const selectedClass = String(investBenchmarkClass || "").trim();
+    if (!selectedClass) {
+      setInvestBenchmarkIndexName("");
+      return;
+    }
+    const current = investBenchmarkSelectableOptions.find(
+      (item) => String(item?.index_name || "").trim() === String(investBenchmarkIndexName || "").trim()
+    );
+    if (current) return;
+    const mappedIndexName = String(BENCHMARK_BY_ASSET_CLASS[selectedClass]?.indexName || "").trim();
+    const preferred =
+      investBenchmarkSelectableOptions.find((item) => String(item?.default_asset_class || "").trim() === selectedClass)
+      || investBenchmarkSelectableOptions.find((item) => String(item?.index_name || "").trim() === mappedIndexName)
+      || investBenchmarkSelectableOptions[0]
+      || null;
+    setInvestBenchmarkIndexName(String(preferred?.index_name || ""));
+  }, [investBenchmarkClass, investBenchmarkIndexName, investBenchmarkSelectableOptions]);
+  useEffect(() => {
     if (!user || page !== "Investimentos" || investTab !== "Rentabilidade") return;
     if (!selectedBenchmarkOption?.benchmark_ready || !selectedBenchmarkOption?.index_name) {
       setInvestBenchmarkRates([]);
@@ -2364,8 +2468,8 @@ export default function App() {
       setInvestBenchmarkLoading(false);
       return;
     }
-    const dateTo = new Date().toISOString().slice(0, 10);
-    const dateFrom = investBenchmarkDateFrom || shiftIsoDateByMonths(dateTo, 12) || dateTo;
+    const dateTo = investBenchmarkTargetDateTo;
+    const dateFrom = investBenchmarkDateFrom || investBenchmarkTargetDateFrom || dateTo;
     let cancelled = false;
     (async () => {
       try {
@@ -2399,7 +2503,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [investBenchmarkDateFrom, investTab, page, selectedBenchmarkOption, user]);
+  }, [investBenchmarkDateFrom, investBenchmarkTargetDateFrom, investBenchmarkTargetDateTo, investTab, page, selectedBenchmarkOption, user]);
   const assetCreateIsFixedIncome = useMemo(
     () => isFixedIncomeClass(assetCreateClass),
     [assetCreateClass]
@@ -3213,11 +3317,12 @@ export default function App() {
       getInvestIncomes(),
       getInvestPrices(),
       getInvestPriceJobStatus(),
+      getInvestBenchmarkSettings(),
       getInvestPortfolio(),
       getInvestSummary(),
     ]);
     if (requestSeq !== investReloadSeqRef.current) return;
-    const [metaRes, assetsRes, tradesRes, incomesRes, pricesRes, quoteJobStatusRes, portfolioRes, summaryRes] = results;
+    const [metaRes, assetsRes, tradesRes, incomesRes, pricesRes, quoteJobStatusRes, benchmarkSettingsRes, portfolioRes, summaryRes] = results;
     const hasAnySuccess = results.some((item) => item.status === "fulfilled");
     const hasAnyFailure = results.some((item) => item.status === "rejected");
     const meta = metaRes.status === "fulfilled" ? metaRes.value : null;
@@ -3226,6 +3331,7 @@ export default function App() {
     const incomes = incomesRes.status === "fulfilled" ? incomesRes.value : [];
     const prices = pricesRes.status === "fulfilled" ? pricesRes.value : [];
     const quoteJobStatus = quoteJobStatusRes.status === "fulfilled" ? quoteJobStatusRes.value : null;
+    const benchmarkSettings = benchmarkSettingsRes.status === "fulfilled" ? benchmarkSettingsRes.value : null;
     const portfolio = portfolioRes.status === "fulfilled" ? portfolioRes.value : { positions: [] };
     const summary = summaryRes.status === "fulfilled" ? summaryRes.value : null;
     setInvestMeta(meta || { asset_classes: [], asset_sectors: [], income_types: [] });
@@ -3234,6 +3340,8 @@ export default function App() {
     setInvestIncomes(incomes || []);
     setInvestPrices(prices || []);
     setInvestPriceJobStatus(quoteJobStatus || null);
+    setInvestBenchmarkSettings(Array.isArray(benchmarkSettings?.items) ? benchmarkSettings.items : []);
+    setInvestBenchmarkSchedule(benchmarkSettings?.schedule || null);
     setInvestPortfolio(portfolio || { positions: [] });
     setInvestSummaryData(
       summary || {
@@ -3257,6 +3365,62 @@ export default function App() {
         throw new Error(failed[0] || "Falha ao carregar dados de investimentos.");
       }
       console.error("Falhas parciais ao recarregar investimentos", failed);
+    }
+  }
+
+  async function onSyncActiveBenchmarks() {
+    setInvestMsg("");
+    try {
+      setInvestBenchmarkSyncing(true);
+      const today = new Date().toISOString().slice(0, 10);
+      const dateFrom = shiftIsoDateByMonths(today, 12) || today;
+      const out = await syncActiveInvestBenchmarks({ date_from: dateFrom, date_to: today, timeout_s: 20 });
+      const totals = out?.totals || {};
+      setInvestMsg(
+        `Benchmarks sincronizados. Inseridos: ${Number(totals.inserted || 0)} | Atualizados: ${Number(totals.updated || 0)} | Sem mudança: ${Number(totals.unchanged || 0)}`
+      );
+      showGlobalSuccess("Benchmarks sincronizados.");
+      await reloadInvestData();
+    } catch (err) {
+      setInvestMsg(String(err.message || err));
+    } finally {
+      setInvestBenchmarkSyncing(false);
+    }
+  }
+
+  async function onToggleBenchmarkSetting(indexName, nextActive) {
+    setInvestMsg("");
+    try {
+      const current = (investBenchmarkSettings || []).find((item) => String(item?.index_name || "") === String(indexName)) || {};
+      await upsertInvestBenchmarkSetting({
+        index_name: indexName,
+        is_active: Boolean(nextActive),
+        update_at_midday: Boolean(current?.update_at_midday ?? true),
+        update_at_close: Boolean(current?.update_at_close ?? true),
+        default_asset_class: String(current?.default_asset_class || "").trim() || null,
+        display_name: String(current?.display_name || "").trim() || null,
+      });
+      await reloadInvestData();
+    } catch (err) {
+      setInvestMsg(String(err.message || err));
+    }
+  }
+
+  async function onChangeBenchmarkDefaultClass(indexName, nextAssetClass) {
+    setInvestMsg("");
+    try {
+      const current = (investBenchmarkSettings || []).find((item) => String(item?.index_name || "") === String(indexName)) || {};
+      await upsertInvestBenchmarkSetting({
+        index_name: indexName,
+        is_active: Boolean(current?.is_active ?? true),
+        update_at_midday: Boolean(current?.update_at_midday ?? true),
+        update_at_close: Boolean(current?.update_at_close ?? true),
+        default_asset_class: String(nextAssetClass || "").trim() || null,
+        display_name: String(current?.display_name || "").trim() || null,
+      });
+      await reloadInvestData();
+    } catch (err) {
+      setInvestMsg(String(err.message || err));
     }
   }
 
@@ -6943,37 +7107,54 @@ export default function App() {
                       <div>
                         <h3>Carteira x Benchmark</h3>
                         <p className="tx-helper">
-                          MVP seguro: neste quadro o histórico já está disponível para classes comparadas com CDI. As demais classes mostram o benchmark-alvo, mas aguardam integração histórica.
+                          Compare a classe com um benchmark já monitorado no banco. O padrão por classe pode ser ajustado na aba Cotações.
                         </p>
                       </div>
-                      <div className="benchmark-comparison-filter">
-                        <label htmlFor="benchmark-class-select">Classe</label>
-                        <select
-                          id="benchmark-class-select"
-                          className="invoice-filter-select"
-                          value={investBenchmarkClass}
-                          onChange={(e) => setInvestBenchmarkClass(e.target.value)}
-                        >
-                          {investBenchmarkOptions.map((item) => (
-                            <option key={item.asset_class} value={item.asset_class}>
-                              {item.asset_class} {item.benchmark_ready ? "" : "(em preparação)"}
-                            </option>
-                          ))}
-                        </select>
+                      <div className="benchmark-comparison-filters">
+                        <div className="benchmark-comparison-filter">
+                          <label htmlFor="benchmark-class-select">Classe</label>
+                          <select
+                            id="benchmark-class-select"
+                            className="invoice-filter-select"
+                            value={investBenchmarkClass}
+                            onChange={(e) => setInvestBenchmarkClass(e.target.value)}
+                          >
+                            {investBenchmarkOptions.map((item) => (
+                              <option key={item.asset_class} value={item.asset_class}>
+                                {item.asset_class}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="benchmark-comparison-filter">
+                          <label htmlFor="benchmark-index-select">Benchmark</label>
+                          <select
+                            id="benchmark-index-select"
+                            className="invoice-filter-select"
+                            value={investBenchmarkIndexName}
+                            onChange={(e) => setInvestBenchmarkIndexName(e.target.value)}
+                          >
+                            {investBenchmarkSelectableOptions.map((item) => (
+                              <option key={`${item.index_name}-${item.default_asset_class || "sem-classe"}`} value={item.index_name}>
+                                {item.display_name || item.index_name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     </div>
                     <div className="benchmark-summary-grid">
                       <article className="card benchmark-summary-item">
                         <span className="rentability-highlight-label">Minha carteira</span>
-                        <strong>{selectedRentabilityClass ? `${Number(selectedRentabilityClass.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
-                        <p>{selectedRentabilityClass ? `Valor: ${brl.format(Number(selectedRentabilityClass.total_return || 0))}` : "Sem dados"}</p>
+                        <strong>{benchmarkPortfolioLatestPoint ? `${selectedBenchmarkPortfolioReturnPct.toFixed(2)}%` : "-"}</strong>
+                        <p>{benchmarkPortfolioLatestPoint ? `Valor: ${brl.format(Number(benchmarkPortfolioLatestPoint.total_return || 0))}` : "Sem dados"}</p>
                       </article>
                       <article className="card benchmark-summary-item">
                         <span className="rentability-highlight-label">Benchmark</span>
                         <strong>{selectedBenchmarkOption ? selectedBenchmarkOption.benchmark_label : "-"}</strong>
                         <p>
                           {selectedBenchmarkOption?.benchmark_ready
-                            ? `${selectedBenchmarkReturnPct.toFixed(2)}% no período`
+                            ? `${selectedBenchmarkReturnPct.toFixed(2)}% no período comparável`
                             : "Histórico ainda não disponível no DOMUS"}
                         </p>
                       </article>
@@ -6987,6 +7168,11 @@ export default function App() {
                         </p>
                       </article>
                     </div>
+                    <p className="tx-helper">
+                      Janela alvo: 12 meses. {investBenchmarkIsPartialPeriod
+                        ? `Histórico disponível da classe desde ${formatIsoDatePtBr(investBenchmarkDateFrom)}. A comparação ainda não cobre 12 meses completos.`
+                        : `Comparação completa de 12 meses, iniciando em ${formatIsoDatePtBr(investBenchmarkDateFrom)}.`}
+                    </p>
                     {selectedBenchmarkOption?.benchmark_ready ? (
                       benchmarkComparisonChartData.length ? (
                         <div className="chart-box benchmark-comparison-chart">
@@ -6996,8 +7182,17 @@ export default function App() {
                               <XAxis dataKey="ref_date" tickFormatter={(value) => formatMonthYearPtBr(String(value || "").slice(0, 7))} />
                               <YAxis tickFormatter={(value) => `${Number(value || 0).toFixed(0)}%`} width={72} />
                               <Tooltip
-                                formatter={(value, name) => {
-                                  const label = name === "portfolio_return_pct" ? "Minha carteira" : selectedBenchmarkOption.benchmark_label;
+                                contentStyle={{
+                                  background: "rgba(10, 20, 52, 0.96)",
+                                  border: "1px solid rgba(130, 177, 255, 0.35)",
+                                  borderRadius: 12,
+                                  color: "#f7f9ff",
+                                }}
+                                labelStyle={{ color: "#f7f9ff", fontWeight: 700 }}
+                                itemStyle={{ color: "#f7f9ff" }}
+                                formatter={(value, name, entry) => {
+                                  const dataKey = String(entry?.dataKey || "").trim();
+                                  const label = dataKey === "portfolio_return_pct" ? "Minha carteira" : selectedBenchmarkOption.benchmark_label;
                                   return [`${Number(value || 0).toFixed(2)}%`, label];
                                 }}
                                 labelFormatter={(value) => formatIsoDatePtBr(value)}
@@ -7731,6 +7926,76 @@ export default function App() {
             {investTab === "Cotações" ? (
               <section className="card">
                 <h3>Cotações</h3>
+                <section className="card quote-section-card">
+                  <div className="quote-section-head">
+                    <div>
+                      <h4>Benchmarks monitorados</h4>
+                      <p className="tx-helper">
+                        Configure os benchmarks mantidos no banco para o comparativo da rentabilidade. A agenda preparada usa janelas às {investBenchmarkSchedule?.midday_at || "12:00"} e {investBenchmarkSchedule?.close_at || "17:00"}.
+                      </p>
+                    </div>
+                    <button className="quote-section-action" onClick={onSyncActiveBenchmarks} disabled={investBenchmarkSyncing || !canEditInvestimentos}>
+                      {investBenchmarkSyncing ? "Sincronizando..." : "Sincronizar benchmarks ativos"}
+                    </button>
+                  </div>
+                  {investBenchmarkSchedule?.next_runs?.length ? (
+                    <p className="tx-helper">
+                      Próximas janelas: {investBenchmarkSchedule.next_runs.map((value) => formatIsoDateTimePtBr(value)).join(" | ")}
+                    </p>
+                  ) : null}
+                  <div className="tx-table-wrap">
+                    <table className="tx-table">
+                      <thead>
+                        <tr>
+                          <th>Benchmark</th>
+                          <th>Fonte</th>
+                          <th>Símbolo</th>
+                          <th>Última base</th>
+                          <th>Última cotação</th>
+                          <th>Classe padrão</th>
+                          <th>Ativo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(investBenchmarkSettings || []).map((item) => (
+                          <tr key={item.index_name}>
+                            <td>{item.display_name || item.index_name}</td>
+                            <td>{item.provider || "-"}</td>
+                            <td>{item.symbol || "-"}</td>
+                            <td>{item.latest_ref_date ? formatIsoDatePtBr(item.latest_ref_date) : "-"}</td>
+                            <td>{formatBenchmarkLatestValue(item.latest_value, item.index_name)}</td>
+                            <td>
+                              <select
+                                value={String(item.default_asset_class || "")}
+                                onChange={(e) => onChangeBenchmarkDefaultClass(item.index_name, e.target.value)}
+                                disabled={!canEditInvestimentos}
+                                className="invoice-filter-select"
+                              >
+                                <option value="">Sem classe padrão</option>
+                                {(investMeta?.asset_classes || []).map((assetClass) => (
+                                  <option key={`${item.index_name}-${assetClass}`} value={assetClass}>{assetClass}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
+                              <label className="tx-inline-check">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(item.is_active)}
+                                  onChange={(e) => onToggleBenchmarkSetting(item.index_name, e.target.checked)}
+                                  disabled={!canEditInvestimentos}
+                                />
+                                <span className={item.is_active ? "tx-inline-check-label active" : "tx-inline-check-label inactive"}>
+                                  {item.is_active ? "Monitorado" : "Desativado"}
+                                </span>
+                              </label>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
                 <section className="card quote-section-card">
                   <div className="quote-section-head">
                     <div>

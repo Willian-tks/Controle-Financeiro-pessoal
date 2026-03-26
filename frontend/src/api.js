@@ -442,6 +442,24 @@ export function getInvestPriceJobStatus() {
   return req("/invest/prices/job-status");
 }
 
+export function getInvestBenchmarkSettings() {
+  return req("/invest/benchmarks/settings");
+}
+
+export function upsertInvestBenchmarkSetting(payload = {}) {
+  return req("/invest/benchmarks/settings/upsert", {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export function syncActiveInvestBenchmarks(payload = {}) {
+  return req("/invest/benchmarks/sync-active", {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  });
+}
+
 export function getInvestIndexRates(params = {}) {
   const search = new URLSearchParams();
   if (params.index_name) search.set("index_name", String(params.index_name));

@@ -1163,6 +1163,12 @@ body {
   gap: 6px;
 }
 
+.benchmark-comparison-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+}
+
 .benchmark-comparison-filter label {
   color: var(--text-muted);
   font-size: 13px;
@@ -1193,6 +1199,34 @@ body {
 
 .benchmark-comparison-chart {
   min-height: 320px;
+}
+
+.tx-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-main);
+}
+
+.tx-inline-check input {
+  margin: 0;
+}
+
+.tx-inline-check-label {
+  font-weight: 600;
+  color: #d8e6ff;
+}
+
+.tx-inline-check-label.active {
+  color: #9fe3c0;
+}
+
+.tx-inline-check-label.inactive {
+  color: #ffb4b4;
+}
+
+.tx-table td .invoice-filter-select {
+  min-width: 154px;
 }
 
 .rentability-table td.rentability-positive {
@@ -1633,7 +1667,8 @@ body {
 }
 
 .main-dashboard .tx-form button,
-.main-dashboard .mgr-grid button {
+.main-dashboard .mgr-grid button,
+.main-dashboard .quote-section-action {
   background: linear-gradient(90deg, #2ec6ff, #4e7ff3);
   border-color: rgba(255, 255, 255, 0.22);
   color: #ffffff;
@@ -1656,6 +1691,11 @@ body {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.quote-section-action {
+  align-self: flex-start;
+  white-space: nowrap;
 }
 
 .quote-section-head h4 {
@@ -2745,6 +2785,7 @@ body {
   }
 
   .benchmark-comparison-filter,
+  .benchmark-comparison-filters,
   .benchmark-summary-grid,
   .rentability-highlight-grid {
     grid-template-columns: 1fr;

@@ -14,6 +14,48 @@ from db import get_conn
 from tenant import get_current_user_id, get_current_workspace_id
 
 SUPPORTED_INDEX_NAMES = ("CDI", "SELIC", "IPCA", "IBOV", "IFIX", "SP500", "GLOBAL", "CRYPTO")
+BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
+    "CDI": {
+        "display_name": "CDI",
+        "provider": "BCB",
+        "default_asset_class": "Renda Fixa",
+    },
+    "SELIC": {
+        "display_name": "SELIC",
+        "provider": "BCB",
+        "default_asset_class": None,
+    },
+    "IPCA": {
+        "display_name": "IPCA",
+        "provider": "BCB",
+        "default_asset_class": None,
+    },
+    "IBOV": {
+        "display_name": "IBOV",
+        "provider": "YAHOO",
+        "default_asset_class": "Ações BR",
+    },
+    "IFIX": {
+        "display_name": "IFIX",
+        "provider": "YAHOO",
+        "default_asset_class": "FIIs",
+    },
+    "SP500": {
+        "display_name": "S&P 500",
+        "provider": "YAHOO",
+        "default_asset_class": "Stocks US",
+    },
+    "GLOBAL": {
+        "display_name": "Índice Internacional",
+        "provider": "YAHOO",
+        "default_asset_class": "BDRs",
+    },
+    "CRYPTO": {
+        "display_name": "Índice Cripto",
+        "provider": "YAHOO",
+        "default_asset_class": "Cripto",
+    },
+}
 _USE_WORKSPACE_SCOPE: ContextVar[bool] = ContextVar("invest_index_rates_use_workspace_scope", default=False)
 
 
@@ -300,6 +342,144 @@ def fetch_index_series(index_name: str, date_from: str, date_to: str, timeout_s:
     if source == "YAHOO":
         return fetch_yahoo_series(index_name, date_from, date_to, timeout_s=timeout_s)
     raise ValueError(f"Fonte não suportada para índice: {index_name}")
+
+
+def list_benchmark_settings(user_id: int | None = None) -> list[dict[str, Any]]:
+    wid = _wid(user_id)
+    sql = """
+        SELECT
+            s.id,
+            s.index_name,
+            s.display_name,
+            s.provider,
+            s.symbol,
+            s.is_active,
+            s.update_at_midday,
+            s.update_at_close,
+            s.default_asset_class,
+            s.created_at,
+            s.updated_at,
+            s.user_id,
+            latest.ref_date AS latest_ref_date,
+            latest.value AS latest_value,
+            latest.source AS latest_source
+        FROM benchmark_settings s
+        LEFT JOIN (
+            SELECT ir.index_name, ir.ref_date, ir.value, ir.source
+            FROM index_rates ir
+            JOIN (
+                SELECT index_name, MAX(ref_date) AS max_ref_date
+                FROM index_rates
+                WHERE user_id = ?
+                GROUP BY index_name
+            ) mx ON mx.index_name = ir.index_name AND mx.max_ref_date = ir.ref_date
+            WHERE ir.user_id = ?
+        ) latest ON latest.index_name = s.index_name
+        WHERE s.user_id = ?
+        ORDER BY COALESCE(s.default_asset_class, ''), s.index_name
+    """
+    with get_conn() as conn:
+        existing_rows = _exec(conn, sql, (wid, wid, wid)).fetchall()
+
+    existing = {norm_index_name(row["index_name"]): dict(row) for row in existing_rows}
+    out: list[dict[str, Any]] = []
+    for index_name in SUPPORTED_INDEX_NAMES:
+        defaults = BENCHMARK_DEFAULTS.get(index_name, {})
+        symbol = _market_symbol(index_name) if _index_source(index_name) == "YAHOO" else index_name
+        row = existing.get(index_name, {})
+        out.append(
+            {
+                "id": row.get("id"),
+                "index_name": index_name,
+                "display_name": str(row.get("display_name") or defaults.get("display_name") or index_name),
+                "provider": str(row.get("provider") or defaults.get("provider") or _index_source(index_name)),
+                "symbol": str(row.get("symbol") or defaults.get("symbol") or symbol),
+                "is_active": bool(row.get("is_active")) if row else True,
+                "update_at_midday": bool(row.get("update_at_midday")) if row else True,
+                "update_at_close": bool(row.get("update_at_close")) if row else True,
+                "default_asset_class": row.get("default_asset_class") if row else defaults.get("default_asset_class"),
+                "latest_ref_date": row.get("latest_ref_date"),
+                "latest_value": row.get("latest_value"),
+                "latest_source": row.get("latest_source"),
+            }
+        )
+    return out
+
+
+def upsert_benchmark_setting(
+    index_name: str,
+    *,
+    is_active: bool = True,
+    update_at_midday: bool = True,
+    update_at_close: bool = True,
+    default_asset_class: str | None = None,
+    display_name: str | None = None,
+    user_id: int | None = None,
+) -> dict[str, Any]:
+    idx = norm_index_name(index_name)
+    if idx not in SUPPORTED_INDEX_NAMES:
+        raise ValueError(f"Índice não suportado: {index_name}")
+
+    wid = _wid(user_id)
+    defaults = BENCHMARK_DEFAULTS.get(idx, {})
+    provider = defaults.get("provider") or _index_source(idx)
+    symbol = _market_symbol(idx) if _index_source(idx) == "YAHOO" else idx
+    name = str(display_name or defaults.get("display_name") or idx).strip() or idx
+    asset_class = str(default_asset_class or defaults.get("default_asset_class") or "").strip() or None
+
+    with get_conn() as conn:
+        existing = _exec(
+            conn,
+            "SELECT id FROM benchmark_settings WHERE user_id = ? AND index_name = ?",
+            (wid, idx),
+        ).fetchone()
+        if existing is None:
+            _exec(
+                conn,
+                """
+                INSERT INTO benchmark_settings(
+                    index_name, display_name, provider, symbol, is_active, update_at_midday, update_at_close, default_asset_class, user_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (idx, name, provider, symbol, int(bool(is_active)), int(bool(update_at_midday)), int(bool(update_at_close)), asset_class, wid),
+            )
+        else:
+            _exec(
+                conn,
+                """
+                UPDATE benchmark_settings
+                SET display_name = ?, provider = ?, symbol = ?, is_active = ?, update_at_midday = ?, update_at_close = ?, default_asset_class = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND index_name = ?
+                """,
+                (name, provider, symbol, int(bool(is_active)), int(bool(update_at_midday)), int(bool(update_at_close)), asset_class, wid, idx),
+            )
+    rows = list_benchmark_settings(user_id=user_id)
+    return next((row for row in rows if norm_index_name(row.get("index_name")) == idx), {"index_name": idx})
+
+
+def sync_configured_benchmarks(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    timeout_s: float = 20.0,
+    user_id: int | None = None,
+) -> dict[str, Any]:
+    settings = list_benchmark_settings(user_id=user_id)
+    names = [str(row.get("index_name") or "").strip() for row in settings if bool(row.get("is_active"))]
+    if not names:
+        return {
+            "date_from": date_from,
+            "date_to": date_to,
+            "indexes": {},
+            "totals": {"inserted": 0, "updated": 0, "unchanged": 0},
+        }
+    return sync_from_bcb(
+        index_names=names,
+        date_from=date_from,
+        date_to=date_to,
+        timeout_s=timeout_s,
+        user_id=user_id,
+    )
 
 
 def list_index_rates(
