@@ -403,6 +403,25 @@ export function getInvestSummary() {
   return req("/invest/summary");
 }
 
+export async function downloadInvestReport(params = {}) {
+  const token = getToken();
+  const suffix = qs(params);
+  const res = await fetch(`${API_BASE}/invest/report${suffix}`, {
+    method: "GET",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `HTTP ${res.status}`);
+  }
+  const disposition = String(res.headers.get("Content-Disposition") || "");
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob: await res.blob(),
+    fileName: match?.[1] || "relatorio-investimentos.html",
+  };
+}
+
 export function getInvestIncomes() {
   return req("/invest/incomes");
 }

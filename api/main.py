@@ -12,6 +12,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import requests
+import pandas as pd
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -85,6 +86,290 @@ QUOTE_JOB_END_AT = time(hour=17, minute=10)
 BENCHMARK_JOB_TIMEZONE = "America/Sao_Paulo"
 BENCHMARK_JOB_MIDDAY_AT = time(hour=12, minute=0)
 BENCHMARK_JOB_CLOSE_AT = time(hour=17, minute=0)
+
+
+def _format_brl(value: Any) -> str:
+    try:
+        num = float(value or 0.0)
+    except Exception:
+        num = 0.0
+    sign = "-" if num < 0 else ""
+    num = abs(num)
+    formatted = f"{num:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{sign}R$ {formatted}"
+
+
+def _format_pct(value: Any) -> str:
+    try:
+        num = float(value or 0.0)
+    except Exception:
+        num = 0.0
+    return f"{num:.2f}%".replace(".", ",")
+
+
+def _format_decimal(value: Any, places: int = 2) -> str:
+    try:
+        num = float(value or 0.0)
+    except Exception:
+        num = 0.0
+    return f"{num:,.{places}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _format_iso_date_ptbr(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "-"
+    try:
+        return datetime.fromisoformat(raw[:10]).strftime("%d/%m/%Y")
+    except Exception:
+        return raw
+
+
+def _safe_asset_class_filter(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    return raw or None
+
+
+def _render_html_table(headers: list[str], rows: list[list[Any]]) -> str:
+    head_html = "".join(f"<th>{escape(str(item))}</th>" for item in headers)
+    if not rows:
+        body_html = f"<tr><td colspan='{len(headers)}'>Sem dados para o recorte selecionado.</td></tr>"
+    else:
+        parts = []
+        for row in rows:
+            cells = "".join(f"<td>{escape(str(cell))}</td>" for cell in row)
+            parts.append(f"<tr>{cells}</tr>")
+        body_html = "".join(parts)
+    return f"<table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>"
+
+
+def _build_investments_report_html(
+    *,
+    asset_class: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    user_id: int,
+) -> str:
+    selected_class = _safe_asset_class_filter(asset_class)
+    report_date = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
+
+    pos, _, _ = invest_reports.portfolio_view(user_id=user_id)
+    trades_df = invest_reports.df_trades(date_from=date_from, date_to=date_to, user_id=user_id)
+    incomes_df = invest_reports.df_income(date_from=date_from, date_to=date_to, user_id=user_id)
+
+    if pos is None or pos.empty:
+        pos = None
+    if trades_df is None or trades_df.empty:
+        trades_df = None
+    if incomes_df is None or incomes_df.empty:
+        incomes_df = None
+
+    if pos is not None and selected_class:
+        pos = pos[pos["asset_class"].astype(str) == selected_class].copy()
+    if trades_df is not None and selected_class:
+        trades_df = trades_df[trades_df["asset_class"].astype(str) == selected_class].copy()
+    if incomes_df is not None and selected_class:
+        incomes_df = incomes_df[incomes_df["asset_class"].astype(str) == selected_class].copy()
+
+    position_rows: list[list[Any]] = []
+    asset_rentability_rows: list[list[Any]] = []
+    class_rentability_rows: list[list[Any]] = []
+    income_rows: list[list[Any]] = []
+    flow_rows: list[list[Any]] = []
+
+    total_invested = 0.0
+    total_market = 0.0
+    total_realized = 0.0
+    total_unrealized = 0.0
+    total_provents = 0.0
+    total_rentability = 0.0
+
+    if pos is not None and not pos.empty:
+        for col in ["cost_basis", "market_value", "realized_pnl", "unrealized_pnl", "income", "qty", "avg_cost", "price"]:
+            if col not in pos.columns:
+                pos[col] = 0.0
+        total_invested = float(pos["cost_basis"].fillna(0.0).sum())
+        total_market = float(pos["market_value"].fillna(0.0).sum())
+        total_realized = float(pos["realized_pnl"].fillna(0.0).sum())
+        total_unrealized = float(pos["unrealized_pnl"].fillna(0.0).sum())
+        total_provents = float(pos["income"].fillna(0.0).sum())
+        total_rentability = total_realized + total_unrealized
+
+        pos = pos.copy()
+        base_market = total_market if total_market > 0 else 0.0
+        pos["participation_pct"] = pos["market_value"].fillna(0.0).apply(lambda v: (float(v) / base_market * 100.0) if base_market > 0 else 0.0)
+        pos["rentability_total"] = pos["realized_pnl"].fillna(0.0) + pos["unrealized_pnl"].fillna(0.0)
+        pos["rentability_pct"] = pos.apply(
+            lambda row: ((float(row.get("rentability_total") or 0.0) / float(row.get("cost_basis") or 0.0)) * 100.0)
+            if float(row.get("cost_basis") or 0.0) > 0
+            else 0.0,
+            axis=1,
+        )
+        pos = pos.sort_values(["asset_class", "symbol"])
+
+        for _, row in pos.iterrows():
+            position_rows.append(
+                [
+                    str(row.get("symbol") or "-"),
+                    str(row.get("name") or "-"),
+                    str(row.get("asset_class") or "-"),
+                    _format_decimal(row.get("qty"), 6),
+                    _format_brl(row.get("avg_cost")),
+                    _format_brl(row.get("cost_basis")),
+                    _format_brl(row.get("market_value")),
+                    _format_pct(row.get("participation_pct")),
+                ]
+            )
+            asset_rentability_rows.append(
+                [
+                    str(row.get("symbol") or "-"),
+                    str(row.get("asset_class") or "-"),
+                    _format_brl(row.get("realized_pnl")),
+                    _format_brl(row.get("unrealized_pnl")),
+                    _format_brl(row.get("rentability_total")),
+                    _format_pct(row.get("rentability_pct")),
+                ]
+            )
+
+        grouped = (
+            pos.groupby("asset_class", dropna=False)[["cost_basis", "market_value", "realized_pnl", "unrealized_pnl"]]
+            .sum()
+            .reset_index()
+        )
+        for _, row in grouped.iterrows():
+            rentability_total = float(row.get("realized_pnl") or 0.0) + float(row.get("unrealized_pnl") or 0.0)
+            invested = float(row.get("cost_basis") or 0.0)
+            market = float(row.get("market_value") or 0.0)
+            participation = (market / total_market * 100.0) if total_market > 0 else 0.0
+            rentability_pct = (rentability_total / invested * 100.0) if invested > 0 else 0.0
+            class_rentability_rows.append(
+                [
+                    str(row.get("asset_class") or "-"),
+                    _format_brl(invested),
+                    _format_brl(market),
+                    _format_pct(participation),
+                    _format_brl(row.get("realized_pnl")),
+                    _format_brl(row.get("unrealized_pnl")),
+                    _format_brl(rentability_total),
+                    _format_pct(rentability_pct),
+                ]
+            )
+
+    if incomes_df is not None and not incomes_df.empty:
+        incomes_df = incomes_df.copy()
+        incomes_df["amount"] = pd.to_numeric(incomes_df.get("amount", 0.0), errors="coerce").fillna(0.0)
+        grouped_income = incomes_df.groupby(["symbol", "type"], dropna=False)["amount"].sum().reset_index()
+        for _, row in grouped_income.iterrows():
+            income_rows.append(
+                [
+                    str(row.get("symbol") or "-"),
+                    str(row.get("type") or "Outros"),
+                    _format_brl(row.get("amount")),
+                ]
+            )
+
+    if trades_df is not None and not trades_df.empty:
+        trades_df = trades_df.copy()
+        trades_df["quantity"] = pd.to_numeric(trades_df.get("quantity", 0.0), errors="coerce").fillna(0.0)
+        trades_df["price"] = pd.to_numeric(trades_df.get("price", 0.0), errors="coerce").fillna(0.0)
+        trades_df["fees"] = pd.to_numeric(trades_df.get("fees", 0.0), errors="coerce").fillna(0.0)
+        trades_df["taxes"] = pd.to_numeric(trades_df.get("taxes", 0.0), errors="coerce").fillna(0.0)
+        trades_df["exchange_rate"] = pd.to_numeric(trades_df.get("exchange_rate", 1.0), errors="coerce").fillna(1.0)
+        trades_df["currency_norm"] = trades_df.get("currency", "").astype(str).str.upper()
+        trades_df["fx_factor"] = trades_df.apply(
+            lambda row: float(row.get("exchange_rate") or 1.0) if str(row.get("currency_norm") or "") == "USD" and float(row.get("exchange_rate") or 0.0) > 0 else 1.0,
+            axis=1,
+        )
+        trades_df["gross_brl"] = trades_df["quantity"] * trades_df["price"] * trades_df["fx_factor"]
+        trades_df["fees_brl"] = trades_df["fees"] * trades_df["fx_factor"]
+        trades_df["taxes_brl"] = trades_df["taxes"] * trades_df["fx_factor"]
+        trades_df["flow_brl"] = trades_df.apply(
+            lambda row: float(row["gross_brl"] + row["fees_brl"] + row["taxes_brl"]) if str(row.get("side") or "").upper() == "BUY"
+            else float(row["gross_brl"] - row["fees_brl"] - row["taxes_brl"]),
+            axis=1,
+        )
+        grouped_flows = trades_df.groupby("side", dropna=False)["flow_brl"].sum().to_dict()
+        aportes = float(grouped_flows.get("BUY") or 0.0)
+        resgates = float(grouped_flows.get("SELL") or 0.0)
+        flow_rows.append(["Aportes no período", _format_brl(aportes)])
+        flow_rows.append(["Resgates no período", _format_brl(resgates)])
+        flow_rows.append(["Saldo líquido do período", _format_brl(resgates - aportes)])
+
+    total_rentability_pct = (total_rentability / total_invested * 100.0) if total_invested > 0 else 0.0
+    gain_loss = total_market - total_invested
+
+    scope_label = escape(selected_class or "Todas as classes")
+    period_label = f"{_format_iso_date_ptbr(date_from)} a {_format_iso_date_ptbr(date_to)}"
+
+    summary_cards = [
+        ("Valor investido", _format_brl(total_invested)),
+        ("Valor atual", _format_brl(total_market)),
+        ("Ganho/Perda", _format_brl(gain_loss)),
+        ("Realizado", _format_brl(total_realized)),
+        ("Não realizado", _format_brl(total_unrealized)),
+        ("Rentabilidade", f"{_format_brl(total_rentability)} ({_format_pct(total_rentability_pct)})"),
+        ("Proventos", _format_brl(total_provents)),
+    ]
+    summary_html = "".join(
+        f"<div class='metric'><span>{escape(label)}</span><strong>{escape(value)}</strong></div>"
+        for label, value in summary_cards
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Relatório de Investimentos</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; margin: 24px; color: #12243a; }}
+    h1, h2 {{ margin: 0 0 12px; }}
+    h2 {{ margin-top: 28px; font-size: 20px; }}
+    p {{ margin: 6px 0; }}
+    .meta {{ color: #5e6f8b; margin-bottom: 18px; }}
+    .summary {{ display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; margin: 20px 0; }}
+    .metric {{ border: 1px solid #cfd7e8; border-radius: 12px; padding: 12px; background: #f7f9fc; }}
+    .metric span {{ display: block; font-size: 12px; color: #5e6f8b; margin-bottom: 6px; }}
+    .metric strong {{ font-size: 18px; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+    th, td {{ border-bottom: 1px solid #d8e0ee; padding: 8px; text-align: left; font-size: 13px; }}
+    th {{ background: #eef3fb; }}
+    .section-note {{ color: #5e6f8b; font-size: 13px; }}
+  </style>
+</head>
+<body>
+  <h1>Relatório de Investimentos</h1>
+  <div class="meta">
+    <p>Gerado em: {escape(report_date)}</p>
+    <p>Classe: {scope_label}</p>
+    <p>Período para aportes, resgates e proventos: {escape(period_label)}</p>
+  </div>
+  <section>
+    <h2>Resumo consolidado</h2>
+    <div class="summary">{summary_html}</div>
+    <p class="section-note">Rentabilidade separa realizado e não realizado. Proventos ficam em bloco próprio.</p>
+  </section>
+  <section>
+    <h2>Posição atual da carteira</h2>
+    {_render_html_table(["Ativo", "Nome", "Classe", "Quantidade", "Preço médio", "Valor investido", "Valor atual", "Participação"], position_rows)}
+  </section>
+  <section>
+    <h2>Rentabilidade por ativo</h2>
+    {_render_html_table(["Ativo", "Classe", "Realizado", "Não realizado", "Rentabilidade total", "Rentab. %"], asset_rentability_rows)}
+  </section>
+  <section>
+    <h2>Rentabilidade por classe</h2>
+    {_render_html_table(["Classe", "Investido", "Atual", "Participação", "Realizado", "Não realizado", "Rentabilidade total", "Rentab. %"], class_rentability_rows)}
+  </section>
+  <section>
+    <h2>Proventos recebidos</h2>
+    {_render_html_table(["Ativo", "Tipo", "Valor"], income_rows)}
+  </section>
+  <section>
+    <h2>Aportes e resgates por período</h2>
+    {_render_html_table(["Indicador", "Valor"], flow_rows)}
+  </section>
+</body>
+</html>"""
 
 
 def _cors_origins() -> list[str]:
@@ -3615,6 +3900,28 @@ def invest_summary(user: dict = Depends(_current_user)) -> dict:
         "total_return_pct": total_return_pct,
         "broker_balance": broker_balance,
     }
+
+
+@app.get("/invest/report")
+def invest_download_report(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    asset_class: str | None = None,
+    user: dict = Depends(_current_user),
+) -> Response:
+    uid = int(user["id"])
+    html = _build_investments_report_html(
+        asset_class=asset_class,
+        date_from=(str(date_from or "").strip() or None),
+        date_to=(str(date_to or "").strip() or None),
+        user_id=uid,
+    )
+    file_name = "relatorio-investimentos.html"
+    return Response(
+        content=html.encode("utf-8"),
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @app.get("/invest/incomes")

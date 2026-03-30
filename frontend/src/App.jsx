@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import brandLogo from "./icons/DOMUS2.png";
 import icDashboard from "./icons/dashboard.png";
 import icContas from "./icons/contas.png";
@@ -42,6 +42,7 @@ import {
   deleteInvestAsset,
   deleteInvestIncome,
   deleteInvestTrade,
+  downloadInvestReport,
   deleteTransaction,
   getAccounts,
   getCardInvoices,
@@ -381,6 +382,17 @@ function formatLocalizedNumber(value, fractionDigits = 2) {
   return num.toLocaleString("pt-BR", {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
+  });
+}
+
+function formatBrl(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "R$ 0,00";
+  return num.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 }
 
@@ -984,6 +996,8 @@ export default function App() {
   const [quoteGroup, setQuoteGroup] = useState("");
   const [manualPriceClassFilter, setManualPriceClassFilter] = useState("");
   const [investSummaryClassFilter, setInvestSummaryClassFilter] = useState("");
+  const [investReportDateFrom, setInvestReportDateFrom] = useState(defaultMonthRange.from);
+  const [investReportDateTo, setInvestReportDateTo] = useState(defaultMonthRange.to);
   const [dashInvestFocusClass, setDashInvestFocusClass] = useState("");
   const [investPortfolioClassFilter, setInvestPortfolioClassFilter] = useState("");
   const [investRentabilityWindow, setInvestRentabilityWindow] = useState("12m");
@@ -1577,6 +1591,15 @@ export default function App() {
     () => txRecentCategoryOptions.find((c) => c.id === String(txRecentCategoryFilterId)) || null,
     [txRecentCategoryOptions, txRecentCategoryFilterId]
   );
+  const normalizeCategoryName = useCallback(
+    (value) =>
+      String(value || "")
+        .trim()
+        .toLocaleLowerCase("pt-BR")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, ""),
+    []
+  );
   const txRecentStatusOptions = useMemo(() => {
     const set = new Set();
     for (const t of transactions || []) {
@@ -1666,6 +1689,15 @@ export default function App() {
     });
     return rows;
   }, [transactionsVisible, txView]);
+  const txVisibleTotal = useMemo(
+    () => transactionsVisibleOrdered.reduce((sum, item) => sum + Number(item?.amount_brl || 0), 0),
+    [transactionsVisibleOrdered]
+  );
+  const txListTitle = useMemo(() => {
+    if (txView === "competencia") return "Lançamentos por competência";
+    if (txView === "futuro") return "Compromissos do período";
+    return "Lançamentos recentes";
+  }, [txView]);
   const transferAccounts = useMemo(
     () => accounts.filter((a) => ["Banco", "Corretora"].includes(normalizeAccountType(a.type))),
     [accounts]
@@ -3299,6 +3331,30 @@ export default function App() {
     }
   }
 
+  async function onDownloadInvestReport() {
+    const actionKey = "downloadInvestReport";
+    try {
+      const out = await withPendingAction(actionKey, async () =>
+        downloadInvestReport({
+          asset_class: investSummaryClassFilter,
+          date_from: investReportDateFrom,
+          date_to: investReportDateTo,
+        })
+      );
+      const url = window.URL.createObjectURL(out.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = out.fileName || "relatorio-investimentos.html";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      showGlobalSuccess("Relatório de investimentos gerado.");
+    } catch (err) {
+      setInvestMsg(`Erro ao gerar relatório: ${String(err.message || err)}`);
+    }
+  }
+
   async function reloadInvestData(options = {}) {
     if (!canViewInvestimentos) {
       investReloadSeqRef.current += 1;
@@ -4701,6 +4757,19 @@ export default function App() {
     setTxRecentStatusFilter(status);
   }
 
+  function openTransactionsCategoryFromDashboard(categoryName = "") {
+    if (!canViewLancamentos) return;
+    const normalizedTarget = normalizeCategoryName(categoryName);
+    const matchedCategory =
+      txRecentCategoryOptions.find((option) => normalizeCategoryName(option.name) === normalizedTarget) || null;
+    setPage("Lançamentos");
+    setTxView("caixa");
+    setTxRecentDateFrom(dashDateFrom);
+    setTxRecentDateTo(dashDateTo);
+    setTxRecentStatusFilter("");
+    setTxRecentCategoryFilterId(matchedCategory ? matchedCategory.id : "");
+  }
+
   function openInvestmentsClassFromDashboard(assetClass = "") {
     if (!canViewInvestimentos) return;
     setPage("Investimentos");
@@ -5382,7 +5451,11 @@ export default function App() {
             </section>
 
             <Suspense fallback={<section className="card"><p>Carregando gráficos...</p></section>}>
-              <DashboardCharts monthly={dashWealthMonthly} expenses={dashExpenses} />
+              <DashboardCharts
+                monthly={dashWealthMonthly}
+                expenses={dashExpenses}
+                onExpenseCategorySelect={openTransactionsCategoryFromDashboard}
+              />
             </Suspense>
           </>
         ) : null}
@@ -6332,7 +6405,7 @@ export default function App() {
             </section>
 
             <section className="card">
-              <h3>Lançamentos recentes</h3>
+              <h3>{txListTitle}</h3>
               <div className="tx-recent-filters">
                 <input
                   type="date"
@@ -6371,6 +6444,9 @@ export default function App() {
                   ))}
                 </select>
               </div>
+              <p className="tx-helper">
+                Valor total da lista: <strong>{formatBrl(txVisibleTotal)}</strong>
+              </p>
               <div className="tx-table-wrap">
                 <table className="tx-table">
                   <thead>
@@ -6628,6 +6704,16 @@ export default function App() {
               <>
                 <section className="card">
                   <div className="tx-form invest-summary-toolbar">
+                    <input
+                      type="date"
+                      value={investReportDateFrom}
+                      onChange={(e) => setInvestReportDateFrom(e.target.value)}
+                    />
+                    <input
+                      type="date"
+                      value={investReportDateTo}
+                      onChange={(e) => setInvestReportDateTo(e.target.value)}
+                    />
                     <select
                       className="invoice-filter-select"
                       value={investSummaryClassFilter}
@@ -6640,10 +6726,11 @@ export default function App() {
                     </select>
                     <button
                       type="button"
-                      className={`mini-tab ${investDivergenceOpen ? "active" : ""}`}
-                      onClick={() => setInvestDivergenceOpen((v) => !v)}
+                      className="mini-tab"
+                      onClick={onDownloadInvestReport}
+                      disabled={isPendingAction("downloadInvestReport")}
                     >
-                      Carregar divergências
+                      {isPendingAction("downloadInvestReport") ? "Gerando relatório..." : "Baixar relatório"}
                     </button>
                   </div>
                 </section>
@@ -6911,57 +6998,6 @@ export default function App() {
                     </table>
                   </div>
                 </section>
-                {investDivergenceOpen ? (
-                  <section className="card">
-                    <h3>Divergência de rentabilidade</h3>
-                    <div className="tx-form invest-divergence-form">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={investDivergenceThreshold}
-                        onChange={(e) => setInvestDivergenceThreshold(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 2, maxIntegerDigits: 3 }))}
-                        placeholder="Limiar de divergência (%)"
-                      />
-                      <button type="button" onClick={onLoadInvestDivergenceReport} disabled={investDivergenceRunning}>
-                        {investDivergenceRunning ? "Gerando relatório..." : "Atualizar relatório"}
-                      </button>
-                    </div>
-                    {investDivergenceMsg ? <p>{investDivergenceMsg}</p> : null}
-                    <div className="tx-table-wrap">
-                      <table className="tx-table">
-                        <thead>
-                          <tr>
-                            <th>Ativo</th>
-                            <th>Tipo</th>
-                            <th>Valor salvo</th>
-                            <th>Valor projetado</th>
-                            <th>Delta</th>
-                            <th>Delta %</th>
-                            <th>Atualização proj.</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {investDivergenceReport.map((row) => (
-                            <tr key={`${row.asset_id}-${row.symbol}`}>
-                              <td>{row.symbol || row.asset_id}</td>
-                              <td>{formatRentabilityTypeLabel(row.rentability_type)}</td>
-                              <td>{brl.format(Number(row.stored_current_value || 0))}</td>
-                              <td>{brl.format(Number(row.projected_current_value || 0))}</td>
-                              <td>{brl.format(Number(row.delta_value || 0))}</td>
-                              <td>{Number(row.delta_pct || 0).toFixed(4)}%</td>
-                              <td>{formatIsoDatePtBr(row.projected_last_update)}</td>
-                            </tr>
-                          ))}
-                          {!investDivergenceReport.length ? (
-                            <tr>
-                              <td colSpan={7}>Sem divergências acima do limiar selecionado.</td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-                ) : null}
                 <section className="card">
                   <h3>Carteira (consolidado)</h3>
                   <div className="tx-form invest-portfolio-toolbar">
@@ -7244,6 +7280,15 @@ export default function App() {
                           <XAxis dataKey="asset_class" />
                           <YAxis tickFormatter={(value) => `${Number(value || 0).toFixed(0)}%`} width={72} />
                           <Tooltip
+                            cursor={{ fill: "rgba(255, 255, 255, 0.08)" }}
+                            contentStyle={{
+                              borderColor: "#cfd7e8",
+                              borderRadius: 12,
+                              backgroundColor: "rgba(255, 255, 255, 0.96)",
+                              boxShadow: "0 10px 24px rgba(18, 36, 58, 0.16)",
+                            }}
+                            itemStyle={{ color: "#12243a", fontWeight: 600 }}
+                            labelStyle={{ color: "#12243a", fontWeight: 700 }}
                             formatter={(value, _name, payload) => {
                               const row = payload?.payload || {};
                               return [
@@ -7267,6 +7312,73 @@ export default function App() {
                   ) : (
                     <p>Sem dados consolidados de rentabilidade por classe.</p>
                   )}
+                </section>
+                <section className="card">
+                  <div className="fair-value-head">
+                    <div>
+                      <h3>Auditoria de divergência</h3>
+                      <p className="tx-helper">
+                        Ferramenta técnica para conferir diferença entre o valor salvo do ativo e o valor projetado pelo motor de rentabilidade.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={`mini-tab ${investDivergenceOpen ? "active" : ""}`}
+                      onClick={() => setInvestDivergenceOpen((v) => !v)}
+                    >
+                      {investDivergenceOpen ? "Ocultar auditoria" : "Ver auditoria"}
+                    </button>
+                  </div>
+                  {investDivergenceOpen ? (
+                    <>
+                      <div className="tx-form invest-divergence-form">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={investDivergenceThreshold}
+                          onChange={(e) => setInvestDivergenceThreshold(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 2, maxIntegerDigits: 3 }))}
+                          placeholder="Limiar de divergência (%)"
+                        />
+                        <button type="button" onClick={onLoadInvestDivergenceReport} disabled={investDivergenceRunning}>
+                          {investDivergenceRunning ? "Gerando auditoria..." : "Atualizar auditoria"}
+                        </button>
+                      </div>
+                      {investDivergenceMsg ? <p>{investDivergenceMsg}</p> : null}
+                      <div className="tx-table-wrap">
+                        <table className="tx-table">
+                          <thead>
+                            <tr>
+                              <th>Ativo</th>
+                              <th>Tipo</th>
+                              <th>Valor salvo</th>
+                              <th>Valor projetado</th>
+                              <th>Delta</th>
+                              <th>Delta %</th>
+                              <th>Atualização proj.</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {investDivergenceReport.map((row) => (
+                              <tr key={`${row.asset_id}-${row.symbol}`}>
+                                <td>{row.symbol || row.asset_id}</td>
+                                <td>{formatRentabilityTypeLabel(row.rentability_type)}</td>
+                                <td>{brl.format(Number(row.stored_current_value || 0))}</td>
+                                <td>{brl.format(Number(row.projected_current_value || 0))}</td>
+                                <td>{brl.format(Number(row.delta_value || 0))}</td>
+                                <td>{Number(row.delta_pct || 0).toFixed(4)}%</td>
+                                <td>{formatIsoDatePtBr(row.projected_last_update)}</td>
+                              </tr>
+                            ))}
+                            {!investDivergenceReport.length ? (
+                              <tr>
+                                <td colSpan={7}>Sem divergências acima do limiar selecionado.</td>
+                              </tr>
+                            ) : null}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  ) : null}
                 </section>
                 <section className="card">
                   <h3>Indicadores por tipo de carteira</h3>

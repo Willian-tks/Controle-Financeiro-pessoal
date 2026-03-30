@@ -14,8 +14,11 @@ import {
 const brl = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 });
+
+const DASHBOARD_AXIS_TICK = { fill: "#dbe8ff", fontSize: 14 };
 
 const EXPENSE_CATEGORY_COLORS = {
   servicos: "#4e79ff",
@@ -69,7 +72,7 @@ function formatMonthLabel(value) {
   return dt.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
 }
 
-export default function DashboardCharts({ monthly, expenses }) {
+export default function DashboardCharts({ monthly, expenses, onExpenseCategorySelect }) {
   return (
     <>
       <section className="card">
@@ -85,10 +88,19 @@ export default function DashboardCharts({ monthly, expenses }) {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" tickFormatter={formatMonthLabel} />
-                <YAxis tickFormatter={(value) => brl.format(Number(value || 0))} width={96} />
+                <XAxis dataKey="month" tickFormatter={formatMonthLabel} tick={DASHBOARD_AXIS_TICK} />
+                <YAxis tickFormatter={(value) => brl.format(Number(value || 0))} tick={DASHBOARD_AXIS_TICK} width={108} />
                 <Tooltip
                   formatter={(value) => brl.format(Number(value || 0))}
+                  cursor={{ stroke: "rgba(255, 255, 255, 0.18)", strokeWidth: 1 }}
+                  contentStyle={{
+                    borderColor: "#cfd7e8",
+                    borderRadius: 12,
+                    backgroundColor: "rgba(255, 255, 255, 0.96)",
+                    boxShadow: "0 10px 24px rgba(18, 36, 58, 0.16)",
+                  }}
+                  itemStyle={{ color: "#12243a", fontWeight: 600 }}
+                  labelStyle={{ color: "#12243a", fontWeight: 700 }}
                   labelFormatter={(value) => formatMonthLabel(value)}
                 />
                 <Area
@@ -115,12 +127,28 @@ export default function DashboardCharts({ monthly, expenses }) {
             <ResponsiveContainer width="100%" height={320}>
               <BarChart data={expenses}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="category" />
-                <YAxis />
-                <Tooltip />
+                <XAxis dataKey="category" tick={DASHBOARD_AXIS_TICK} />
+                <YAxis tickFormatter={(value) => brl.format(Number(value || 0))} tick={DASHBOARD_AXIS_TICK} width={96} />
+                <Tooltip
+                  formatter={(value) => brl.format(Number(value || 0))}
+                  cursor={{ fill: "rgba(255, 255, 255, 0.08)" }}
+                  contentStyle={{
+                    borderColor: "#cfd7e8",
+                    borderRadius: 12,
+                    backgroundColor: "rgba(255, 255, 255, 0.96)",
+                    boxShadow: "0 10px 24px rgba(18, 36, 58, 0.16)",
+                  }}
+                  itemStyle={{ color: "#12243a", fontWeight: 600 }}
+                  labelStyle={{ color: "#12243a", fontWeight: 700 }}
+                />
                 <Bar dataKey="valor">
                   {expenses.map((item, idx) => (
-                    <Cell key={`expense-cell-${String(item?.category || idx)}`} fill={categoryColor(item?.category)} />
+                    <Cell
+                      key={`expense-cell-${String(item?.category || idx)}`}
+                      fill={categoryColor(item?.category)}
+                      style={{ cursor: onExpenseCategorySelect ? "pointer" : "default" }}
+                      onClick={() => onExpenseCategorySelect?.(item?.category)}
+                    />
                   ))}
                 </Bar>
               </BarChart>
