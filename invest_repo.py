@@ -696,7 +696,30 @@ def get_asset(asset_id: int, user_id: int | None = None):
     conn = get_conn()
     row = _exec(conn, 
         """
-        SELECT id, symbol, name, asset_class, sector, broker_account_id, source_account_id
+        SELECT
+            id,
+            symbol,
+            name,
+            asset_class,
+            sector,
+            currency,
+            broker_account_id,
+            source_account_id,
+            issuer,
+            rate_type,
+            rate_value,
+            maturity_date,
+            rentability_type,
+            index_name,
+            index_pct,
+            spread_rate,
+            fixed_rate,
+            principal_amount,
+            current_value,
+            fair_price,
+            safety_margin_pct,
+            user_objective,
+            last_update
         FROM assets
         WHERE id = ? AND user_id = ?
         """,

@@ -5,6 +5,7 @@ from pathlib import Path
 from api.main import _prepare_fixed_income_trade
 import db as db_module
 import invest_reports
+import invest_repo
 
 
 class ClosedFixedIncomePositionsTests(unittest.TestCase):
@@ -155,3 +156,34 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
         self.assertAlmostEqual(23372.05, float(prepared["quantity"]) * float(prepared["price"]), places=4)
         self.assertAlmostEqual(12544.35, float(prepared["current_value"]), places=2)
         self.assertAlmostEqual(6985.30, float(prepared["principal_amount"]), places=2)
+
+    def test_get_asset_returns_current_and_principal_for_fixed_income_trade_flow(self):
+        with db_module.get_conn() as conn:
+            asset_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO assets(
+                        symbol, name, asset_class, sector, currency,
+                        rentability_type, principal_amount, current_value, last_update, user_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "CDB_INTER",
+                        "CDB Inter",
+                        "Renda Fixa",
+                        "Não definido",
+                        "BRL",
+                        "PCT_CDI",
+                        20000.0,
+                        35916.40,
+                        "2026-03-27",
+                        self.uid,
+                    ),
+                ).lastrowid
+            )
+
+        asset = invest_repo.get_asset(asset_id, user_id=self.uid)
+        self.assertIsNotNone(asset)
+        self.assertAlmostEqual(20000.0, float(asset["principal_amount"]), places=2)
+        self.assertAlmostEqual(35916.40, float(asset["current_value"]), places=2)
