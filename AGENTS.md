@@ -61,3 +61,32 @@
 - Primeiro: corrigir bugs e manter estabilidade para os usuários atuais.
 - Segundo: preservar consistência entre ambiente local e VPS.
 - Terceiro: melhorar a base sem criar risco desnecessário.
+
+## Atualizações recentes
+- Hoje foi evoluída a área de `Investimentos > Resumo > Preço justo e viés`.
+- A regra agora separa:
+  - sinal técnico automático (`Comprar`, `Aguardar`, `Vender`)
+  - objetivo manual do usuário (`Acumular`, `Segurar`, `Reduzir`, `Sair`)
+- O backend e o banco passaram a persistir `user_objective` no cadastro do ativo.
+- A tabela de preço justo ganhou:
+  - badges mais compactos para sinal técnico e objetivo
+  - edição inline do `Preço justo` na própria linha
+  - ação de exclusão da configuração de preço justo
+  - melhoria visual dos botões de ação
+  - troca do ícone de download para SVG real no botão do relatório PDF
+- A carteira consolidada também passou a exibir `Custo médio` por ativo.
+- Como houve mudança de backend, banco e frontend, novas sessões que mexerem nessa área devem considerar:
+  - migração automática da coluna `user_objective` ao subir o backend
+  - rebuild do frontend para refletir ajustes visuais e novos assets
+- Foi definida uma proposta oficial para um novo módulo `Listas`, com foco em organização pessoal simples dentro do DOMUS.
+- Os documentos base preparados para iniciar a implementação são:
+  - `PROPOSTA_MODULO_LISTAS_DOMUS.md`
+  - `BACKLOG_MODULO_LISTAS_DOMUS.md`
+  - `CHECKLIST_MODULO_LISTAS_DOMUS.md`
+- Decisões já fechadas para esse módulo:
+  - nome final: `Listas`
+  - escopo por `workspace_id`
+  - V1 sem integração automática com financeiro
+  - V1 sem recorrência, modelos, valor real pago ou metas complexas
+  - item com `sort_order` e `completion_date` já previstos desde a primeira versão
+- Ao retomar esse tema em nova sessão, começar pela `Fase 1 - Modelo de dados` do backlog e manter o escopo da V1 enxuto.
