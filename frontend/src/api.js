@@ -450,10 +450,11 @@ export function upsertInvestPrice(payload) {
   });
 }
 
-export function updateAllInvestPrices(payload = {}) {
+export function updateAllInvestPrices(payload = {}, options = {}) {
   return req("/invest/prices/update-all", {
     method: "POST",
     body: JSON.stringify(payload),
+    timeoutMs: options?.timeoutMs,
   });
 }
 

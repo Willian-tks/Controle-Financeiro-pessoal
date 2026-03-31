@@ -1696,6 +1696,24 @@ body {
 .quote-section-action {
   align-self: flex-start;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 220px;
+  min-height: 46px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(18, 42, 97, 0.22);
+}
+
+.quote-section-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.03);
 }
 
 .quote-section-head h4 {
@@ -1714,6 +1732,51 @@ body {
 
 .quote-manual-fixed-card {
   min-width: 0;
+}
+
+.quote-page-intro {
+  margin-bottom: 16px;
+}
+
+.quote-overview-grid,
+.quote-summary-flow {
+  margin-bottom: 16px;
+}
+
+.quote-overview-card,
+.quote-summary-card {
+  min-width: 0;
+}
+
+.quote-overview-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #9fb8ef;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.quote-overview-card strong {
+  display: block;
+  font-size: 28px;
+  line-height: 1.1;
+  color: #f7f9ff;
+}
+
+.quote-overview-card p,
+.quote-summary-card p {
+  margin: 8px 0 0;
+}
+
+.quote-layout-tabs {
+  margin-bottom: 16px;
+}
+
+.quote-manual-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .main-dashboard .tx-table th,
@@ -3192,6 +3255,10 @@ body {
   .modal-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .quote-manual-grid {
+    grid-template-columns: 1fr;
   }
 
   .perm-row {

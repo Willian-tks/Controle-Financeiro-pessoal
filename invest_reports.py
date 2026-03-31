@@ -300,16 +300,18 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
     fx_factor = fx.where(is_usd_asset, 1.0)
     pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
+    open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
     pos["value_origin"] = "cotacao"
     pos["value_ref_date"] = pos.get("price_date")
     # Para renda fixa, prioriza ajuste manual histórico; depois current_value calculado.
     snapshot_price = pd.to_numeric(pos.get("snapshot_price", 0.0), errors="coerce").fillna(0.0)
-    pos.loc[fixed_income_mask & (snapshot_price > 0), "market_value"] = snapshot_price[fixed_income_mask & (snapshot_price > 0)]
-    pos.loc[fixed_income_mask & (snapshot_price > 0), "value_origin"] = "ajuste_manual"
-    pos.loc[fixed_income_mask & (snapshot_price > 0), "value_ref_date"] = pos.loc[fixed_income_mask & (snapshot_price > 0), "snapshot_date"]
+    snapshot_override_mask = fixed_income_mask & open_position_mask & (snapshot_price > 0)
+    pos.loc[snapshot_override_mask, "market_value"] = snapshot_price[snapshot_override_mask]
+    pos.loc[snapshot_override_mask, "value_origin"] = "ajuste_manual"
+    pos.loc[snapshot_override_mask, "value_ref_date"] = pos.loc[snapshot_override_mask, "snapshot_date"]
     cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
     rf_mask = pos.get("asset_class", "").astype(str).map(_norm_asset_class).isin(_FIXED_INCOME_CLASSES)
-    auto_mask = rf_mask & (snapshot_price <= 0) & (cv > 0)
+    auto_mask = rf_mask & open_position_mask & (snapshot_price <= 0) & (cv > 0)
     pos.loc[auto_mask, "market_value"] = cv[auto_mask]
     pos.loc[auto_mask, "value_origin"] = "motor"
     pos.loc[auto_mask, "value_ref_date"] = pos.loc[auto_mask, "last_update"]
@@ -445,9 +447,9 @@ def investments_value_timeseries(
         is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
         fx_factor = fx.where(is_usd_asset, 1.0)
         pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
-        pos.loc[fixed_income_mask & (pos["snapshot_price"] > 0), "market_value"] = pos.loc[
-            fixed_income_mask & (pos["snapshot_price"] > 0), "snapshot_price"
-        ]
+        open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
+        snapshot_override_mask = fixed_income_mask & open_position_mask & (pos["snapshot_price"] > 0)
+        pos.loc[snapshot_override_mask, "market_value"] = pos.loc[snapshot_override_mask, "snapshot_price"]
         income_amount = 0.0
         if incomes_df is not None and not incomes_df.empty:
             income_amount = float(

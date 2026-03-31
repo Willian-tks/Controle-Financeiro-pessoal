@@ -131,6 +131,7 @@ const PAGE_SUBTITLES = {
 };
 
 const INVEST_TABS = ["Resumo", "Rentabilidade", "Ativos", "Operações", "Proventos", "Cotações"];
+const INVEST_QUOTES_TABS = ["Resumo", "Automática", "Manual", "Histórico"];
 const USER_OBJECTIVE_OPTIONS = [
   { value: "accumulate", label: "Acumular" },
   { value: "hold", label: "Segurar" },
@@ -972,6 +973,7 @@ export default function App() {
   const [investDivergenceOpen, setInvestDivergenceOpen] = useState(false);
   const [investPriceUpdateReport, setInvestPriceUpdateReport] = useState([]);
   const [investPriceUpdateRunning, setInvestPriceUpdateRunning] = useState(false);
+  const [investPriceUpdateSource, setInvestPriceUpdateSource] = useState("");
   const [investPriceJobStatus, setInvestPriceJobStatus] = useState(null);
   const [investRentabilitySyncRunning, setInvestRentabilitySyncRunning] = useState(false);
   const [investMeta, setInvestMeta] = useState({ asset_classes: [], asset_sectors: [], income_types: [] });
@@ -1047,6 +1049,7 @@ export default function App() {
   const [fairValueClassFilter, setFairValueClassFilter] = useState("");
   const [fairValueAssetId, setFairValueAssetId] = useState("");
   const [investTab, setInvestTab] = useState("Resumo");
+  const [investQuotesTab, setInvestQuotesTab] = useState("Resumo");
   const [managerTab, setManagerTab] = useState("Cadastro de contas");
   const [manageMsg, setManageMsg] = useState("");
   const [workspaces, setWorkspaces] = useState([]);
@@ -1818,6 +1821,7 @@ export default function App() {
           includeGroups: QUOTE_GROUP_OPTIONS,
           silentSuccess: true,
           reloadAfter: true,
+          source: "auto",
         });
       } catch (err) {
         if (cancelled) return;
@@ -2790,6 +2794,38 @@ export default function App() {
       message: parts.join(" "),
     };
   }, [investPriceJobStatus]);
+  const manualPriceEligibleAssets = useMemo(() => {
+    const allowed = new Set(MANUAL_PRICE_CLASS_OPTIONS.map((item) => classKey(item)));
+    return investAssets.filter((asset) => allowed.has(classKey(asset.asset_class)));
+  }, [investAssets]);
+  const investPricesHistory = useMemo(() => {
+    const rows = [...(investPrices || [])];
+    rows.sort((a, b) => {
+      const da = String(a?.date || "");
+      const db = String(b?.date || "");
+      if (da === db) return Number(b?.id || 0) - Number(a?.id || 0);
+      return db.localeCompare(da);
+    });
+    return rows;
+  }, [investPrices]);
+  const investQuotesOverview = useMemo(() => {
+    const activeBenchmarks = investBenchmarkActiveSettings.length;
+    const totalBenchmarks = (investBenchmarkSettings || []).length;
+    const autoRows = investPriceUpdateReport || [];
+    const autoOk = autoRows.filter((row) => Boolean(row?.ok)).length;
+    const autoErrors = autoRows.filter((row) => !row?.ok).length;
+    const latestPriceDate = investPricesHistory.length ? String(investPricesHistory[0]?.date || "").trim() : "";
+    return {
+      activeBenchmarks,
+      totalBenchmarks,
+      manualAssets: manualPriceEligibleAssets.length,
+      fixedIncomeAssets: investManualQuoteAssets.length,
+      storedPrices: investPricesHistory.length,
+      autoOk,
+      autoErrors,
+      latestPriceDate,
+    };
+  }, [investBenchmarkActiveSettings, investBenchmarkSettings, investManualQuoteAssets, investPriceUpdateReport, investPricesHistory, manualPriceEligibleAssets]);
   useEffect(() => {
     if (!investManualQuoteAssets.length) {
       setManualQuoteAssetId("");
@@ -4310,21 +4346,25 @@ export default function App() {
       includeGroups: [quoteGroup],
       silentSuccess: false,
       reloadAfter: true,
+      source: "manual",
     });
   }
 
-  async function runInvestPriceUpdate({ includeGroups = [], silentSuccess = true, reloadAfter = true } = {}) {
+  async function runInvestPriceUpdate({ includeGroups = [], silentSuccess = true, reloadAfter = true, source = "manual" } = {}) {
     setInvestMsg("");
     setInvestPriceUpdateReport([]);
     setInvestPriceUpdateRunning(true);
+    setInvestPriceUpdateSource(String(source || "manual"));
     const timeout = Number(sanitizeIntegerInputValue(quoteTimeout || "25", 3));
     const workers = Number(sanitizeIntegerInputValue(quoteWorkers || "4", 2));
+    const groupsCount = Array.isArray(includeGroups) && includeGroups.length ? includeGroups.length : 1;
+    const requestTimeoutMs = Math.max(30000, ((Number.isFinite(timeout) ? timeout : 25) * groupsCount + 15) * 1000);
     try {
       const out = await updateAllInvestPrices({
         timeout_s: Number.isFinite(timeout) ? timeout : 25,
         max_workers: Number.isFinite(workers) ? workers : 4,
         include_groups: Array.isArray(includeGroups) ? includeGroups : [],
-      });
+      }, { timeoutMs: requestTimeoutMs });
       const report = Array.isArray(out.report) ? out.report : [];
       const failed = report.filter((row) => !row?.ok).length;
       setInvestPriceUpdateReport(report);
@@ -4341,6 +4381,7 @@ export default function App() {
       throw err;
     } finally {
       setInvestPriceUpdateRunning(false);
+      setInvestPriceUpdateSource("");
     }
   }
 
@@ -7825,17 +7866,17 @@ export default function App() {
                         {investTradesVisible.map((t) => (
                           <tr key={t.id}>
                             <td>{t.id}</td>
-                            <td>{t.date}</td>
+                            <td>{formatIsoDatePtBr(t.date)}</td>
                             <td>{t.symbol}</td>
                             <td>{formatTradeSideLabel(t.side, t.asset_class)}</td>
-                            <td>{Number(t.quantity || 0).toFixed(8)}</td>
-                            <td>{Number(t.price || 0).toFixed(4)}</td>
+                            <td>{formatPortfolioQty(t.quantity)}</td>
+                            <td>{formatBrl(t.price)}</td>
                             <td>
                               {Number(t.exchange_rate || 0) > 0 && Number(t.exchange_rate || 1) !== 1
-                                ? Number(t.exchange_rate).toFixed(4)
+                                ? formatLocalizedNumber(t.exchange_rate, 4)
                                 : "-"}
                             </td>
-                            <td>{Number(t.fees || 0).toFixed(2)}</td>
+                            <td>{formatBrl(t.fees)}</td>
                             <td>
                               <button type="button" onClick={() => onDeleteInvestTrade(t.id)} disabled={isPendingAction(`deleteInvestTrade-${t.id}`)}>
                                 {isPendingAction(`deleteInvestTrade-${t.id}`) ? "Excluindo..." : "Excluir"}
@@ -8016,11 +8057,11 @@ export default function App() {
                         {investIncomesVisible.map((i) => (
                           <tr key={i.id}>
                             <td>{i.id}</td>
-                            <td>{i.date}</td>
+                            <td>{formatIsoDatePtBr(i.date)}</td>
                             <td>{i.symbol}</td>
                             <td>{i.type}</td>
                             <td>{i.credit_account_name || "-"}</td>
-                            <td>{Number(i.amount || 0).toFixed(2)}</td>
+                            <td>{formatBrl(i.amount)}</td>
                             <td>
                               <button onClick={() => onDeleteInvestIncome(i.id)} disabled={isPendingAction(`deleteInvestIncome-${i.id}`)}>
                                 {isPendingAction(`deleteInvestIncome-${i.id}`) ? "Excluindo..." : "Excluir"}
@@ -8038,6 +8079,76 @@ export default function App() {
             {investTab === "Cotações" ? (
               <section className="card">
                 <h3>Cotações</h3>
+                <p className="tx-helper quote-page-intro">
+                  A organização desta aba foi separada em status geral, automação, entradas manuais e histórico registrado.
+                </p>
+                <section className="cards quote-overview-grid">
+                  <article className="card quote-overview-card">
+                    <span className="quote-overview-label">Benchmarks ativos</span>
+                    <strong>{investQuotesOverview.activeBenchmarks}</strong>
+                    <p>{investQuotesOverview.totalBenchmarks} configurados</p>
+                  </article>
+                  <article className="card quote-overview-card">
+                    <span className="quote-overview-label">Mercado manual</span>
+                    <strong>{investQuotesOverview.manualAssets}</strong>
+                    <p>ativos elegíveis</p>
+                  </article>
+                  <article className="card quote-overview-card">
+                    <span className="quote-overview-label">RF / Fundos</span>
+                    <strong>{investQuotesOverview.fixedIncomeAssets}</strong>
+                    <p>ativos com ajuste manual</p>
+                  </article>
+                  <article className="card quote-overview-card">
+                    <span className="quote-overview-label">Histórico</span>
+                    <strong>{investQuotesOverview.storedPrices}</strong>
+                    <p>{investQuotesOverview.latestPriceDate ? `último em ${formatIsoDatePtBr(investQuotesOverview.latestPriceDate)}` : "sem preços registrados"}</p>
+                  </article>
+                </section>
+                <div className="mini-tabs quote-layout-tabs">
+                  {INVEST_QUOTES_TABS.map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      className={`mini-tab ${investQuotesTab === tab ? "active" : ""}`}
+                      onClick={() => setInvestQuotesTab(tab)}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+                {investQuotesTab === "Resumo" ? (
+                  <>
+                    {investQuoteStatusNotice?.message ? (
+                      <section className={`status-banner ${investQuoteStatusNotice.level === "warning" ? "warning" : "success"}`}>
+                        <p className="status-msg">{investQuoteStatusNotice.message}</p>
+                      </section>
+                    ) : null}
+                    <section className="cards quote-summary-flow">
+                      <article className="card quote-summary-card">
+                        <h4>1. Atualização automática</h4>
+                        <p>Configure benchmarks, acompanhe janelas e rode a coleta por classe quando quiser atualizar preços de mercado.</p>
+                      </article>
+                      <article className="card quote-summary-card">
+                        <h4>2. Atualização manual</h4>
+                        <p>Use preço unitário para ativos listados e valor atual ou rentabilidade para renda fixa e fundos.</p>
+                      </article>
+                      <article className="card quote-summary-card">
+                        <h4>3. Histórico</h4>
+                        <p>Consulte os preços já gravados no banco depois das sincronizações automáticas ou lançamentos manuais.</p>
+                      </article>
+                    </section>
+                    <section className="card quote-summary-card">
+                      <h4>Última execução automática</h4>
+                      <p className="tx-helper">
+                        {investPriceUpdateReport.length
+                          ? `${investQuotesOverview.autoOk} ativos atualizados com sucesso e ${investQuotesOverview.autoErrors} com erro na última execução visível nesta sessão.`
+                          : "Ainda não há relatório de atualização automática nesta sessão."}
+                      </p>
+                    </section>
+                  </>
+                ) : null}
+                {investQuotesTab === "Automática" ? (
+                  <>
                 <section className="card quote-section-card">
                   <div className="quote-section-head">
                     <div>
@@ -8142,10 +8253,21 @@ export default function App() {
                       placeholder="Paralelismo"
                     />
                     <button onClick={onUpdateAllInvestPrices} disabled={investPriceUpdateRunning}>
-                      {investPriceUpdateRunning ? "Atualizando..." : "Atualizar cotações automáticas"}
+                      {investPriceUpdateRunning
+                        ? investPriceUpdateSource === "manual"
+                          ? "Atualizando..."
+                          : "Atualização em segundo plano..."
+                        : "Atualizar cotações automáticas"}
                     </button>
                   </div>
                 </section>
+                <section className="card quote-section-card">
+                  <div className="quote-section-head">
+                    <div>
+                      <h4>Relatório da última execução</h4>
+                      <p className="tx-helper">Resultado da coleta automática exibido por ativo nesta sessão.</p>
+                    </div>
+                  </div>
                 {investPriceUpdateReport.length ? (
                   <div className="tx-table-wrap">
                     <table className="tx-table">
@@ -8164,16 +8286,23 @@ export default function App() {
                           <tr key={`${row?.symbol || "sem-symbol"}-${idx}`}>
                             <td>{row?.symbol || "-"}</td>
                             <td>{row?.ok ? "OK" : "Erro"}</td>
-                            <td>{Number(row?.price || 0) > 0 ? Number(row.price).toFixed(4) : "-"}</td>
+                            <td>{Number(row?.price || 0) > 0 ? formatLocalizedNumber(row.price, 4) : "-"}</td>
                             <td>{row?.src || "-"}</td>
-                            <td>{Number.isFinite(Number(row?.elapsed_s)) ? Number(row.elapsed_s).toFixed(2) : "-"}</td>
+                            <td>{Number.isFinite(Number(row?.elapsed_s)) ? formatLocalizedNumber(row.elapsed_s, 2) : "-"}</td>
                             <td>{row?.error || "-"}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+                ) : (
+                  <p className="tx-helper">Nenhuma execução automática foi rodada nesta sessão.</p>
+                )}
+                </section>
+                  </>
                 ) : null}
+                {investQuotesTab === "Manual" ? (
+                  <section className="quote-manual-grid">
                 <section className="card quote-section-card">
                   <div className="quote-section-head">
                     <div>
@@ -8259,6 +8388,16 @@ export default function App() {
                       : "Para ativos com indexador automático, use apenas valor atual como ajuste fino de carteira real. O cadastro estrutural do ativo permanece na aba Ativos."}
                   </p>
                 </section>
+                  </section>
+                ) : null}
+                {investQuotesTab === "Histórico" ? (
+                  <section className="card quote-section-card">
+                    <div className="quote-section-head">
+                      <div>
+                        <h4>Preços registrados</h4>
+                        <p className="tx-helper">Histórico consolidado das cotações gravadas no banco, vindas de atualização manual ou automática.</p>
+                      </div>
+                    </div>
                 <div className="tx-table-wrap">
                   <table className="tx-table">
                     <thead>
@@ -8271,18 +8410,25 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {investPrices.map((p) => (
+                      {investPricesHistory.map((p) => (
                         <tr key={`${p.asset_id}-${p.date}-${p.id}`}>
                           <td>{formatIsoDatePtBr(p.date)}</td>
                           <td>{p.symbol}</td>
                           <td>{p.asset_class}</td>
-                          <td>{Number(p.price || 0).toFixed(4)}</td>
+                          <td>{formatLocalizedNumber(p.price, 4)}</td>
                           <td>{p.source || "-"}</td>
                         </tr>
                       ))}
+                      {!investPricesHistory.length ? (
+                        <tr>
+                          <td colSpan={5}>Nenhuma cotação registrada até o momento.</td>
+                        </tr>
+                      ) : null}
                     </tbody>
                   </table>
                 </div>
+                  </section>
+                ) : null}
               </section>
             ) : null}
 
