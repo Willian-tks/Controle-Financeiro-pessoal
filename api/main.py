@@ -868,6 +868,84 @@ def _resolve_manual_current_value_update(
     }
 
 
+def _get_asset_trade_position(asset_id: int, *, user_id: int) -> dict[str, float]:
+    trades_df = invest_reports.df_trades(user_id=user_id)
+    if trades_df is None or trades_df.empty:
+        return {"qty": 0.0, "cost_basis": 0.0}
+    asset_trades = trades_df[trades_df["asset_id"] == int(asset_id)].copy()
+    if asset_trades.empty:
+        return {"qty": 0.0, "cost_basis": 0.0}
+    pos = invest_reports.positions_avg_cost(asset_trades)
+    if pos is None or pos.empty:
+        return {"qty": 0.0, "cost_basis": 0.0}
+    row = pos.iloc[0]
+    return {
+        "qty": float(row.get("qty") or 0.0),
+        "cost_basis": float(row.get("cost_basis") or 0.0),
+    }
+
+
+def _prepare_fixed_income_trade(
+    *,
+    asset: dict,
+    side: str,
+    quantity: float,
+    price: float,
+    trade_date: str,
+    user_id: int,
+) -> dict[str, float | None]:
+    gross = float(quantity) * float(price)
+    if gross <= 0:
+        raise HTTPException(status_code=400, detail="Valor da operação deve ser maior que zero.")
+
+    asset_id = int(asset["id"])
+    principal_amount = float(asset.get("principal_amount") or 0.0)
+    current_value = float(asset.get("current_value") or 0.0)
+    current_base = current_value if current_value > 0 else principal_amount
+
+    if side == "BUY":
+        new_principal = max(0.0, principal_amount) + gross
+        new_current = max(0.0, current_base) + gross
+        return {
+            "quantity": 1.0,
+            "price": gross,
+            "principal_amount": new_principal,
+            "current_value": new_current,
+            "last_update": trade_date,
+        }
+
+    if current_base <= 0:
+        raise HTTPException(status_code=400, detail="Ativo de renda fixa sem valor atual/principal para resgate.")
+    if gross - current_base > 0.005:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Resgate maior que o valor atual do ativo. Atual: {current_base:.2f}; Resgate: {gross:.2f}",
+        )
+
+    position = _get_asset_trade_position(asset_id, user_id=user_id)
+    open_qty = float(position.get("qty") or 0.0)
+    if open_qty <= 0:
+        raise HTTPException(status_code=400, detail="Ativo sem posição aberta para registrar resgate.")
+
+    redeemed_ratio = min(1.0, max(0.0, gross / current_base))
+    adjusted_qty = open_qty * redeemed_ratio
+    if adjusted_qty <= 0:
+        raise HTTPException(status_code=400, detail="Não foi possível calcular a proporção do resgate.")
+    adjusted_price = gross / adjusted_qty
+
+    principal_base = principal_amount if principal_amount > 0 else float(position.get("cost_basis") or 0.0)
+    principal_removed = principal_base * redeemed_ratio
+    new_principal = max(0.0, principal_base - principal_removed)
+    new_current = max(0.0, current_base - gross)
+    return {
+        "quantity": adjusted_qty,
+        "price": adjusted_price,
+        "principal_amount": new_principal,
+        "current_value": new_current,
+        "last_update": trade_date,
+    }
+
+
 def _quote_group_for_asset(asset: dict) -> str:
     cls = _norm_asset_class((asset or {}).get("asset_class"))
     if cls in {"fii", "fiis", "stock_fii"}:
@@ -3745,6 +3823,24 @@ def invest_create_trade(
         raise HTTPException(status_code=400, detail="Cotação USD/BRL é obrigatória para Stocks US")
     fx = exchange_rate if is_us_stock else 1.0
 
+    fixed_income_asset_updates: dict[str, float | None] | None = None
+    if is_fixed_income:
+        fixed_income_trade = _prepare_fixed_income_trade(
+            asset=asset,
+            side=side,
+            quantity=qty,
+            price=price,
+            trade_date=body.date,
+            user_id=uid,
+        )
+        qty = float(fixed_income_trade["quantity"])
+        price = float(fixed_income_trade["price"])
+        fixed_income_asset_updates = {
+            "principal_amount": float(fixed_income_trade["principal_amount"] or 0.0),
+            "current_value": float(fixed_income_trade["current_value"] or 0.0),
+            "last_update": str(fixed_income_trade["last_update"] or body.date),
+        }
+
     gross = qty * price * fx
     fees_brl = fees * fx if is_us_stock else fees
     taxes_brl = taxes * fx if is_us_stock else taxes
@@ -3791,6 +3887,33 @@ def invest_create_trade(
         note=(body.note or "").strip() or None,
         user_id=uid,
     )
+    if fixed_income_asset_updates:
+        invest_repo.update_asset(
+            asset_id=int(body.asset_id),
+            symbol=str(asset.get("symbol") or "").strip().upper(),
+            name=str(asset.get("name") or "").strip(),
+            asset_class=str(asset.get("asset_class") or "").strip(),
+            sector=str(asset.get("sector") or "Não definido").strip() or "Não definido",
+            currency=str(asset.get("currency") or "BRL").strip().upper(),
+            broker_account_id=int(asset.get("broker_account_id")) if asset.get("broker_account_id") else None,
+            source_account_id=asset.get("source_account_id"),
+            issuer=asset.get("issuer"),
+            rate_type=asset.get("rate_type"),
+            rate_value=asset.get("rate_value"),
+            maturity_date=asset.get("maturity_date"),
+            rentability_type=asset.get("rentability_type"),
+            index_name=asset.get("index_name"),
+            index_pct=asset.get("index_pct"),
+            spread_rate=asset.get("spread_rate"),
+            fixed_rate=asset.get("fixed_rate"),
+            principal_amount=fixed_income_asset_updates["principal_amount"],
+            current_value=fixed_income_asset_updates["current_value"],
+            fair_price=asset.get("fair_price"),
+            safety_margin_pct=asset.get("safety_margin_pct"),
+            user_objective=asset.get("user_objective"),
+            last_update=fixed_income_asset_updates["last_update"],
+            user_id=uid,
+        )
     return {"ok": True}
 
 
