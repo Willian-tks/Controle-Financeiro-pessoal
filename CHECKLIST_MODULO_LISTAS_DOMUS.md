@@ -1,153 +1,159 @@
 # Checklist de Implementação - Módulo `Listas`
 
 ## Preparação
-- [ ] Validar escopo final da V1
-- [ ] Confirmar uso exclusivo de `workspace_id`
-- [ ] Confirmar que integração financeira fica fora da V1
-- [ ] Confirmar nomenclatura final do módulo: `Listas`
+- [x] Validar escopo final da V1
+- [x] Confirmar uso exclusivo de `workspace_id`
+- [x] Confirmar que integração financeira fica fora da V1
+- [x] Confirmar nomenclatura final do módulo: `Listas`
 
 ## Banco de Dados
-- [ ] Criar tabela `lists`
-- [ ] Criar tabela `list_items`
-- [ ] Adicionar `workspace_id` nas novas tabelas
-- [ ] Adicionar campo `status` em `lists`
-- [ ] Adicionar campo `sort_order` em `list_items`
-- [ ] Adicionar campo `completion_date` em `list_items`
-- [ ] Adicionar índices por `workspace_id`
-- [ ] Adicionar índice por `workspace_id + list_id`
-- [ ] Validar migração em SQLite
+- [x] Criar tabela `lists`
+- [x] Criar tabela `list_items`
+- [x] Adicionar `workspace_id` nas novas tabelas
+- [x] Adicionar campo `status` em `lists`
+- [x] Adicionar campo `sort_order` em `list_items`
+- [x] Adicionar campo `completion_date` em `list_items`
+- [x] Adicionar índices por `workspace_id`
+- [x] Adicionar índice por `workspace_id + list_id`
+- [x] Validar migração em SQLite
 - [ ] Validar migração em PostgreSQL
 
 ## Schemas e Validações
-- [ ] Criar schema de criação de lista
-- [ ] Criar schema de edição de lista
-- [ ] Criar schema de criação de item
-- [ ] Criar schema de edição de item
-- [ ] Validar nome da lista obrigatório
-- [ ] Validar tipo obrigatório
-- [ ] Validar nome do item obrigatório
-- [ ] Validar quantidade maior que zero
-- [ ] Validar valor sugerido maior ou igual a zero
-- [ ] Validar status permitido: `ativa`, `arquivada`
+- [x] Criar schema de criação de lista
+- [x] Criar schema de edição de lista
+- [x] Criar schema de criação de item
+- [x] Criar schema de edição de item
+- [x] Validar nome da lista obrigatório
+- [x] Validar tipo obrigatório
+- [x] Validar nome do item obrigatório
+- [x] Validar quantidade maior que zero
+- [x] Validar valor sugerido maior ou igual a zero
+- [x] Validar status permitido: `ativa`, `arquivada`
 
 ## Repositório
-- [ ] Criar repositório do módulo
-- [ ] Implementar criação de lista
-- [ ] Implementar edição de lista
-- [ ] Implementar exclusão de lista
-- [ ] Implementar arquivamento de lista
-- [ ] Implementar listagem de listas
-- [ ] Implementar busca de lista por id
-- [ ] Implementar criação de item
-- [ ] Implementar edição de item
-- [ ] Implementar exclusão de item
-- [ ] Implementar toggle de adquirido
-- [ ] Garantir filtro por `workspace_id` em todas as queries
+- [x] Criar repositório do módulo
+- [x] Implementar criação de lista
+- [x] Implementar edição de lista
+- [x] Implementar exclusão de lista
+- [x] Implementar arquivamento de lista
+- [x] Implementar listagem de listas
+- [x] Implementar busca de lista por id
+- [x] Implementar criação de item
+- [x] Implementar edição de item
+- [x] Implementar exclusão de item
+- [x] Implementar toggle de adquirido
+- [x] Garantir filtro por `workspace_id` em todas as queries
 
 ## Regras de Negócio
-- [ ] Calcular `total_value = quantity * suggested_value`
-- [ ] Tratar `suggested_value` ausente como `0`
-- [ ] Calcular `total_items`
-- [ ] Calcular `acquired_items`
-- [ ] Calcular `pending_items`
-- [ ] Calcular `completion_pct`
-- [ ] Calcular `estimated_total`
-- [ ] Preencher `completion_date` ao marcar item
-- [ ] Limpar `completion_date` ao desmarcar item
-- [ ] Garantir ordenação inicial por `sort_order`/criação
+- [x] Calcular `total_value = quantity * suggested_value`
+- [x] Tratar `suggested_value` ausente como `0`
+- [x] Calcular `total_items`
+- [x] Calcular `acquired_items`
+- [x] Calcular `pending_items`
+- [x] Calcular `completion_pct`
+- [x] Calcular `estimated_total`
+- [x] Preencher `completion_date` ao marcar item
+- [x] Limpar `completion_date` ao desmarcar item
+- [x] Garantir ordenação inicial por `sort_order`/criação
 
 ## API
-- [ ] Criar `POST /lists`
-- [ ] Criar `GET /lists`
-- [ ] Criar `GET /lists/{id}`
-- [ ] Criar `PUT /lists/{id}`
-- [ ] Criar `DELETE /lists/{id}`
-- [ ] Criar `PATCH /lists/{id}/archive`
-- [ ] Criar `POST /lists/{id}/items`
-- [ ] Criar `PUT /items/{id}`
-- [ ] Criar `DELETE /items/{id}`
-- [ ] Criar `PATCH /items/{id}/toggle-acquired`
-- [ ] Retornar resumo consolidado no `GET /lists`
-- [ ] Retornar lista + itens + resumo no `GET /lists/{id}`
-- [ ] Validar isolamento por workspace nas rotas
+- [x] Criar `POST /lists`
+- [x] Criar `GET /lists`
+- [x] Criar `GET /lists/{id}`
+- [x] Criar `PUT /lists/{id}`
+- [x] Criar `DELETE /lists/{id}`
+- [x] Criar `PATCH /lists/{id}/archive`
+- [x] Criar `POST /lists/{id}/items`
+- [x] Criar `PUT /items/{id}`
+- [x] Criar `DELETE /items/{id}`
+- [x] Criar `PATCH /items/{id}/toggle-acquired`
+- [x] Retornar resumo consolidado no `GET /lists`
+- [x] Retornar lista + itens + resumo no `GET /lists/{id}`
+- [x] Validar isolamento por workspace nas rotas
 
 ## Frontend - Base
-- [ ] Adicionar módulo `Listas` na navegação
-- [ ] Adicionar subtítulo da página
-- [ ] Criar integrações em `frontend/src/api.js`
-- [ ] Criar estados de listas
-- [ ] Criar estados de itens
-- [ ] Criar estados de filtros e busca
-- [ ] Criar estados de loading e mensagens
+- [x] Adicionar módulo `Listas` na navegação
+- [x] Adicionar subtítulo da página
+- [x] Criar integrações em `frontend/src/api.js`
+- [x] Criar estados de listas
+- [x] Criar estados de itens
+- [x] Criar estados de filtros e busca
+- [x] Criar estados de loading e mensagens
 
 ## Frontend - Tela Principal
-- [ ] Criar página principal `Listas`
-- [ ] Adicionar botão `Nova Lista`
-- [ ] Adicionar campo de busca
-- [ ] Adicionar filtro por tipo
-- [ ] Adicionar filtro por status
-- [ ] Renderizar cards de listas
-- [ ] Exibir nome da lista
-- [ ] Exibir tipo
-- [ ] Exibir total de itens
-- [ ] Exibir itens concluídos
-- [ ] Exibir percentual de progresso
-- [ ] Exibir valor total estimado
-- [ ] Exibir status
-- [ ] Adicionar ação `abrir`
-- [ ] Adicionar ação `editar`
-- [ ] Adicionar ação `arquivar`
-- [ ] Adicionar ação `excluir`
+- [x] Criar página principal `Listas`
+- [x] Adicionar botão `Nova Lista`
+- [x] Adicionar campo de busca
+- [x] Adicionar filtro por tipo
+- [x] Adicionar filtro por status
+- [x] Renderizar cards de listas
+- [x] Exibir nome da lista
+- [x] Exibir tipo
+- [x] Exibir total de itens
+- [x] Exibir itens concluídos
+- [x] Exibir percentual de progresso
+- [x] Exibir valor total estimado
+- [x] Exibir status
+- [x] Adicionar ação `abrir`
+- [x] Adicionar ação `editar`
+- [x] Adicionar ação `arquivar`
+- [x] Adicionar ação `excluir`
 
 ## Frontend - Detalhe da Lista
-- [ ] Criar página de detalhe
-- [ ] Exibir nome da lista
-- [ ] Exibir tipo
-- [ ] Exibir descrição
-- [ ] Exibir status
-- [ ] Exibir resumo consolidado
-- [ ] Criar tabela de itens
-- [ ] Adicionar checkbox de adquirido
-- [ ] Exibir nome do item
-- [ ] Exibir quantidade
-- [ ] Exibir valor sugerido
-- [ ] Exibir valor total
-- [ ] Exibir observação
-- [ ] Adicionar ação de editar item
-- [ ] Adicionar ação de excluir item
-- [ ] Adicionar ação de marcar/desmarcar adquirido
+- [x] Criar página de detalhe
+- [x] Exibir nome da lista
+- [x] Exibir tipo
+- [x] Exibir descrição
+- [x] Exibir status
+- [x] Exibir resumo consolidado
+- [x] Criar tabela de itens
+- [x] Adicionar checkbox de adquirido
+- [x] Exibir nome do item
+- [x] Exibir quantidade
+- [x] Exibir valor sugerido
+- [x] Exibir valor total
+- [x] Exibir observação
+- [x] Adicionar ação de editar item
+- [x] Adicionar ação de excluir item
+- [x] Adicionar ação de marcar/desmarcar adquirido
 
 ## UX e Visual
-- [ ] Seguir padrão visual atual do DOMUS
-- [ ] Ajustar cards para desktop e mobile
-- [ ] Criar estado vazio sem listas
-- [ ] Criar estado vazio sem itens
-- [ ] Padronizar textos e labels
-- [ ] Padronizar mensagens de sucesso
-- [ ] Padronizar mensagens de erro
+- [x] Seguir padrão visual atual do DOMUS
+- [x] Ajustar cards para desktop e mobile
+- [x] Criar estado vazio sem listas
+- [x] Criar estado vazio sem itens
+- [x] Padronizar textos e labels
+- [x] Padronizar mensagens de sucesso
+- [x] Padronizar mensagens de erro
 
 ## Testes
-- [ ] Testar criação de lista
-- [ ] Testar edição de lista
-- [ ] Testar exclusão de lista
-- [ ] Testar arquivamento de lista
-- [ ] Testar criação de item
-- [ ] Testar edição de item
-- [ ] Testar exclusão de item
-- [ ] Testar toggle de adquirido
-- [ ] Testar cálculo de `total_value`
-- [ ] Testar cálculo de consolidado
-- [ ] Testar lista sem itens
-- [ ] Testar isolamento por workspace
-- [ ] Testar payload inválido na API
+- [x] Testar criação de lista
+- [x] Testar edição de lista
+- [x] Testar exclusão de lista
+- [x] Testar arquivamento de lista
+- [x] Testar criação de item
+- [x] Testar edição de item
+- [x] Testar exclusão de item
+- [x] Testar toggle de adquirido
+- [x] Testar cálculo de `total_value`
+- [x] Testar cálculo de consolidado
+- [x] Testar lista sem itens
+- [x] Testar isolamento por workspace
+- [x] Testar payload inválido na API
 - [ ] Rodar smoke test manual no frontend
 
 ## Deploy e Validação Final
-- [ ] Validar localmente
-- [ ] Rodar build do frontend
-- [ ] Rodar testes automatizados
-- [ ] Revisar impacto no VPS
+- [x] Validar localmente
+- [x] Rodar build do frontend
+- [x] Rodar testes automatizados
+- [x] Revisar impacto no VPS
 - [ ] Publicar no Git
 - [ ] Fazer deploy no VPS
 - [ ] Validar módulo no ambiente publicado
 - [ ] Confirmar que não houve regressão em outros módulos
+
+## Gate antes de usuário real
+- [ ] Executar smoke manual local do fluxo `Listas`
+- [ ] Fazer deploy controlado no VPS
+- [ ] Validar smoke pós-deploy no VPS
+- [ ] Liberar para teste real de usuário somente após os itens acima

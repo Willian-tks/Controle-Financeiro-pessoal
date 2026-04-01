@@ -313,6 +313,37 @@ def _sqlite_schema(cur):
         workspace_id INTEGER
     );
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS lists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'ativa',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS list_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id INTEGER NOT NULL,
+        list_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'un',
+        suggested_value REAL NOT NULL DEFAULT 0,
+        total_value REAL NOT NULL DEFAULT 0,
+        acquired INTEGER NOT NULL DEFAULT 0,
+        completion_date TEXT,
+        notes TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(list_id) REFERENCES lists(id)
+    );
+    """)
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS asset_prices (
@@ -389,6 +420,11 @@ def _sqlite_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace ON lists(workspace_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace_status ON lists(workspace_id, status);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace_type ON lists(workspace_id, type);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_list_items_workspace ON list_items(workspace_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_list_items_workspace_list ON list_items(workspace_id, list_id);")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS quote_job_status (
         workspace_id INTEGER PRIMARY KEY,
@@ -609,6 +645,37 @@ def _postgres_schema(cur):
     );
     """)
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS lists (
+        id BIGSERIAL PRIMARY KEY,
+        workspace_id BIGINT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'ativa',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS list_items (
+        id BIGSERIAL PRIMARY KEY,
+        workspace_id BIGINT NOT NULL,
+        list_id BIGINT NOT NULL,
+        name TEXT NOT NULL,
+        quantity DOUBLE PRECISION NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'un',
+        suggested_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+        acquired BOOLEAN NOT NULL DEFAULT FALSE,
+        completion_date TEXT,
+        notes TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_list_items_list FOREIGN KEY (list_id) REFERENCES lists(id)
+    );
+    """)
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS sync_runs (
         id BIGSERIAL PRIMARY KEY,
         scope_kind TEXT NOT NULL,
@@ -695,6 +762,11 @@ def _postgres_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_index_rates_name_date ON index_rates(index_name, ref_date);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_ref_date ON index_rates(ref_date);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace ON lists(workspace_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace_status ON lists(workspace_id, status);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace_type ON lists(workspace_id, type);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_list_items_workspace ON list_items(workspace_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_list_items_workspace_list ON list_items(workspace_id, list_id);")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS quote_job_status (
         workspace_id BIGINT PRIMARY KEY,
@@ -926,6 +998,37 @@ def _migrate_multitenant_postgres(cur):
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS lists (
+        id BIGSERIAL PRIMARY KEY,
+        workspace_id BIGINT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'ativa',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS list_items (
+        id BIGSERIAL PRIMARY KEY,
+        workspace_id BIGINT NOT NULL,
+        list_id BIGINT NOT NULL,
+        name TEXT NOT NULL,
+        quantity DOUBLE PRECISION NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'un',
+        suggested_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+        acquired BOOLEAN NOT NULL DEFAULT FALSE,
+        completion_date TEXT,
+        notes TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_list_items_list FOREIGN KEY (list_id) REFERENCES lists(id)
+    );
+    """)
 
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
@@ -992,6 +1095,8 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS category_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS description TEXT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS note TEXT")
+    cur.execute("ALTER TABLE list_items ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'un'")
+    cur.execute("UPDATE list_items SET unit = 'un' WHERE unit IS NULL OR TRIM(unit) = ''")
     cur.execute("ALTER TABLE index_rates ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
 
     cur.execute("""
@@ -1057,6 +1162,11 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_charges_workspace ON credit_card_charges(workspace_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_workspace ON index_rates(workspace_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_benchmark_settings_workspace ON benchmark_settings(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace ON lists(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace_status ON lists(workspace_id, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace_type ON lists(workspace_id, type)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_list_items_workspace ON list_items(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_list_items_workspace_list ON list_items(workspace_id, list_id)")
 
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_workspace_name ON accounts(workspace_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_workspace_name ON categories(workspace_id, name)")
@@ -1145,6 +1255,37 @@ def _migrate_multitenant_sqlite(cur):
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS lists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'ativa',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS list_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id INTEGER NOT NULL,
+        list_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'un',
+        suggested_value REAL NOT NULL DEFAULT 0,
+        total_value REAL NOT NULL DEFAULT 0,
+        acquired INTEGER NOT NULL DEFAULT 0,
+        completion_date TEXT,
+        notes TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(list_id) REFERENCES lists(id)
+    );
+    """)
 
     _add_column_sqlite(cur, "accounts", "user_id INTEGER")
     _add_column_sqlite(cur, "accounts", "currency TEXT NOT NULL DEFAULT 'BRL'")
@@ -1200,6 +1341,8 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "credit_card_charges", "category_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "description TEXT")
     _add_column_sqlite(cur, "credit_card_charges", "note TEXT")
+    _add_column_sqlite(cur, "list_items", "unit TEXT NOT NULL DEFAULT 'un'")
+    cur.execute("UPDATE list_items SET unit = 'un' WHERE unit IS NULL OR TRIM(unit) = ''")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS index_rates (
@@ -1292,6 +1435,11 @@ def _migrate_multitenant_sqlite(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_credit_card_charges_workspace ON credit_card_charges(workspace_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_index_rates_workspace ON index_rates(workspace_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_benchmark_settings_workspace ON benchmark_settings(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace ON lists(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace_status ON lists(workspace_id, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_lists_workspace_type ON lists(workspace_id, type)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_list_items_workspace ON list_items(workspace_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_list_items_workspace_list ON list_items(workspace_id, list_id)")
 
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_workspace_name ON accounts(workspace_id, name)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_workspace_name ON categories(workspace_id, name)")

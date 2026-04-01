@@ -571,6 +571,183 @@ body {
   margin-bottom: 12px;
 }
 
+.lists-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.lists-toolbar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 12px;
+  color: #5f7390;
+  font-size: 13px;
+}
+
+.lists-card {
+  display: grid;
+  gap: 14px;
+}
+
+.lists-card.selected {
+  border-color: #6fb9ff;
+  box-shadow: 0 0 0 1px rgba(111, 185, 255, 0.25);
+}
+
+.lists-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.lists-card-top h3 {
+  margin-bottom: 6px;
+}
+
+.lists-card-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.lists-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #c9dbf5;
+  background: #eef5ff;
+  color: #214267;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lists-badge.status.active {
+  background: #e7f8ef;
+  border-color: #b7e7c9;
+  color: #1a6a3a;
+}
+
+.lists-badge.status.archived {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #4b5563;
+}
+
+.lists-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.lists-summary-grid div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fbff;
+  border: 1px solid #d9e7f8;
+}
+
+.lists-summary-grid strong {
+  font-size: 18px;
+  color: #17375b;
+}
+
+.lists-summary-grid span {
+  color: #5f7390;
+  font-size: 12px;
+}
+
+.lists-summary-grid-preview {
+  margin-bottom: 14px;
+}
+
+.lists-detail-headline {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.lists-detail-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e6f4ff, #eef8ff);
+  border: 1px solid #cde4fb;
+  color: #184267;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lists-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lists-card-actions button,
+.tx-form button.tx-action-neutral {
+  min-width: 110px;
+}
+
+.lists-card-actions .tx-action-primary,
+.lists-card-actions .tx-action-neutral,
+.lists-card-actions .danger,
+.tx-form button.tx-action-neutral {
+  border-radius: 10px;
+  border: 1px solid #cfd8e9;
+  padding: 10px 12px;
+  min-height: 42px;
+  font-weight: 700;
+}
+
+.lists-card-actions .tx-action-primary {
+  background: #1f8cea;
+  border-color: #1f8cea;
+  color: #fff;
+}
+
+.lists-card-actions .tx-action-neutral,
+.tx-form button.tx-action-neutral {
+  background: #eef4fb;
+  border-color: #cddbef;
+  color: #214267;
+}
+
+.lists-card-actions .danger {
+  background: #fee2e2;
+  border-color: #fecaca;
+  color: #8f1b1b;
+}
+
+.lists-empty-state {
+  display: grid;
+  gap: 8px;
+  place-items: start;
+  min-height: 160px;
+  align-content: center;
+  background:
+    radial-gradient(circle at top right, rgba(111, 185, 255, 0.12), transparent 36%),
+    linear-gradient(180deg, #fcfdff 0%, #f5f9ff 100%);
+}
+
+.lists-empty-state h3 {
+  margin-bottom: 0;
+}
+
+.lists-detail-empty {
+  min-height: 220px;
+}
+
 .tx-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -2966,6 +3143,20 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .lists-card-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .lists-card-badges {
+    justify-content: flex-start;
+  }
+
+  .lists-toolbar-meta {
+    flex-direction: column;
+    gap: 6px;
+  }
+
   .dash-kpis {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
@@ -3007,6 +3198,10 @@ body {
   .tx-form,
   .quote-auto-form {
     grid-template-columns: 1fr;
+  }
+
+  .lists-summary-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 
   .mgr-grid,
@@ -3114,6 +3309,20 @@ body {
   .dash-filter-form,
   .dash-kpis {
     grid-template-columns: 1fr;
+  }
+
+  .lists-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lists-card-actions {
+    flex-direction: column;
+  }
+
+  .lists-card-actions button,
+  .tx-form button.tx-action-neutral {
+    width: 100%;
+    min-width: 0;
   }
 
   .dash-filter-card h3,

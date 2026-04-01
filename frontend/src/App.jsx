@@ -5,6 +5,7 @@ import icContas from "./icons/contas.png";
 import icLancamentos from "./icons/lancamentos.png";
 import icInvestimento from "./icons/investimento.png";
 import icGerenciador from "./icons/gerenciador.png";
+import icListas from "./icons/listas.svg";
 import icImportarCsv from "./icons/importar-CSV.png";
 import icUsuario from "./icons/usuario.png";
 import icDespesa from "./icons/despesa_2.png";
@@ -34,7 +35,9 @@ import {
   createInvestAsset,
   createInvestIncome,
   createInvestTrade,
+  createListItem,
   createTransaction,
+  createList,
   deleteCard,
   deleteAccount,
   deleteCategory,
@@ -42,6 +45,8 @@ import {
   deleteInvestAsset,
   deleteInvestIncome,
   deleteInvestTrade,
+  deleteListItem,
+  deleteList,
   downloadInvestReport,
   deleteTransaction,
   getAccounts,
@@ -66,6 +71,8 @@ import {
   getInvestSummary,
   getInvestTrades,
   getKpis,
+  getList,
+  getLists,
   getMe,
   updateMeProfile,
   getWorkspaces,
@@ -92,12 +99,16 @@ import {
   updateAllInvestPrices,
   updateInvestAsset,
   updateInvestAssetFairValue,
+  updateList,
+  updateListItem,
   uploadInvestAssetValuationReport,
   downloadInvestAssetValuationReport,
   updateInvestManualAssetValue,
   syncActiveInvestBenchmarks,
+  toggleListItemAcquired,
   upsertInvestBenchmarkSetting,
   upsertInvestPrice,
+  archiveList,
   updateCard,
   updateAccount,
   updateCategory,
@@ -110,6 +121,7 @@ const PAGES = [
   "Lançamentos",
   "Investimentos",
   "Gerenciador",
+  "Listas",
   "Importar CSV",
 ];
 const PAGE_PERMISSION_MODULE = {
@@ -118,11 +130,13 @@ const PAGE_PERMISSION_MODULE = {
   "Lançamentos": "lancamentos",
   Investimentos: "investimentos",
   Gerenciador: "contas",
+  Listas: "contas",
   "Importar CSV": "relatorios",
 };
 
 const PAGE_SUBTITLES = {
   Gerenciador: "Cadastros e manutenção de contas, categorias e cartões",
+  Listas: "Organização pessoal simples por workspace",
   Contas: "Visão rápida das contas cadastradas",
   "Lançamentos": "Registro e histórico das movimentações",
   Dashboard: "KPIs, gráficos e saldos por conta",
@@ -132,6 +146,13 @@ const PAGE_SUBTITLES = {
 
 const INVEST_TABS = ["Resumo", "Rentabilidade", "Ativos", "Operações", "Proventos", "Cotações"];
 const INVEST_QUOTES_TABS = ["Resumo", "Automática", "Manual", "Histórico"];
+const LIST_TYPES = ["Mercado", "Farmácia", "Casa", "Pessoal", "Desejos", "Outros"];
+const LIST_STATUS_OPTIONS = ["ativa", "arquivada"];
+const LIST_ITEM_UNIT_OPTIONS = [
+  { value: "un", label: "Unidade" },
+  { value: "l", label: "Litros" },
+  { value: "kg", label: "KG" },
+];
 const USER_OBJECTIVE_OPTIONS = [
   { value: "accumulate", label: "Acumular" },
   { value: "hold", label: "Segurar" },
@@ -195,6 +216,7 @@ const PAGE_ICONS = {
   "Lançamentos": icLancamentos,
   Investimentos: icInvestimento,
   Gerenciador: icGerenciador,
+  Listas: icListas,
   "Importar CSV": icImportarCsv,
 };
 const WORKSPACE_PERMISSION_MODULES = [
@@ -1052,6 +1074,25 @@ export default function App() {
   const [investQuotesTab, setInvestQuotesTab] = useState("Resumo");
   const [managerTab, setManagerTab] = useState("Cadastro de contas");
   const [manageMsg, setManageMsg] = useState("");
+  const [lists, setLists] = useState([]);
+  const [listsMsg, setListsMsg] = useState("");
+  const [listsSearch, setListsSearch] = useState("");
+  const [listsTypeFilter, setListsTypeFilter] = useState("");
+  const [listsStatusFilter, setListsStatusFilter] = useState("ativa");
+  const [listFormId, setListFormId] = useState("");
+  const [listFormName, setListFormName] = useState("");
+  const [listFormType, setListFormType] = useState(LIST_TYPES[0]);
+  const [listFormDescription, setListFormDescription] = useState("");
+  const [listFormStatus, setListFormStatus] = useState("ativa");
+  const [selectedListId, setSelectedListId] = useState("");
+  const [selectedListDetail, setSelectedListDetail] = useState(null);
+  const [listDetailMsg, setListDetailMsg] = useState("");
+  const [listItemFormId, setListItemFormId] = useState("");
+  const [listItemName, setListItemName] = useState("");
+  const [listItemQuantity, setListItemQuantity] = useState("1");
+  const [listItemUnit, setListItemUnit] = useState("un");
+  const [listItemSuggestedValue, setListItemSuggestedValue] = useState("");
+  const [listItemNotes, setListItemNotes] = useState("");
   const [workspaces, setWorkspaces] = useState([]);
   const [workspaceMsg, setWorkspaceMsg] = useState("");
   const [workspaceSwitchingId, setWorkspaceSwitchingId] = useState("");
@@ -1139,6 +1180,36 @@ export default function App() {
       total_return_pct: 0,
       broker_balance: 0,
     });
+  }
+
+  function resetListForm() {
+    setListFormId("");
+    setListFormName("");
+    setListFormType(LIST_TYPES[0]);
+    setListFormDescription("");
+    setListFormStatus("ativa");
+  }
+
+  function resetListItemForm() {
+    setListItemFormId("");
+    setListItemName("");
+    setListItemQuantity("1");
+    setListItemUnit("un");
+    setListItemSuggestedValue("");
+    setListItemNotes("");
+  }
+
+  function clearListsState() {
+    setLists([]);
+    setListsMsg("");
+    setListsSearch("");
+    setListsTypeFilter("");
+    setListsStatusFilter("ativa");
+    setSelectedListId("");
+    setSelectedListDetail(null);
+    setListDetailMsg("");
+    resetListForm();
+    resetListItemForm();
   }
 
   useEffect(() => {
@@ -1832,6 +1903,22 @@ export default function App() {
       cancelled = true;
     };
   }, [canAddInvestimentos, page, user]);
+
+  useEffect(() => {
+    if (!user || page !== "Listas") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await reloadLists();
+      } catch (err) {
+        if (cancelled) return;
+        setListsMsg(String(err.message || err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page, user, user?.workspace_id, user?.current_workspace_id]);
 
   useEffect(() => {
     if (!txIsExpenseCredit) return;
@@ -3308,6 +3395,249 @@ export default function App() {
     const tx = await getTransactions({ view: params.view ?? txView });
     setTransactions(tx);
     setCommitmentEdit(null);
+  }
+
+  async function reloadLists(params = {}) {
+    if (!canViewContas) {
+      clearListsState();
+      return;
+    }
+    const rows = await getLists({
+      search: params.search ?? listsSearch,
+      type: params.type ?? listsTypeFilter,
+      status: params.status ?? listsStatusFilter,
+    });
+    setLists(Array.isArray(rows) ? rows : []);
+    setListsMsg("");
+  }
+
+  async function loadListDetail(listId, options = {}) {
+    const id = String(listId || "").trim();
+    if (!id) {
+      setSelectedListId("");
+      setSelectedListDetail(null);
+      setListDetailMsg("");
+      resetListItemForm();
+      return;
+    }
+    const detail = await getList(id);
+    setSelectedListId(id);
+    setSelectedListDetail(detail || null);
+    setListDetailMsg("");
+    resetListItemForm();
+    if (!options.silentSuccess) {
+      setListsMsg("");
+    }
+  }
+
+  async function onSubmitListForm(e) {
+    e?.preventDefault?.();
+    if (!canAddContas && !listFormId) {
+      setListsMsg("Sem permissão para criar listas.");
+      return;
+    }
+    if (!canEditContas && listFormId) {
+      setListsMsg("Sem permissão para editar listas.");
+      return;
+    }
+    const payload = {
+      name: listFormName,
+      type: listFormType,
+      description: listFormDescription,
+      status: listFormStatus,
+    };
+    const actionKey = listFormId ? "updateList" : "createList";
+    try {
+      const out = await withPendingAction(actionKey, async () => {
+        if (listFormId) {
+          return updateList(listFormId, payload);
+        }
+        return createList(payload);
+      });
+      resetListForm();
+      await reloadLists();
+      if (out?.id) {
+        await loadListDetail(out.id, { silentSuccess: true });
+      }
+      showGlobalSuccess(listFormId ? "Lista atualizada." : "Lista criada.");
+    } catch (err) {
+      setListsMsg(String(err.message || err));
+    }
+  }
+
+  function onEditListCard(item) {
+    setListFormId(String(item?.id || ""));
+    setListFormName(String(item?.name || ""));
+    setListFormType(String(item?.type || LIST_TYPES[0]));
+    setListFormDescription(String(item?.description || ""));
+    setListFormStatus(String(item?.status || "ativa"));
+    setListsMsg("");
+  }
+
+  async function onArchiveListCard(item) {
+    if (!canEditContas) {
+      setListsMsg("Sem permissão para arquivar listas.");
+      return;
+    }
+    const id = String(item?.id || "").trim();
+    if (!id) return;
+    try {
+      await withPendingAction(`archiveList-${id}`, async () => archiveList(id));
+      await reloadLists();
+      if (selectedListId === id) {
+        await loadListDetail(id, { silentSuccess: true });
+      }
+      showGlobalSuccess("Lista arquivada.");
+    } catch (err) {
+      setListsMsg(String(err.message || err));
+    }
+  }
+
+  async function onDeleteListCard(item) {
+    if (!canDeleteContas) {
+      setListsMsg("Sem permissão para excluir listas.");
+      return;
+    }
+    const id = String(item?.id || "").trim();
+    if (!id) return;
+    const confirmed = window.confirm(`Excluir a lista "${item?.name || "sem nome"}"?`);
+    if (!confirmed) return;
+    try {
+      await withPendingAction(`deleteList-${id}`, async () => deleteList(id));
+      if (selectedListId === id) {
+        setSelectedListId("");
+        setSelectedListDetail(null);
+      }
+      if (listFormId === id) {
+        resetListForm();
+      }
+      await reloadLists();
+      showGlobalSuccess("Lista excluída.");
+    } catch (err) {
+      setListsMsg(String(err.message || err));
+    }
+  }
+
+  async function onOpenListCard(item) {
+    const id = String(item?.id || "").trim();
+    if (!id) return;
+    try {
+      await withPendingAction(`openList-${id}`, async () => loadListDetail(id, { silentSuccess: true }));
+    } catch (err) {
+      setListsMsg(String(err.message || err));
+    }
+  }
+
+  async function onApplyListFilters(e) {
+    e?.preventDefault?.();
+    try {
+      await withPendingAction("loadLists", async () => reloadLists());
+    } catch (err) {
+      setListsMsg(String(err.message || err));
+    }
+  }
+
+  function onEditListItem(item) {
+    setListItemFormId(String(item?.id || ""));
+    setListItemName(String(item?.name || ""));
+    setListItemQuantity(String(item?.quantity ?? 1));
+    setListItemUnit(String(item?.unit || "un").trim().toLowerCase() || "un");
+    setListItemSuggestedValue(formatCurrencyInputValue(String(item?.suggested_value ?? "")));
+    setListItemNotes(String(item?.notes || ""));
+    setListDetailMsg("");
+  }
+
+  async function onSubmitListItemForm(e) {
+    e?.preventDefault?.();
+    if (!selectedListId) {
+      setListDetailMsg("Selecione uma lista antes de salvar itens.");
+      return;
+    }
+    if (!canAddContas && !listItemFormId) {
+      setListDetailMsg("Sem permissão para criar itens.");
+      return;
+    }
+    if (!canEditContas && listItemFormId) {
+      setListDetailMsg("Sem permissão para editar itens.");
+      return;
+    }
+    const quantity = parseLocaleNumber(listItemQuantity);
+    const suggestedValue = parseLocaleNumber(listItemSuggestedValue);
+    const payload = {
+      name: listItemName,
+      quantity: Number.isFinite(quantity) ? quantity : 0,
+      unit: listItemUnit,
+      suggested_value: Number.isFinite(suggestedValue) ? suggestedValue : 0,
+      notes: listItemNotes,
+    };
+    const actionKey = listItemFormId ? "updateListItem" : "createListItem";
+    try {
+      await withPendingAction(actionKey, async () => {
+        if (listItemFormId) {
+          return updateListItem(listItemFormId, payload);
+        }
+        return createListItem(selectedListId, payload);
+      });
+      resetListItemForm();
+      await reloadLists();
+      await loadListDetail(selectedListId, { silentSuccess: true });
+      showGlobalSuccess(listItemFormId ? "Item atualizado." : "Item criado.");
+    } catch (err) {
+      setListDetailMsg(String(err.message || err));
+    }
+  }
+
+  async function onToggleListItem(item) {
+    if (!canEditContas) {
+      setListDetailMsg("Sem permissão para atualizar itens.");
+      return;
+    }
+    const id = String(item?.id || "").trim();
+    if (!id) return;
+    try {
+      await withPendingAction(`toggleListItem-${id}`, async () =>
+        toggleListItemAcquired(id, !Boolean(item?.acquired))
+      );
+      await reloadLists();
+      await loadListDetail(selectedListId, { silentSuccess: true });
+    } catch (err) {
+      setListDetailMsg(String(err.message || err));
+    }
+  }
+
+  async function onDeleteListItem(item) {
+    if (!canDeleteContas) {
+      setListDetailMsg("Sem permissão para excluir itens.");
+      return;
+    }
+    const id = String(item?.id || "").trim();
+    if (!id) return;
+    const confirmed = window.confirm(`Excluir o item "${item?.name || "sem nome"}"?`);
+    if (!confirmed) return;
+    try {
+      await withPendingAction(`deleteListItem-${id}`, async () => deleteListItem(id));
+      if (listItemFormId === id) {
+        resetListItemForm();
+      }
+      await reloadLists();
+      await loadListDetail(selectedListId, { silentSuccess: true });
+      showGlobalSuccess("Item excluído.");
+    } catch (err) {
+      setListDetailMsg(String(err.message || err));
+    }
+  }
+
+  async function onResetListFilters() {
+    setListsSearch("");
+    setListsTypeFilter("");
+    setListsStatusFilter("ativa");
+    try {
+      await withPendingAction("loadLists", async () =>
+        reloadLists({ search: "", type: "", status: "ativa" })
+      );
+    } catch (err) {
+      setListsMsg(String(err.message || err));
+    }
   }
 
   async function syncInvestRentabilityBeforeLoad({ force = false } = {}) {
@@ -5181,7 +5511,7 @@ export default function App() {
         </div>
       </aside>
 
-      <main className={`main ${page === "Dashboard" || page === "Gerenciador" || page === "Contas" || page === "Lançamentos" || page === "Investimentos" || page === "Importar CSV" ? "main-dashboard" : ""}`}>
+      <main className={`main ${page === "Dashboard" || page === "Gerenciador" || page === "Listas" || page === "Contas" || page === "Lançamentos" || page === "Investimentos" || page === "Importar CSV" ? "main-dashboard" : ""}`}>
         <header className="page-header">
           <h1>{page}</h1>
           <p>{subtitle}</p>
@@ -6629,6 +6959,308 @@ export default function App() {
                 </table>
               </div>
             </section>
+          </>
+        ) : null}
+
+        {page === "Listas" && canViewContas ? (
+          <>
+            <section className="card">
+              <div className="quote-section-head">
+                <div>
+                  <h4>{listFormId ? "Editar lista" : "Nova Lista"}</h4>
+                  <p className="tx-helper">
+                    Crie e organize listas simples por workspace, com resumo automático de progresso e valor estimado.
+                  </p>
+                </div>
+              </div>
+              <form className="tx-form" onSubmit={onSubmitListForm}>
+                <input
+                  type="text"
+                  placeholder="Nome da lista"
+                  value={listFormName}
+                  onChange={(e) => setListFormName(e.target.value)}
+                  required
+                />
+                <select value={listFormType} onChange={(e) => setListFormType(e.target.value)}>
+                  {LIST_TYPES.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <select value={listFormStatus} onChange={(e) => setListFormStatus(e.target.value)}>
+                  {LIST_STATUS_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option === "ativa" ? "Ativa" : "Arquivada"}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  placeholder="Descrição opcional"
+                  value={listFormDescription}
+                  onChange={(e) => setListFormDescription(e.target.value)}
+                />
+                <button type="submit" disabled={(listFormId ? !canEditContas : !canAddContas) || isPendingAction(listFormId ? "updateList" : "createList")}>
+                  {isPendingAction(listFormId ? "updateList" : "createList")
+                    ? (listFormId ? "Salvando..." : "Criando...")
+                    : (listFormId ? "Atualizar lista" : "Criar lista")}
+                </button>
+                <button type="button" className="tx-action-neutral" onClick={resetListForm} disabled={isPendingAction("createList") || isPendingAction("updateList")}>
+                  Limpar formulário
+                </button>
+              </form>
+            </section>
+
+            <section className="card">
+              <div className="quote-section-head">
+                <div>
+                  <h4>Buscar e filtrar</h4>
+                  <p className="tx-helper">Use busca por nome, filtro por tipo e status para localizar rapidamente suas listas.</p>
+                </div>
+              </div>
+              <form className="tx-form" onSubmit={onApplyListFilters}>
+                <input
+                  type="text"
+                  placeholder="Buscar por nome"
+                  value={listsSearch}
+                  onChange={(e) => setListsSearch(e.target.value)}
+                />
+                <select value={listsTypeFilter} onChange={(e) => setListsTypeFilter(e.target.value)}>
+                  <option value="">Todos os tipos</option>
+                  {LIST_TYPES.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <select value={listsStatusFilter} onChange={(e) => setListsStatusFilter(e.target.value)}>
+                  <option value="">Todos os status</option>
+                  {LIST_STATUS_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option === "ativa" ? "Ativa" : "Arquivada"}
+                    </option>
+                  ))}
+                </select>
+                <button type="submit" disabled={isPendingAction("loadLists")}>
+                  {isPendingAction("loadLists") ? "Carregando..." : "Aplicar filtros"}
+                </button>
+                <button type="button" className="tx-action-neutral" onClick={onResetListFilters} disabled={isPendingAction("loadLists")}>
+                  Limpar filtros
+                </button>
+              </form>
+              <div className="lists-toolbar-meta">
+                <span>{lists.length} lista{lists.length === 1 ? "" : "s"} encontrada{lists.length === 1 ? "" : "s"}</span>
+                <span>Filtro atual: {listsStatusFilter ? (listsStatusFilter === "ativa" ? "ativas" : "arquivadas") : "todos os status"}</span>
+              </div>
+              {listsMsg ? <p className="tx-helper">{listsMsg}</p> : null}
+            </section>
+
+            <section className="cards lists-card-grid">
+              {(lists || []).map((item) => (
+                <article key={item.id} className={`card lists-card ${selectedListId === String(item.id) ? "selected" : ""}`}>
+                  <div className="lists-card-top">
+                    <div>
+                      <h3>{item.name}</h3>
+                      <p className="tx-helper">{item.description || "Sem descrição informada."}</p>
+                    </div>
+                    <div className="lists-card-badges">
+                      <span className="lists-badge">{item.type}</span>
+                      <span className={`lists-badge status ${item.status === "arquivada" ? "archived" : "active"}`}>
+                        {item.status === "arquivada" ? "Arquivada" : "Ativa"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="lists-summary-grid">
+                    <div>
+                      <strong>{item.summary?.total_items || 0}</strong>
+                      <span>Itens</span>
+                    </div>
+                    <div>
+                      <strong>{item.summary?.acquired_items || 0}</strong>
+                      <span>Concluídos</span>
+                    </div>
+                    <div>
+                      <strong>{Number(item.summary?.completion_pct || 0).toFixed(0)}%</strong>
+                      <span>Progresso</span>
+                    </div>
+                    <div>
+                      <strong>{brl.format(Number(item.summary?.estimated_total || 0))}</strong>
+                      <span>Total estimado</span>
+                    </div>
+                  </div>
+                  <div className="lists-card-actions">
+                    <button type="button" className="tx-action-primary" onClick={() => onOpenListCard(item)} disabled={isPendingAction(`openList-${item.id}`)}>
+                      {isPendingAction(`openList-${item.id}`) ? "Abrindo..." : "Abrir"}
+                    </button>
+                    <button type="button" className="tx-action-neutral" onClick={() => onEditListCard(item)} disabled={!canEditContas}>
+                      Editar
+                    </button>
+                    <button type="button" className="tx-action-neutral" onClick={() => onArchiveListCard(item)} disabled={!canEditContas || item.status === "arquivada" || isPendingAction(`archiveList-${item.id}`)}>
+                      {isPendingAction(`archiveList-${item.id}`) ? "Arquivando..." : "Arquivar"}
+                    </button>
+                    <button type="button" className="danger" onClick={() => onDeleteListCard(item)} disabled={!canDeleteContas || isPendingAction(`deleteList-${item.id}`)}>
+                      {isPendingAction(`deleteList-${item.id}`) ? "Excluindo..." : "Excluir"}
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {lists.length ? null : (
+                <article className="card lists-empty-state">
+                  <h3>Nenhuma lista encontrada</h3>
+                  <p className="tx-helper">Crie a primeira lista ou ajuste os filtros para ampliar a busca.</p>
+                  <p className="tx-helper">Sugestões: limpe os filtros, troque o status para "Todos" ou cadastre uma nova lista no formulário acima.</p>
+                </article>
+              )}
+            </section>
+
+            {selectedListDetail ? (
+              <section className="card">
+                <div className="quote-section-head">
+                  <div>
+                    <h4>Detalhe da lista</h4>
+                    <p className="tx-helper">
+                      {selectedListDetail.name} • {selectedListDetail.type} • {selectedListDetail.status === "arquivada" ? "Arquivada" : "Ativa"}
+                    </p>
+                  </div>
+                </div>
+                <p className="tx-helper">
+                  {selectedListDetail.description || "Sem descrição informada para esta lista."}
+                </p>
+                <div className="lists-summary-grid lists-summary-grid-preview">
+                  <div>
+                    <strong>{selectedListDetail.summary?.total_items || 0}</strong>
+                    <span>Total de itens</span>
+                  </div>
+                  <div>
+                    <strong>{selectedListDetail.summary?.acquired_items || 0}</strong>
+                    <span>Adquiridos</span>
+                  </div>
+                  <div>
+                    <strong>{selectedListDetail.summary?.pending_items || 0}</strong>
+                    <span>Pendentes</span>
+                  </div>
+                  <div>
+                    <strong>{brl.format(Number(selectedListDetail.summary?.estimated_total || 0))}</strong>
+                    <span>Valor estimado</span>
+                  </div>
+                </div>
+                <div className="lists-detail-headline">
+                  <div className="lists-detail-pill">
+                    {selectedListDetail.status === "arquivada" ? "Lista arquivada" : "Lista ativa"}
+                  </div>
+                  <p className="tx-helper">
+                    Marque itens adquiridos para atualizar o progresso e manter o resumo consolidado da lista.
+                  </p>
+                </div>
+                <form className="tx-form" onSubmit={onSubmitListItemForm}>
+                  <input
+                    type="text"
+                    placeholder="Nome do item"
+                    value={listItemName}
+                    onChange={(e) => setListItemName(e.target.value)}
+                    required
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Quantidade"
+                    value={listItemQuantity}
+                    onChange={(e) => setListItemQuantity(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 4, maxIntegerDigits: 8 }))}
+                    required
+                  />
+                  <select value={listItemUnit} onChange={(e) => setListItemUnit(e.target.value)}>
+                    {LIST_ITEM_UNIT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Valor sugerido"
+                    value={listItemSuggestedValue}
+                    onChange={(e) => setListItemSuggestedValue(formatCurrencyInputValue(e.target.value))}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Observação"
+                    value={listItemNotes}
+                    onChange={(e) => setListItemNotes(e.target.value)}
+                  />
+                  <button type="submit" disabled={(listItemFormId ? !canEditContas : !canAddContas) || isPendingAction(listItemFormId ? "updateListItem" : "createListItem")}>
+                    {isPendingAction(listItemFormId ? "updateListItem" : "createListItem")
+                      ? (listItemFormId ? "Salvando..." : "Adicionando...")
+                      : (listItemFormId ? "Atualizar item" : "Adicionar item")}
+                  </button>
+                  <button type="button" className="tx-action-neutral" onClick={resetListItemForm} disabled={isPendingAction("createListItem") || isPendingAction("updateListItem")}>
+                    Limpar item
+                  </button>
+                </form>
+                {listDetailMsg ? <p className="tx-helper">{listDetailMsg}</p> : null}
+                <div className="tx-table-wrap">
+                  <table className="tx-table">
+                    <thead>
+                      <tr>
+                        <th>OK</th>
+                        <th>Item</th>
+                        <th>Qtd.</th>
+                        <th>Valor sugerido</th>
+                        <th>Total</th>
+                        <th>Obs.</th>
+                        <th>Status</th>
+                        <th>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(selectedListDetail.items || []).map((item) => (
+                        <tr key={item.id}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(item.acquired)}
+                              onChange={() => onToggleListItem(item)}
+                              disabled={!canEditContas || isPendingAction(`toggleListItem-${item.id}`)}
+                            />
+                          </td>
+                          <td>{item.name}</td>
+                          <td>
+                            {Number(item.quantity || 0).toFixed(2).replace(/\.?0+$/, "")}{" "}
+                            {(LIST_ITEM_UNIT_OPTIONS.find((option) => option.value === String(item.unit || "").toLowerCase())?.label || "Unidade").toLowerCase()}
+                          </td>
+                          <td>{brl.format(Number(item.suggested_value || 0))}</td>
+                          <td>{brl.format(Number(item.total_value || 0))}</td>
+                          <td>{item.notes || "-"}</td>
+                          <td>{item.acquired ? `Adquirido${item.completion_date ? ` em ${formatIsoDatePtBr(item.completion_date)}` : ""}` : "Pendente"}</td>
+                          <td>
+                            <div className="lists-card-actions">
+                              <button type="button" className="tx-action-neutral" onClick={() => onEditListItem(item)} disabled={!canEditContas}>
+                                Editar
+                              </button>
+                              <button type="button" className="danger" onClick={() => onDeleteListItem(item)} disabled={!canDeleteContas || isPendingAction(`deleteListItem-${item.id}`)}>
+                                {isPendingAction(`deleteListItem-${item.id}`) ? "Excluindo..." : "Excluir"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {(selectedListDetail.items || []).length ? null : (
+                        <tr>
+                          <td colSpan={8}>Nenhum item cadastrado nesta lista ainda.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : (
+              <section className="card lists-empty-state lists-detail-empty">
+                <h3>Escolha uma lista para continuar</h3>
+                <p className="tx-helper">Abra um card para ver o detalhe, cadastrar itens e acompanhar o progresso da lista.</p>
+                <p className="tx-helper">O detalhe operacional fica no próprio módulo, sem mudar de página.</p>
+              </section>
+            )}
           </>
         ) : null}
 

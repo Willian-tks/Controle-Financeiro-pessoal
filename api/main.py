@@ -23,6 +23,7 @@ import invest_rentability
 import invest_repo
 import invest_reports
 import invest_quotes
+import lists_repo
 import repo
 import reports
 import permissions_service
@@ -53,6 +54,14 @@ from .schemas import (
     CommitmentSettleRequest,
     LoginRequest,
     LoginResponse,
+    ListCreateRequest,
+    ListDetailResponse,
+    ListItemCreateRequest,
+    ListItemResponse,
+    ListItemUpdateRequest,
+    ListResponse,
+    ListToggleAcquiredRequest,
+    ListUpdateRequest,
     ManualAssetValueUpdateRequest,
     ProfileUpdateRequest,
     UserGlobalRoleUpdateRequest,
@@ -2572,6 +2581,158 @@ def delete_category(
     if not deleted:
         raise HTTPException(status_code=404, detail="Categoria não encontrada")
     return {"ok": True}
+
+
+@app.get("/lists", response_model=list[ListResponse])
+def list_lists(
+    search: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    list_type: str | None = Query(default=None, alias="type"),
+    user: dict = Depends(_current_user),
+) -> list[dict]:
+    uid = int(user["id"])
+    rows = lists_repo.list_lists(search=search, status=status, list_type=list_type, user_id=uid) or []
+    return rows
+
+
+@app.post("/lists", response_model=ListResponse)
+def create_list(
+    body: ListCreateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    return lists_repo.create_list(
+        name=body.name,
+        list_type=body.type,
+        description=body.description,
+        status=body.status,
+        user_id=uid,
+    )
+
+
+@app.get("/lists/{list_id}", response_model=ListDetailResponse)
+def get_list(
+    list_id: int,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    item = lists_repo.get_list_detail(list_id, user_id=uid)
+    if not item:
+        raise HTTPException(status_code=404, detail="Lista não encontrada")
+    return item
+
+
+@app.put("/lists/{list_id}", response_model=ListResponse)
+def update_list(
+    list_id: int,
+    body: ListUpdateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    item = lists_repo.update_list(
+        list_id=list_id,
+        name=body.name,
+        list_type=body.type,
+        description=body.description,
+        status=body.status,
+        user_id=uid,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Lista não encontrada")
+    return item
+
+
+@app.delete("/lists/{list_id}")
+def delete_list(
+    list_id: int,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    deleted = lists_repo.delete_list(list_id, user_id=uid)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Lista não encontrada")
+    return {"ok": True}
+
+
+@app.patch("/lists/{list_id}/archive", response_model=ListResponse)
+def archive_list(
+    list_id: int,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    item = lists_repo.archive_list(list_id, user_id=uid)
+    if not item:
+        raise HTTPException(status_code=404, detail="Lista não encontrada")
+    return item
+
+
+@app.post("/lists/{list_id}/items", response_model=ListItemResponse)
+def create_list_item(
+    list_id: int,
+    body: ListItemCreateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    try:
+        return lists_repo.create_list_item(
+            list_id=list_id,
+            name=body.name,
+            quantity=body.quantity,
+            unit=body.unit,
+            suggested_value=body.suggested_value,
+            notes=body.notes,
+            sort_order=body.sort_order,
+            user_id=uid,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.put("/items/{item_id}", response_model=ListItemResponse)
+def update_list_item(
+    item_id: int,
+    body: ListItemUpdateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    item = lists_repo.update_list_item(
+        item_id=item_id,
+        name=body.name,
+        quantity=body.quantity,
+        unit=body.unit,
+        suggested_value=body.suggested_value,
+        notes=body.notes,
+        sort_order=body.sort_order,
+        user_id=uid,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+    return item
+
+
+@app.delete("/items/{item_id}")
+def delete_list_item(
+    item_id: int,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    deleted = lists_repo.delete_list_item(item_id, user_id=uid)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+    return {"ok": True}
+
+
+@app.patch("/items/{item_id}/toggle-acquired", response_model=ListItemResponse)
+def toggle_list_item_acquired(
+    item_id: int,
+    body: ListToggleAcquiredRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    item = lists_repo.toggle_list_item_acquired(item_id, acquired=body.acquired, user_id=uid)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+    return item
 
 
 @app.get("/transactions")

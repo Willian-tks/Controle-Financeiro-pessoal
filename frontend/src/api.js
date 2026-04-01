@@ -233,6 +233,68 @@ export function deleteCategory(id) {
   });
 }
 
+export function getLists(params = {}) {
+  return req(`/lists${qs(params)}`);
+}
+
+export function getList(id) {
+  return req(`/lists/${id}`);
+}
+
+export function createList(payload) {
+  return req("/lists", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateList(id, payload) {
+  return req(`/lists/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteList(id) {
+  return req(`/lists/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function archiveList(id) {
+  return req(`/lists/${id}/archive`, {
+    method: "PATCH",
+    body: JSON.stringify({}),
+  });
+}
+
+export function createListItem(listId, payload) {
+  return req(`/lists/${listId}/items`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateListItem(id, payload) {
+  return req(`/items/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteListItem(id) {
+  return req(`/items/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function toggleListItemAcquired(id, acquired) {
+  return req(`/items/${id}/toggle-acquired`, {
+    method: "PATCH",
+    body: JSON.stringify({ acquired: Boolean(acquired) }),
+  });
+}
+
 export function getKpis() {
   return req("/dashboard/kpis");
 }

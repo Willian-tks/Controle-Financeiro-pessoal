@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -300,3 +300,144 @@ class CreditCardUpdateRequest(BaseModel):
 class CreditCardPayInvoiceRequest(BaseModel):
     payment_date: str
     source_account_id: int | None = None
+
+
+LIST_ALLOWED_STATUSES = {"ativa", "arquivada"}
+LIST_ITEM_ALLOWED_UNITS = {"un", "l", "kg"}
+
+
+def _strip_required_text(value: str, field_name: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} é obrigatório")
+    return text
+
+
+class ListSummaryResponse(BaseModel):
+    total_items: int = 0
+    acquired_items: int = 0
+    pending_items: int = 0
+    completion_pct: float = 0.0
+    estimated_total: float = 0.0
+
+
+class ListCreateRequest(BaseModel):
+    name: str
+    type: str
+    description: str | None = None
+    status: str = "ativa"
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _strip_required_text(value, "Nome da lista")
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, value: str) -> str:
+        return _strip_required_text(value, "Tipo da lista")
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        status = _strip_required_text(value, "Status da lista").lower()
+        if status not in LIST_ALLOWED_STATUSES:
+            raise ValueError("Status da lista inválido")
+        return status
+
+
+class ListUpdateRequest(ListCreateRequest):
+    pass
+
+
+class ListItemCreateRequest(BaseModel):
+    name: str
+    quantity: float
+    unit: str = "un"
+    suggested_value: float = 0.0
+    notes: str | None = None
+    sort_order: int | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _strip_required_text(value, "Nome do item")
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, value: float) -> float:
+        if float(value) <= 0:
+            raise ValueError("Quantidade deve ser maior que zero")
+        return float(value)
+
+    @field_validator("unit")
+    @classmethod
+    def validate_unit(cls, value: str) -> str:
+        unit = _strip_required_text(value, "Unidade").lower()
+        if unit not in LIST_ITEM_ALLOWED_UNITS:
+            raise ValueError("Unidade do item inválida")
+        return unit
+
+    @field_validator("suggested_value")
+    @classmethod
+    def validate_suggested_value(cls, value: float) -> float:
+        if float(value) < 0:
+            raise ValueError("Valor sugerido deve ser maior ou igual a zero")
+        return float(value)
+
+    @field_validator("notes")
+    @classmethod
+    def normalize_notes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class ListItemUpdateRequest(ListItemCreateRequest):
+    pass
+
+
+class ListToggleAcquiredRequest(BaseModel):
+    acquired: bool
+
+
+class ListItemResponse(BaseModel):
+    id: int
+    workspace_id: int
+    list_id: int
+    name: str
+    quantity: float
+    unit: str = "un"
+    suggested_value: float
+    total_value: float
+    acquired: bool
+    completion_date: str | None = None
+    notes: str | None = None
+    sort_order: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ListResponse(BaseModel):
+    id: int
+    workspace_id: int
+    name: str
+    type: str
+    description: str | None = None
+    status: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    summary: ListSummaryResponse = Field(default_factory=ListSummaryResponse)
+
+
+class ListDetailResponse(ListResponse):
+    items: list[ListItemResponse] = Field(default_factory=list)
