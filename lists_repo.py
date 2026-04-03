@@ -56,6 +56,15 @@ def _exec(conn, query: str, params: tuple | list | None = None, rewrite_scope: b
     return conn.execute(q, tuple(params or ()))
 
 
+def _insert_and_get_id(conn, insert_sql: str, params: tuple | list | None = None) -> int:
+    if getattr(conn, "_use_postgres", False):
+        row = _exec(conn, insert_sql.rstrip().rstrip(";") + "\nRETURNING id", params).fetchone()
+        return int(row["id"]) if row else 0
+    _exec(conn, insert_sql, params)
+    row = _exec(conn, "SELECT last_insert_rowid() AS id").fetchone()
+    return int(row["id"]) if row else 0
+
+
 def _now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -201,7 +210,7 @@ def create_list(
     uid = _uid(user_id)
     now = _now_iso()
     conn = get_conn()
-    cur = _exec(
+    new_id = _insert_and_get_id(
         conn,
         """
         INSERT INTO lists(workspace_id, name, type, description, status, created_at, updated_at)
@@ -217,7 +226,6 @@ def create_list(
             now,
         ),
     )
-    new_id = int(cur.lastrowid or 0)
     item = _list_row_with_summary(conn, new_id, uid) if new_id else None
     conn.commit()
     conn.close()
@@ -355,7 +363,7 @@ def create_list_item(
     total_value = qty * suggested
     now = _now_iso()
     final_sort_order = int(sort_order) if sort_order is not None else _next_sort_order(conn, int(list_id), uid)
-    cur = _exec(
+    new_id = _insert_and_get_id(
         conn,
         """
         INSERT INTO list_items(
@@ -378,7 +386,6 @@ def create_list_item(
             now,
         ),
     )
-    new_id = int(cur.lastrowid or 0)
     item = get_item(new_id, user_id=user_id, _conn=conn, _scope_id=uid) if new_id else None
     conn.commit()
     conn.close()
