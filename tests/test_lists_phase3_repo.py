@@ -155,6 +155,31 @@ class ListsPhase3RepoTests(unittest.TestCase):
         self.assertEqual(0.0, detail["summary"]["completion_pct"])
         self.assertEqual(60.0, detail["summary"]["estimated_total"])
 
+    def test_clone_list_copies_items_and_resets_operational_state(self):
+        created = lists_repo.create_list("Higiene", "Mercado", "Meses ímpares", user_id=1)
+        item_a = lists_repo.create_list_item(created["id"], "Sabonete", 3, 4.5, "banho", 1, unit="un", user_id=1)
+        item_b = lists_repo.create_list_item(created["id"], "Shampoo", 1, 18.0, sort_order=2, unit="un", user_id=1)
+        lists_repo.toggle_list_item_acquired(item_a["id"], True, user_id=1)
+        lists_repo.archive_list(created["id"], user_id=1)
+
+        cloned = lists_repo.clone_list(created["id"], user_id=1)
+
+        self.assertIsNotNone(cloned)
+        self.assertEqual("Cópia de Higiene", cloned["name"])
+        self.assertEqual("Mercado", cloned["type"])
+        self.assertEqual("Meses ímpares", cloned["description"])
+        self.assertEqual("ativa", cloned["status"])
+        self.assertEqual(2, cloned["summary"]["total_items"])
+        self.assertEqual(0, cloned["summary"]["acquired_items"])
+        self.assertEqual(2, cloned["summary"]["pending_items"])
+        self.assertEqual(31.5, cloned["summary"]["estimated_total"])
+
+        detail = lists_repo.get_list_detail(cloned["id"], user_id=1)
+        self.assertEqual(2, len(detail["items"]))
+        self.assertTrue(all(not bool(item["acquired"]) for item in detail["items"]))
+        self.assertTrue(all(item["completion_date"] is None for item in detail["items"]))
+        self.assertEqual([1, 2], [int(item["sort_order"]) for item in detail["items"]])
+
 
 if __name__ == "__main__":
     unittest.main()

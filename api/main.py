@@ -2666,6 +2666,18 @@ def archive_list(
     return item
 
 
+@app.post("/lists/{list_id}/clone", response_model=ListResponse)
+def clone_list(
+    list_id: int,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    item = lists_repo.clone_list(list_id, user_id=uid)
+    if not item:
+        raise HTTPException(status_code=404, detail="Lista não encontrada")
+    return item
+
+
 @app.post("/lists/{list_id}/items", response_model=ListItemResponse)
 def create_list_item(
     list_id: int,

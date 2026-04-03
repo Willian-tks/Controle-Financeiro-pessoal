@@ -284,6 +284,79 @@ def archive_list(list_id: int, user_id: int | None = None) -> dict | None:
     return item
 
 
+def clone_list(list_id: int, user_id: int | None = None) -> dict | None:
+    uid = _uid(user_id)
+    now = _now_iso()
+    conn = get_conn()
+    source = _list_row_with_summary(conn, int(list_id), uid)
+    if not source:
+        conn.close()
+        return None
+
+    cloned_list_id = _insert_and_get_id(
+        conn,
+        """
+        INSERT INTO lists(workspace_id, name, type, description, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            uid,
+            f"Cópia de {str(source['name']).strip()}",
+            str(source["type"]).strip(),
+            str(source.get("description") or "").strip() or None,
+            "ativa",
+            now,
+            now,
+        ),
+    )
+    if not cloned_list_id:
+        conn.close()
+        return None
+
+    rows = _exec(
+        conn,
+        """
+        SELECT name, quantity, unit, suggested_value, notes, sort_order
+        FROM list_items
+        WHERE list_id = ? AND workspace_id = ?
+        ORDER BY sort_order ASC, id ASC
+        """,
+        (int(list_id), uid),
+    ).fetchall()
+    for row in rows:
+        item = dict(row)
+        qty = float(item.get("quantity") or 0.0)
+        suggested = float(item.get("suggested_value") or 0.0)
+        _exec(
+            conn,
+            """
+            INSERT INTO list_items(
+                workspace_id, list_id, name, quantity, unit, suggested_value, total_value,
+                acquired, completion_date, notes, sort_order, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, NULL, ?, ?, ?, ?)
+            """,
+            (
+                uid,
+                cloned_list_id,
+                str(item.get("name") or "").strip(),
+                qty,
+                str(item.get("unit") or "un").strip().lower() or "un",
+                suggested,
+                qty * suggested,
+                str(item.get("notes") or "").strip() or None,
+                int(item.get("sort_order") or 0),
+                now,
+                now,
+            ),
+        )
+
+    cloned = _list_row_with_summary(conn, cloned_list_id, uid)
+    conn.commit()
+    conn.close()
+    return cloned
+
+
 def delete_list(list_id: int, user_id: int | None = None) -> int:
     uid = _uid(user_id)
     conn = get_conn()

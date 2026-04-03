@@ -38,6 +38,7 @@ import {
   createListItem,
   createTransaction,
   createList,
+  cloneList,
   deleteCard,
   deleteAccount,
   deleteCategory,
@@ -3518,9 +3519,35 @@ export default function App() {
     }
   }
 
+  async function onCloneListCard(item) {
+    if (!canAddContas) {
+      setListsMsg("Sem permissão para clonar listas.");
+      return;
+    }
+    const id = String(item?.id || "").trim();
+    if (!id) return;
+    try {
+      const cloned = await withPendingAction(`cloneList-${id}`, async () => cloneList(id));
+      await reloadLists();
+      if (cloned?.id) {
+        await loadListDetail(cloned.id, { silentSuccess: true });
+      }
+      showGlobalSuccess("Lista clonada.");
+    } catch (err) {
+      setListsMsg(String(err.message || err));
+    }
+  }
+
   async function onOpenListCard(item) {
     const id = String(item?.id || "").trim();
     if (!id) return;
+    if (selectedListId === id && selectedListDetail) {
+      setSelectedListId("");
+      setSelectedListDetail(null);
+      setListDetailMsg("");
+      resetListItemForm();
+      return;
+    }
     try {
       await withPendingAction(`openList-${id}`, async () => loadListDetail(id, { silentSuccess: true }));
     } catch (err) {
@@ -7091,10 +7118,15 @@ export default function App() {
                   </div>
                   <div className="lists-card-actions">
                     <button type="button" className="tx-action-primary" onClick={() => onOpenListCard(item)} disabled={isPendingAction(`openList-${item.id}`)}>
-                      {isPendingAction(`openList-${item.id}`) ? "Abrindo..." : "Abrir"}
+                      {isPendingAction(`openList-${item.id}`)
+                        ? (selectedListId === String(item.id) && selectedListDetail ? "Ocultando..." : "Abrindo...")
+                        : (selectedListId === String(item.id) && selectedListDetail ? "Ocultar" : "Abrir")}
                     </button>
                     <button type="button" className="tx-action-neutral" onClick={() => onEditListCard(item)} disabled={!canEditContas}>
                       Editar
+                    </button>
+                    <button type="button" className="tx-action-neutral" onClick={() => onCloneListCard(item)} disabled={!canAddContas || isPendingAction(`cloneList-${item.id}`)}>
+                      {isPendingAction(`cloneList-${item.id}`) ? "Clonando..." : "Clonar"}
                     </button>
                     <button type="button" className="tx-action-neutral" onClick={() => onArchiveListCard(item)} disabled={!canEditContas || item.status === "arquivada" || isPendingAction(`archiveList-${item.id}`)}>
                       {isPendingAction(`archiveList-${item.id}`) ? "Arquivando..." : "Arquivar"}

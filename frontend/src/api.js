@@ -268,6 +268,13 @@ export function archiveList(id) {
   });
 }
 
+export function cloneList(id) {
+  return req(`/lists/${id}/clone`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export function createListItem(listId, payload) {
   return req(`/lists/${listId}/items`, {
     method: "POST",

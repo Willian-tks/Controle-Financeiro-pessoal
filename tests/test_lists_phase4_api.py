@@ -128,6 +128,22 @@ class ListsPhase4ApiTests(unittest.TestCase):
         self.assertEqual(200, archive_resp.status_code, archive_resp.text)
         self.assertEqual("arquivada", archive_resp.json()["status"])
 
+        clone_resp = self.client.post(f"/lists/{list_id}/clone", headers=headers)
+        self.assertEqual(200, clone_resp.status_code, clone_resp.text)
+        cloned = clone_resp.json()
+        self.assertEqual("Cópia de Compras do mês", cloned["name"])
+        self.assertEqual("ativa", cloned["status"])
+        self.assertEqual(1, cloned["summary"]["total_items"])
+        self.assertEqual(0, cloned["summary"]["acquired_items"])
+        self.assertEqual(1, cloned["summary"]["pending_items"])
+
+        cloned_detail_resp = self.client.get(f"/lists/{cloned['id']}", headers=headers)
+        self.assertEqual(200, cloned_detail_resp.status_code, cloned_detail_resp.text)
+        cloned_detail = cloned_detail_resp.json()
+        self.assertEqual(1, len(cloned_detail["items"]))
+        self.assertFalse(cloned_detail["items"][0]["acquired"])
+        self.assertIsNone(cloned_detail["items"][0]["completion_date"])
+
     def test_lists_are_isolated_by_workspace(self):
         owner_headers = self._headers(1, "owner@example.com", 101)
         other_headers = self._headers(2, "other@example.com", 202)
