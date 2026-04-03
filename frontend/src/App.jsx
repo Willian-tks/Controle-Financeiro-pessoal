@@ -1152,6 +1152,7 @@ export default function App() {
   const investReloadSeqRef = useRef(0);
   const investQuoteAutoRunRef = useRef("");
   const globalActionNoticeTimeoutRef = useRef(null);
+  const listFormCardRef = useRef(null);
 
   function clearInvestState() {
     setInvestMeta({ asset_classes: [], asset_sectors: [], income_types: [] });
@@ -3473,6 +3474,11 @@ export default function App() {
     setListFormDescription(String(item?.description || ""));
     setListFormStatus(String(item?.status || "ativa"));
     setListsMsg("");
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        listFormCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
   }
 
   async function onArchiveListCard(item) {
@@ -6991,15 +6997,35 @@ export default function App() {
 
         {page === "Listas" && canViewContas ? (
           <>
-            <section className="card">
+            <section ref={listFormCardRef} className={`card ${listFormId ? "lists-form-card editing" : "lists-form-card"}`}>
               <div className="quote-section-head">
                 <div>
                   <h4>{listFormId ? "Editar lista" : "Nova Lista"}</h4>
                   <p className="tx-helper">
-                    Crie e organize listas simples por workspace, com resumo automático de progresso e valor estimado.
+                    {listFormId
+                      ? "Você está editando uma lista existente. Revise os campos abaixo e salve quando terminar."
+                      : "Crie e organize listas simples por workspace, com resumo automático de progresso e valor estimado."}
                   </p>
                 </div>
               </div>
+              {listFormId ? (
+                <div className="lists-form-mode-banner">
+                  <div>
+                    <strong>Modo de edição ativo</strong>
+                    <p className="tx-helper">
+                      Lista selecionada: <b>{listFormName || "Sem nome"}</b>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="tx-action-neutral"
+                    onClick={resetListForm}
+                    disabled={isPendingAction("createList") || isPendingAction("updateList")}
+                  >
+                    Cancelar edição
+                  </button>
+                </div>
+              ) : null}
               <form className="tx-form" onSubmit={onSubmitListForm}>
                 <input
                   type="text"
@@ -7034,7 +7060,7 @@ export default function App() {
                     : (listFormId ? "Atualizar lista" : "Criar lista")}
                 </button>
                 <button type="button" className="tx-action-neutral" onClick={resetListForm} disabled={isPendingAction("createList") || isPendingAction("updateList")}>
-                  Limpar formulário
+                  {listFormId ? "Cancelar edição" : "Limpar formulário"}
                 </button>
               </form>
             </section>
@@ -7085,7 +7111,7 @@ export default function App() {
 
             <section className="cards lists-card-grid">
               {(lists || []).map((item) => (
-                <article key={item.id} className={`card lists-card ${selectedListId === String(item.id) ? "selected" : ""}`}>
+                <article key={item.id} className={`card lists-card ${selectedListId === String(item.id) ? "selected" : ""} ${listFormId === String(item.id) ? "editing" : ""}`}>
                   <div className="lists-card-top">
                     <div>
                       <h3>{item.name}</h3>
@@ -7122,8 +7148,8 @@ export default function App() {
                         ? (selectedListId === String(item.id) && selectedListDetail ? "Ocultando..." : "Abrindo...")
                         : (selectedListId === String(item.id) && selectedListDetail ? "Ocultar" : "Abrir")}
                     </button>
-                    <button type="button" className="tx-action-neutral" onClick={() => onEditListCard(item)} disabled={!canEditContas}>
-                      Editar
+                    <button type="button" className={`tx-action-neutral ${listFormId === String(item.id) ? "is-editing" : ""}`} onClick={() => onEditListCard(item)} disabled={!canEditContas}>
+                      {listFormId === String(item.id) ? "Em edição" : "Editar"}
                     </button>
                     <button type="button" className="tx-action-neutral" onClick={() => onCloneListCard(item)} disabled={!canAddContas || isPendingAction(`cloneList-${item.id}`)}>
                       {isPendingAction(`cloneList-${item.id}`) ? "Clonando..." : "Clonar"}

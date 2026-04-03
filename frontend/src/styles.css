@@ -589,9 +589,63 @@ body {
   gap: 14px;
 }
 
+.lists-form-card {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.lists-form-card.editing {
+  border-color: #6fb9ff;
+  box-shadow: 0 0 0 1px rgba(111, 185, 255, 0.28), 0 12px 30px rgba(9, 24, 61, 0.14);
+  background:
+    radial-gradient(circle at top right, rgba(111, 185, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #fcfdff 0%, #f5f9ff 100%);
+}
+
+.lists-form-mode-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(7, 31, 79, 0.58);
+  border: 1px solid rgba(84, 162, 235, 0.34);
+}
+
+.lists-form-mode-banner strong {
+  color: #eff7ff;
+}
+
+.lists-form-mode-banner .tx-helper {
+  margin: 4px 0 0;
+  color: #d3e5ff;
+}
+
+.lists-form-mode-banner .tx-helper b {
+  color: #ffffff;
+}
+
+.lists-form-mode-banner .tx-action-neutral {
+  min-width: 150px;
+  border-radius: 10px;
+  border: 1px solid #cddbef;
+  padding: 10px 12px;
+  min-height: 42px;
+  font-weight: 700;
+  background: #eef4fb;
+  border-color: #cddbef;
+  color: #214267;
+}
+
 .lists-card.selected {
   border-color: #6fb9ff;
   box-shadow: 0 0 0 1px rgba(111, 185, 255, 0.25);
+}
+
+.lists-card.editing {
+  border-color: #8ec8ff;
+  box-shadow: 0 0 0 1px rgba(142, 200, 255, 0.28), 0 14px 28px rgba(12, 25, 58, 0.14);
 }
 
 .lists-card-top {
@@ -721,6 +775,12 @@ body {
   background: #eef4fb;
   border-color: #cddbef;
   color: #214267;
+}
+
+.lists-card-actions .tx-action-neutral.is-editing {
+  background: linear-gradient(90deg, #e8f4ff, #dcebff);
+  border-color: #7ab7f0;
+  color: #0f4a7c;
 }
 
 .lists-card-actions .danger {
