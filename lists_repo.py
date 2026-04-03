@@ -201,12 +201,11 @@ def create_list(
     uid = _uid(user_id)
     now = _now_iso()
     conn = get_conn()
-    row = _exec(
+    cur = _exec(
         conn,
         """
         INSERT INTO lists(workspace_id, name, type, description, status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        RETURNING id
         """,
         (
             uid,
@@ -217,8 +216,9 @@ def create_list(
             now,
             now,
         ),
-    ).fetchone()
-    item = _list_row_with_summary(conn, int(row["id"]), uid)
+    )
+    new_id = int(cur.lastrowid or 0)
+    item = _list_row_with_summary(conn, new_id, uid) if new_id else None
     conn.commit()
     conn.close()
     return item or {}
@@ -355,7 +355,7 @@ def create_list_item(
     total_value = qty * suggested
     now = _now_iso()
     final_sort_order = int(sort_order) if sort_order is not None else _next_sort_order(conn, int(list_id), uid)
-    row = _exec(
+    cur = _exec(
         conn,
         """
         INSERT INTO list_items(
@@ -363,7 +363,6 @@ def create_list_item(
             acquired, completion_date, notes, sort_order, created_at, updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, NULL, ?, ?, ?, ?)
-        RETURNING id
         """,
         (
             uid,
@@ -378,8 +377,9 @@ def create_list_item(
             now,
             now,
         ),
-    ).fetchone()
-    item = get_item(int(row["id"]), user_id=user_id, _conn=conn, _scope_id=uid)
+    )
+    new_id = int(cur.lastrowid or 0)
+    item = get_item(new_id, user_id=user_id, _conn=conn, _scope_id=uid) if new_id else None
     conn.commit()
     conn.close()
     return item or {}
