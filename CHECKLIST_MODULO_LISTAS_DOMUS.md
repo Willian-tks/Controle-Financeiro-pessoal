@@ -1,159 +1,72 @@
-# Checklist de Implementação - Módulo `Listas`
+# Checklist de Fechamento - Módulo `Listas`
 
-## Preparação
-- [x] Validar escopo final da V1
-- [x] Confirmar uso exclusivo de `workspace_id`
-- [x] Confirmar que integração financeira fica fora da V1
-- [x] Confirmar nomenclatura final do módulo: `Listas`
+Atualizado em: 2026-04-03
 
-## Banco de Dados
-- [x] Criar tabela `lists`
-- [x] Criar tabela `list_items`
-- [x] Adicionar `workspace_id` nas novas tabelas
-- [x] Adicionar campo `status` em `lists`
-- [x] Adicionar campo `sort_order` em `list_items`
-- [x] Adicionar campo `completion_date` em `list_items`
-- [x] Adicionar índices por `workspace_id`
-- [x] Adicionar índice por `workspace_id + list_id`
-- [x] Validar migração em SQLite
-- [ ] Validar migração em PostgreSQL
+## Contexto
 
-## Schemas e Validações
-- [x] Criar schema de criação de lista
-- [x] Criar schema de edição de lista
-- [x] Criar schema de criação de item
-- [x] Criar schema de edição de item
-- [x] Validar nome da lista obrigatório
-- [x] Validar tipo obrigatório
-- [x] Validar nome do item obrigatório
-- [x] Validar quantidade maior que zero
-- [x] Validar valor sugerido maior ou igual a zero
-- [x] Validar status permitido: `ativa`, `arquivada`
+Este checklist não cobre mais a construção do MVP.
+Ele existe para fechar a V1 com segurança operacional, validação mínima e documentação coerente.
 
-## Repositório
-- [x] Criar repositório do módulo
-- [x] Implementar criação de lista
-- [x] Implementar edição de lista
-- [x] Implementar exclusão de lista
-- [x] Implementar arquivamento de lista
-- [x] Implementar listagem de listas
-- [x] Implementar busca de lista por id
-- [x] Implementar criação de item
-- [x] Implementar edição de item
-- [x] Implementar exclusão de item
-- [x] Implementar toggle de adquirido
-- [x] Garantir filtro por `workspace_id` em todas as queries
+## 1. Smoke manual local
 
-## Regras de Negócio
-- [x] Calcular `total_value = quantity * suggested_value`
-- [x] Tratar `suggested_value` ausente como `0`
-- [x] Calcular `total_items`
-- [x] Calcular `acquired_items`
-- [x] Calcular `pending_items`
-- [x] Calcular `completion_pct`
-- [x] Calcular `estimated_total`
-- [x] Preencher `completion_date` ao marcar item
-- [x] Limpar `completion_date` ao desmarcar item
-- [x] Garantir ordenação inicial por `sort_order`/criação
+- [ ] abrir a página `Listas`
+- [ ] criar lista
+- [ ] editar lista
+- [ ] excluir lista
+- [ ] arquivar lista
+- [ ] adicionar item
+- [ ] editar item
+- [ ] excluir item
+- [ ] marcar item como adquirido
+- [ ] desmarcar item como adquirido
+- [ ] validar atualização do resumo consolidado
+- [ ] validar busca por nome
+- [ ] validar filtros por tipo e status
+- [ ] validar estado vazio sem listas
+- [ ] validar estado vazio sem itens
+- [ ] validar comportamento básico em mobile
 
-## API
-- [x] Criar `POST /lists`
-- [x] Criar `GET /lists`
-- [x] Criar `GET /lists/{id}`
-- [x] Criar `PUT /lists/{id}`
-- [x] Criar `DELETE /lists/{id}`
-- [x] Criar `PATCH /lists/{id}/archive`
-- [x] Criar `POST /lists/{id}/items`
-- [x] Criar `PUT /items/{id}`
-- [x] Criar `DELETE /items/{id}`
-- [x] Criar `PATCH /items/{id}/toggle-acquired`
-- [x] Retornar resumo consolidado no `GET /lists`
-- [x] Retornar lista + itens + resumo no `GET /lists/{id}`
-- [x] Validar isolamento por workspace nas rotas
+## 2. Compatibilidade de banco
 
-## Frontend - Base
-- [x] Adicionar módulo `Listas` na navegação
-- [x] Adicionar subtítulo da página
-- [x] Criar integrações em `frontend/src/api.js`
-- [x] Criar estados de listas
-- [x] Criar estados de itens
-- [x] Criar estados de filtros e busca
-- [x] Criar estados de loading e mensagens
+- [ ] validar migração em SQLite
+- [ ] validar migração em PostgreSQL
+- [ ] validar CRUD básico em PostgreSQL
+- [ ] validar índices principais do módulo em PostgreSQL
 
-## Frontend - Tela Principal
-- [x] Criar página principal `Listas`
-- [x] Adicionar botão `Nova Lista`
-- [x] Adicionar campo de busca
-- [x] Adicionar filtro por tipo
-- [x] Adicionar filtro por status
-- [x] Renderizar cards de listas
-- [x] Exibir nome da lista
-- [x] Exibir tipo
-- [x] Exibir total de itens
-- [x] Exibir itens concluídos
-- [x] Exibir percentual de progresso
-- [x] Exibir valor total estimado
-- [x] Exibir status
-- [x] Adicionar ação `abrir`
-- [x] Adicionar ação `editar`
-- [x] Adicionar ação `arquivar`
-- [x] Adicionar ação `excluir`
+## 3. Validação automatizada já exigida antes de publicar
 
-## Frontend - Detalhe da Lista
-- [x] Criar página de detalhe
-- [x] Exibir nome da lista
-- [x] Exibir tipo
-- [x] Exibir descrição
-- [x] Exibir status
-- [x] Exibir resumo consolidado
-- [x] Criar tabela de itens
-- [x] Adicionar checkbox de adquirido
-- [x] Exibir nome do item
-- [x] Exibir quantidade
-- [x] Exibir valor sugerido
-- [x] Exibir valor total
-- [x] Exibir observação
-- [x] Adicionar ação de editar item
-- [x] Adicionar ação de excluir item
-- [x] Adicionar ação de marcar/desmarcar adquirido
+- [x] rodar suíte automatizada relevante do projeto
+- [x] confirmar que o módulo `Listas` segue coberto por testes de schema, repositório e API
+- [x] rodar build do frontend
 
-## UX e Visual
-- [x] Seguir padrão visual atual do DOMUS
-- [x] Ajustar cards para desktop e mobile
-- [x] Criar estado vazio sem listas
-- [x] Criar estado vazio sem itens
-- [x] Padronizar textos e labels
-- [x] Padronizar mensagens de sucesso
-- [x] Padronizar mensagens de erro
+## 4. Documentação mínima
 
-## Testes
-- [x] Testar criação de lista
-- [x] Testar edição de lista
-- [x] Testar exclusão de lista
-- [x] Testar arquivamento de lista
-- [x] Testar criação de item
-- [x] Testar edição de item
-- [x] Testar exclusão de item
-- [x] Testar toggle de adquirido
-- [x] Testar cálculo de `total_value`
-- [x] Testar cálculo de consolidado
-- [x] Testar lista sem itens
-- [x] Testar isolamento por workspace
-- [x] Testar payload inválido na API
-- [ ] Rodar smoke test manual no frontend
+- [x] revisar `PROPOSTA_MODULO_LISTAS_DOMUS.md`
+- [x] revisar `BACKLOG_MODULO_LISTAS_DOMUS.md`
+- [x] alinhar este checklist com o estado real do módulo
+- [ ] registrar qualquer impacto operacional de deploy, se houver
+- [x] confirmar que a documentação não deixa pendências já concluídas como se ainda fossem escopo aberto
 
-## Deploy e Validação Final
-- [x] Validar localmente
-- [x] Rodar build do frontend
-- [x] Rodar testes automatizados
-- [x] Revisar impacto no VPS
-- [ ] Publicar no Git
-- [ ] Fazer deploy no VPS
-- [ ] Validar módulo no ambiente publicado
-- [ ] Confirmar que não houve regressão em outros módulos
+## 5. Publicação e rollout
+
+- [ ] publicar no Git
+- [ ] executar deploy no VPS conforme `VPS_LOCALWEB_DEPLOY.md`
+- [ ] validar carregamento do frontend publicado
+- [ ] validar endpoints principais do módulo publicado
+- [ ] executar smoke pós-deploy do fluxo principal de `Listas`
+
+## 6. Checagem de regressão
+
+- [ ] confirmar ausência de regressão visível em `Dashboard`
+- [ ] confirmar ausência de regressão visível em `Lançamentos`
+- [ ] confirmar ausência de regressão visível em `Investimentos`
+- [ ] confirmar ausência de regressão visível em navegação/autenticação
 
 ## Gate antes de usuário real
-- [ ] Executar smoke manual local do fluxo `Listas`
-- [ ] Fazer deploy controlado no VPS
-- [ ] Validar smoke pós-deploy no VPS
-- [ ] Liberar para teste real de usuário somente após os itens acima
+
+- [ ] smoke manual local concluído
+- [ ] validação em PostgreSQL concluída
+- [ ] deploy controlado concluído
+- [ ] smoke pós-deploy concluído
+- [ ] regressões principais não detectadas
+- [ ] documentação mínima coerente com o estado publicado

@@ -1,6 +1,12 @@
-# Proposta de Implementação: Módulo `Listas`
+# Proposta Base da V1 - Módulo `Listas`
+
+Status documental em 2026-04-03:
+- a V1 descrita neste documento já foi implementada
+- este arquivo permanece como referência funcional e de escopo
+- as pendências remanescentes estão concentradas em validação final, PostgreSQL e rollout
 
 ## Objetivo
+
 Criar no DOMUS um módulo simples de organização pessoal chamado `Listas`, com foco em planejamento prático do dia a dia.
 
 O módulo deve permitir que o usuário:
@@ -14,6 +20,7 @@ O módulo deve permitir que o usuário:
 - visualize progresso da lista
 
 ## Posicionamento no DOMUS
+
 Este módulo deve nascer como uma funcionalidade de apoio à organização pessoal, sem competir com o núcleo financeiro do sistema.
 
 A proposta para a primeira versão é:
@@ -25,6 +32,7 @@ A proposta para a primeira versão é:
 ## Escopo aprovado para a V1
 
 ### Funcionalidades da lista
+
 - criar lista
 - editar lista
 - excluir lista
@@ -33,6 +41,7 @@ A proposta para a primeira versão é:
 - abrir detalhe da lista
 
 ### Funcionalidades dos itens
+
 - adicionar item
 - editar item
 - excluir item
@@ -40,10 +49,12 @@ A proposta para a primeira versão é:
 - desmarcar item como adquirido
 
 ### Visões do módulo
+
 - página principal de listas
 - página de detalhe da lista
 
 ### Resumos e indicadores
+
 - total de itens
 - itens adquiridos
 - itens pendentes
@@ -51,7 +62,9 @@ A proposta para a primeira versão é:
 - valor total estimado
 
 ## Fora da V1
+
 Os itens abaixo não entram na primeira entrega:
+
 - duplicar lista
 - orçamento previsto
 - data alvo
@@ -67,6 +80,7 @@ Os itens abaixo não entram na primeira entrega:
 ## Ajustes recomendados para o DOMUS
 
 ### 1. Escopo por `workspace_id`
+
 No DOMUS, o módulo deve usar `workspace_id` como padrão de escopo.
 
 Não adotar `user_id ou workspace_id` como decisão em aberto.
@@ -77,6 +91,7 @@ Padrão recomendado:
 - consultas sempre respeitando o contexto multiworkspace já usado no sistema
 
 ### 2. Campo de ordenação
+
 Mesmo sem drag and drop na V1, vale preparar a estrutura para ordenar itens.
 
 Adicionar no item:
@@ -88,6 +103,7 @@ Benefício:
 - facilita evolução posterior
 
 ### 3. `valor_total` como cálculo consistente
+
 Para simplificar backend e frontend, tratar `valor_total` como valor calculado sempre numérico.
 
 Regra:
@@ -100,6 +116,7 @@ Benefício:
 - UI mais previsível
 
 ### 4. Registrar `data_conclusao`
+
 Mesmo que a data não apareça na interface da V1, ela deve ser persistida.
 
 Regra:
@@ -111,6 +128,7 @@ Benefício:
 - pode ser útil em relatórios depois
 
 ### 5. Camadas do projeto
+
 Seguir o padrão atual do DOMUS, mas sem criar camadas artificiais.
 
 Estrutura sugerida:
@@ -128,6 +146,7 @@ Camada `service`:
 ## Modelo funcional da V1
 
 ### Tipos de lista
+
 Tipos sugeridos:
 - Mercado
 - Farmácia
@@ -137,11 +156,13 @@ Tipos sugeridos:
 - Outros
 
 ### Status de lista
+
 Status aceitos:
 - ativa
 - arquivada
 
 ### Campos da lista
+
 - `id`
 - `workspace_id`
 - `name`
@@ -152,12 +173,14 @@ Status aceitos:
 - `updated_at`
 
 ### Campos do item
+
 - `id`
 - `list_id`
 - `name`
 - `quantity`
 - `suggested_value`
 - `total_value`
+- `unit`
 - `acquired`
 - `completion_date` opcional
 - `notes` opcional
@@ -168,10 +191,12 @@ Status aceitos:
 ## Regras de negócio
 
 ### Cálculo do item
+
 - `total_value = quantity * suggested_value`
 - se `suggested_value` não for informado, usar `0`
 
 ### Consolidado da lista
+
 Cada lista deve retornar:
 - `total_items`
 - `acquired_items`
@@ -188,10 +213,12 @@ Se a lista não tiver itens:
 - `completion_pct = 0`
 
 ### Marcação do item
+
 - ao marcar adquirido: `acquired = true` e preencher `completion_date`
 - ao desmarcar: `acquired = false` e limpar `completion_date`
 
 ### Validações
+
 - nome da lista obrigatório
 - tipo obrigatório
 - nome do item obrigatório
@@ -201,6 +228,7 @@ Se a lista não tiver itens:
 ## Estrutura técnica sugerida
 
 ### Banco
+
 Tabela `lists`
 - `id`
 - `workspace_id`
@@ -219,6 +247,7 @@ Tabela `list_items`
 - `quantity`
 - `suggested_value`
 - `total_value`
+- `unit`
 - `acquired`
 - `completion_date`
 - `notes`
@@ -227,6 +256,7 @@ Tabela `list_items`
 - `updated_at`
 
 ### Índices sugeridos
+
 - índice por `workspace_id` em `lists`
 - índice por `workspace_id, list_id` em `list_items`
 - índice por `workspace_id, status` em `lists`
@@ -235,6 +265,7 @@ Tabela `list_items`
 ## API recomendada
 
 ### Listas
+
 - `POST /lists`
 - `GET /lists`
 - `GET /lists/{id}`
@@ -243,6 +274,7 @@ Tabela `list_items`
 - `PATCH /lists/{id}/archive`
 
 ### Itens
+
 - `POST /lists/{id}/items`
 - `PUT /items/{id}`
 - `DELETE /items/{id}`
@@ -251,6 +283,7 @@ Tabela `list_items`
 ## Respostas esperadas
 
 ### `GET /lists`
+
 Cada lista deve retornar:
 - dados básicos
 - resumo consolidado
@@ -263,6 +296,7 @@ Exemplo de resumo:
 - `estimated_total`
 
 ### `GET /lists/{id}`
+
 Deve retornar:
 - dados da lista
 - itens da lista
@@ -271,6 +305,7 @@ Deve retornar:
 ## Interface proposta
 
 ### Página principal `Listas`
+
 Elementos:
 - título da página
 - botão `Nova Lista`
@@ -297,6 +332,7 @@ Ações por card:
 - excluir
 
 ### Página de detalhe da lista
+
 Blocos:
 - cabeçalho com nome, tipo, descrição e status
 - resumo da lista
@@ -318,7 +354,10 @@ Ações por item:
 
 ## Ordem recomendada de implementação
 
+As etapas abaixo foram usadas como base da execução do MVP e não representam mais backlog aberto.
+
 ### Etapa 1. Banco e backend base
+
 - criar tabelas
 - criar schemas
 - criar repository
@@ -327,6 +366,7 @@ Ações por item:
 - devolver consolidado pelo backend
 
 ### Etapa 2. Página principal
+
 - rota/menu do módulo
 - listagem
 - filtros
@@ -334,18 +374,21 @@ Ações por item:
 - cards com resumo
 
 ### Etapa 3. Detalhe da lista
+
 - cabeçalho da lista
 - resumo
 - CRUD de itens
 - toggle de adquirido
 
 ### Etapa 4. Refinos
+
 - mensagens de sucesso/erro
 - estados vazios
 - pequenos ajustes visuais
 - smoke test manual
 
 ## Critérios de aceite da V1
+
 - usuário cria uma lista
 - usuário adiciona itens
 - o total estimado é calculado corretamente
@@ -356,6 +399,7 @@ Ações por item:
 - interface fica consistente com o padrão visual do DOMUS
 
 ## Evolução futura
+
 Depois da V1, o módulo pode evoluir para:
 - wishlist/desejos mais rica
 - valor real pago
@@ -365,7 +409,8 @@ Depois da V1, o módulo pode evoluir para:
 - recorrência
 
 ## Recomendação final
-Seguir esta proposta como base oficial de implementação.
+
+Seguir esta proposta como base oficial de escopo funcional da V1.
 
 Ela mantém o módulo:
 - útil desde a primeira versão
