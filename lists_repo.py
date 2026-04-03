@@ -1,6 +1,7 @@
 from datetime import datetime
 import re
 from contextvars import ContextVar
+from datetime import datetime
 
 from db import get_conn
 from tenant import get_current_user_id, get_current_workspace_id
@@ -73,6 +74,9 @@ def _normalize_list_row(row) -> dict | None:
     if not row:
         return None
     item = dict(row)
+    for key in ("created_at", "updated_at"):
+        if isinstance(item.get(key), datetime):
+            item[key] = item[key].strftime("%Y-%m-%d %H:%M:%S")
     item.setdefault("description", None)
     item["status"] = str(item.get("status") or "ativa").strip().lower()
     item["summary"] = _empty_summary()
@@ -83,6 +87,9 @@ def _normalize_item_row(row) -> dict | None:
     if not row:
         return None
     item = dict(row)
+    for key in ("created_at", "updated_at", "completion_date"):
+        if isinstance(item.get(key), datetime):
+            item[key] = item[key].strftime("%Y-%m-%d %H:%M:%S")
     item["quantity"] = float(item.get("quantity") or 0.0)
     item["unit"] = str(item.get("unit") or "un").strip().lower() or "un"
     item["suggested_value"] = float(item.get("suggested_value") or 0.0)
