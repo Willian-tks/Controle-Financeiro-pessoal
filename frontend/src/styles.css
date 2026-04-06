@@ -3244,12 +3244,12 @@ body {
   will-change: transform, opacity, filter;
 }
 
-.wallet-card.wallet-model-black {
-  background-size: 148% 158%;
-  background-position: 50% 50%;
-}
-
-.wallet-card.wallet-model-vermelho {
+.wallet-card.wallet-model-black,
+.wallet-card.wallet-model-vermelho,
+.wallet-card.wallet-model-orange,
+.wallet-card.wallet-model-gold,
+.wallet-card.wallet-model-platinum,
+.wallet-card.wallet-model-violeta {
   background-size: 148% 158%;
   background-position: 50% 50%;
 }
