@@ -717,6 +717,12 @@ function getCardBackground(model) {
   return map[normalizeText(model)] || cardModelBlack;
 }
 
+function getCardModelClass(model) {
+  const normalized = normalizeText(model) || "black";
+  const allowed = new Set(["black", "gold", "platinum", "orange", "violeta", "vermelho"]);
+  return allowed.has(normalized) ? `wallet-model-${normalized}` : "wallet-model-black";
+}
+
 function getCardBgClass(brand) {
   const n = normalizeText(brand);
   if (n.includes("master")) return "brand-master";
@@ -2036,6 +2042,45 @@ export default function App() {
         : 0,
     [activeCardCurrentInvoice]
   );
+  const cardInvoiceSummaryById = useMemo(() => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const map = new Map();
+    for (const card of creditCards) {
+      const rows = (cardInvoices || [])
+        .filter(
+          (inv) =>
+            Number(inv.card_id) === Number(card.id) &&
+            String(inv.status || "").toUpperCase() === "OPEN"
+        )
+        .sort((a, b) => String(a.due_date || "").localeCompare(String(b.due_date || "")));
+      const current = rows[0] || null;
+      if (!current) {
+        map.set(Number(card.id), {
+          tone: "idle",
+          label: "Sem fatura",
+          remainingAmount: 0,
+          paidAmount: 0,
+          totalAmount: 0,
+          dueDate: "",
+        });
+        continue;
+      }
+      const totalAmount = Number(current.total_amount || 0);
+      const paidAmount = Number(current.paid_amount || 0);
+      const remainingAmount = Math.max(0, totalAmount - paidAmount);
+      const isLate = String(current.due_date || "") < todayIso;
+      const isPartial = paidAmount > 0 && remainingAmount > 0;
+      map.set(Number(card.id), {
+        tone: isLate ? "late" : isPartial ? "partial" : "open",
+        label: isLate ? "Vencida" : isPartial ? "Aberta" : "Em aberto",
+        remainingAmount,
+        paidAmount,
+        totalAmount,
+        dueDate: String(current.due_date || ""),
+      });
+    }
+    return map;
+  }, [cardInvoices, creditCards]);
   const invoiceCardFilterOptions = useMemo(() => {
     const map = new Map();
     for (const inv of cardInvoices || []) {
@@ -5589,6 +5634,7 @@ export default function App() {
           <>
             <section className="card dash-filter-card">
               <h3>Filtros</h3>
+              <p className="tx-helper">Ajuste período, conta e visão para ler o painel conforme o recorte operacional que você quer acompanhar agora.</p>
               <form className="tx-form dash-filter-form" onSubmit={onApplyDashboardFilters}>
                 <input
                   type="date"
@@ -5615,7 +5661,11 @@ export default function App() {
                 </select>
                 <button type="submit">Aplicar filtros</button>
               </form>
-              {dashMsg ? <p>{dashMsg}</p> : null}
+              {dashMsg ? (
+                <div className="status-banner dash-inline-banner">
+                  <p className="status-msg">{dashMsg}</p>
+                </div>
+              ) : null}
             </section>
 
             <section className="dash-kpis">
@@ -5669,20 +5719,28 @@ export default function App() {
 
               <article className="card dash-list-card dash-saldo-card">
                 <h3>Saldo de contas</h3>
-                <ul className="dash-list">
-                  {accountsTop.map((r) => (
-                    <li key={r.account}>
-                      <span className="dash-row-label">
-                        {getBankLogo(r.account) ? (
-                          <img src={getBankLogo(r.account)} alt="" className="dash-row-icon" />
-                        ) : null}
-                        {r.account}
-                        {r.fixedManual ? <em className="dash-fixed-badge">fixa</em> : null}
-                      </span>
-                      <strong>{brl.format(normalizeMoneyValue(r.saldo))}</strong>
-                    </li>
-                  ))}
-                </ul>
+                <p className="tx-helper">Leitura rápida das contas com maior saldo atual dentro do filtro aplicado.</p>
+                {accountsTop.length ? (
+                  <ul className="dash-list">
+                    {accountsTop.map((r) => (
+                      <li key={r.account}>
+                        <span className="dash-row-label">
+                          {getBankLogo(r.account) ? (
+                            <img src={getBankLogo(r.account)} alt="" className="dash-row-icon" />
+                          ) : null}
+                          {r.account}
+                          {r.fixedManual ? <em className="dash-fixed-badge">fixa</em> : null}
+                        </span>
+                        <strong>{brl.format(normalizeMoneyValue(r.saldo))}</strong>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="dash-empty">
+                    <h4>Sem saldos para exibir</h4>
+                    <p>Cadastre contas ou ajuste o período para voltar a montar este resumo.</p>
+                  </div>
+                )}
                 <div className="dash-list-total">
                   <span>Total</span>
                   <strong>{brl.format(accountsTotal)}</strong>
@@ -5693,29 +5751,39 @@ export default function App() {
                 {creditCards.length ? (
                   <div className={`dash-wallet-stack ${creditCards.length === 1 ? "single" : ""}`}>
                     {walletVisibleCards.map((card) => (
+                      (() => {
+                        const cardSummary = cardInvoiceSummaryById.get(Number(card.id)) || {
+                          tone: "idle",
+                          label: "Sem fatura",
+                        };
+                        return (
                       <article
-                        className={`wallet-card wallet-card-${card.walletPos}`}
+                        className={`wallet-card wallet-card-${card.walletPos} ${getCardModelClass(card.model || "Black")}`}
                         key={card.id}
                         title={`${card.name} (${card.model || "Black"})`}
                         aria-hidden={card.walletPos !== "active"}
+                        style={card.walletPos === "active" ? { backgroundImage: `url(${getCardBackground(card.model || "Black")})` } : undefined}
                       >
-                        <img
-                          src={getCardBackground(card.model || "Black")}
-                          alt=""
-                          className="wallet-bg"
-                        />
                         <div className="wallet-overlay" />
                         <div className="wallet-content">
-                          <div className="wallet-name">{card.name}</div>
-                          <div className="wallet-brand-line">
-                            <img
-                              src={getCardLogo(card.brand || "Visa")}
-                              alt=""
-                              className="wallet-brand-icon"
-                            />
+                          <div className="wallet-top-row">
+                          </div>
+                          <div className="wallet-bottom-row">
+                            <div className="wallet-name-block">
+                              <div className="wallet-name">{card.name}</div>
+                            </div>
+                            <div className="wallet-brand-line">
+                              <img
+                                src={getCardLogo(card.brand || "Visa")}
+                                alt=""
+                                className="wallet-brand-icon"
+                              />
+                            </div>
                           </div>
                         </div>
                       </article>
+                        );
+                      })()
                     ))}
                     {creditCards.length > 1 ? (
                       <div className="wallet-controls">
@@ -5751,14 +5819,46 @@ export default function App() {
                     ) : null}
                   </div>
                 ) : (
-                  <div className="dash-empty">Sem cartões de crédito</div>
+                  <div className="dash-empty">
+                    <h4>Sem cartões de crédito</h4>
+                    <p>Cadastre um cartão no gerenciador para acompanhar faturas e atalhos de pagamento aqui.</p>
+                  </div>
                 )}
                 <div className="dash-cards-meta">
-                  <h3>Cartões e faturas</h3>
+                  <div className="dash-cards-meta-head">
+                    <h3>Cartões e faturas</h3>
+                    <span className={`wallet-status-pill ${((cardInvoiceSummaryById.get(Number(activeCreditCard?.id || 0)) || {}).tone || "idle")}`}>
+                      {((cardInvoiceSummaryById.get(Number(activeCreditCard?.id || 0)) || {}).label || "Sem fatura")}
+                    </span>
+                  </div>
                   <p className="dash-small">
-                    Vencimento: {activeCardCurrentInvoice?.due_date || "-"} | Cartões crédito: {creditCards.length}
+                    Vencimento: {activeCardCurrentInvoice?.due_date ? formatIsoDatePtBr(activeCardCurrentInvoice.due_date) : "-"} | Fechamento: dia {activeCreditCard?.close_day || (activeCreditCard?.due_day ? Math.max(1, Number(activeCreditCard.due_day) - 5) : "-")}
                   </p>
                   <strong className="dash-hero-value">{brl.format(activeCardCurrentInvoiceAmount)}</strong>
+                  {activeCardCurrentInvoice ? (
+                    <>
+                      <div className="dash-card-bill-meta">
+                        <span>Período {activeCardCurrentInvoice.invoice_period || "-"}</span>
+                        <span>Pago {brl.format(Number(activeCardCurrentInvoice.paid_amount || 0))} de {brl.format(Number(activeCardCurrentInvoice.total_amount || 0))}</span>
+                      </div>
+                      <div className="dash-card-bill-progress" aria-hidden="true">
+                        <div
+                          className="dash-card-bill-progress-bar"
+                          style={{
+                            width: `${Math.max(
+                              0,
+                              Math.min(
+                                100,
+                                Number(activeCardCurrentInvoice.total_amount || 0) > 0
+                                  ? (Number(activeCardCurrentInvoice.paid_amount || 0) / Number(activeCardCurrentInvoice.total_amount || 0)) * 100
+                                  : 0
+                              )
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </>
+                  ) : null}
                   {activeCardCurrentInvoice ? (
                     <button type="button" className="mini-tab active" onClick={() => openPayInvoiceModal(activeCardCurrentInvoice)}>
                       Pagar fatura
@@ -5772,57 +5872,66 @@ export default function App() {
                 <p className="dash-invest-total">
                   Total investido: <strong>{brl.format(Number(investmentTotal || 0))}</strong>
                 </p>
-                <div className="dash-invest-layout">
-                  <ul className="dash-legend">
-                    {investmentRadialData.map((row) => (
-                      <li key={row.name}>
-                        <button
-                          type="button"
-                          className={`dash-legend-link ${dashInvestFocusedClass === row.name ? "active" : ""}`}
-                          onClick={() =>
-                            setDashInvestFocusClass((current) => (current === row.name ? "" : row.name))
-                          }
-                        >
-                          <span className="dot" style={{ background: row.fill, opacity: row.opacity }} />
-                          <span>{row.name}</span>
-                          <strong>{brl.format(row.value)}</strong>
-                          <em>{row.pct.toFixed(0)}%</em>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="dash-donut">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={investmentRadialData}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius="52%"
-                          outerRadius="92%"
-                          paddingAngle={2}
-                          startAngle={90}
-                          endAngle={-270}
-                          shape={InvestmentPieGradient}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    {dashInvestFocusedClass ? (
-                      <div className="dash-donut-center">
-                        <strong>
-                          {brl.format(
-                            Number(investmentRadialData.find((row) => row.name === dashInvestFocusedClass)?.value || 0)
-                          )}
-                        </strong>
-                        <span>{dashInvestFocusedClass}</span>
-                      </div>
-                    ) : null}
+                <p className="tx-helper">Distribuição consolidada por classe para identificar concentração e peso relativo da carteira.</p>
+                {investmentRadialData.length ? (
+                  <div className="dash-invest-layout">
+                    <ul className="dash-legend">
+                      {investmentRadialData.map((row) => (
+                        <li key={row.name}>
+                          <button
+                            type="button"
+                            className={`dash-legend-link ${dashInvestFocusedClass === row.name ? "active" : ""}`}
+                            onClick={() =>
+                              setDashInvestFocusClass((current) => (current === row.name ? "" : row.name))
+                            }
+                          >
+                            <span className="dot" style={{ background: row.fill, opacity: row.opacity }} />
+                            <span>{row.name}</span>
+                            <strong>{brl.format(row.value)}</strong>
+                            <em>{row.pct.toFixed(0)}%</em>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="dash-donut">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={investmentRadialData}
+                            dataKey="value"
+                            nameKey="name"
+                            innerRadius="52%"
+                            outerRadius="92%"
+                            paddingAngle={2}
+                            startAngle={90}
+                            endAngle={-270}
+                            shape={InvestmentPieGradient}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      {dashInvestFocusedClass ? (
+                        <div className="dash-donut-center">
+                          <strong>
+                            {brl.format(
+                              Number(investmentRadialData.find((row) => row.name === dashInvestFocusedClass)?.value || 0)
+                            )}
+                          </strong>
+                          <span>{dashInvestFocusedClass}</span>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="dash-empty">
+                    <h4>Sem posição consolidada</h4>
+                    <p>Cadastre ativos ou atualize preços para montar o resumo visual da carteira.</p>
+                  </div>
+                )}
               </article>
 
               <article className="card dash-list-card dash-expenses-card">
                 <h3>Compromissos do período</h3>
+                <p className="tx-helper">Atalho para abrir os lançamentos pendentes do período e agir direto no operacional.</p>
                 <ul className="dash-list">
                   <li>
                     <button
@@ -5854,7 +5963,17 @@ export default function App() {
               </article>
             </section>
 
-            <Suspense fallback={<section className="card"><p>Carregando gráficos...</p></section>}>
+            <Suspense
+              fallback={(
+                <section className="card dash-list-card">
+                  <h3>Gráficos</h3>
+                  <div className="dash-empty">
+                    <h4>Carregando gráficos</h4>
+                    <p>O painel analítico está sendo preparado com base no filtro atual.</p>
+                  </div>
+                </section>
+              )}
+            >
               <DashboardCharts
                 monthly={dashWealthMonthly}
                 expenses={dashExpenses}
@@ -5866,10 +5985,11 @@ export default function App() {
 
         {page === "Contas" && canViewContas ? (
           <>
-            <section className="card">
+            <section className="card accounts-page-section">
               <h3>Contas cadastradas</h3>
+              <p className="tx-helper">Base cadastral usada no saldo inicial, nos vínculos operacionais e nos filtros das demais rotinas do DOMUS.</p>
               <div className="tx-table-wrap">
-                <table className="tx-table">
+                <table className="tx-table accounts-table">
                   <thead>
                     <tr>
                       <th>ID</th>
@@ -5880,19 +6000,25 @@ export default function App() {
                   <tbody>
                     {accounts.map((a) => (
                       <tr key={a.id}>
-                        <td>{a.id}</td>
-                        <td>{a.name}</td>
+                        <td className="accounts-id-cell">{a.id}</td>
+                        <td className="accounts-name-cell">{a.name}</td>
                         <td>{a.type}</td>
                       </tr>
                     ))}
+                    {!accounts.length ? (
+                      <tr className="tx-empty-row">
+                        <td colSpan={3}>Nenhuma conta cadastrada no workspace atual.</td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>
             </section>
 
-            <section className="card">
+            <section className="card accounts-page-section">
               <h3>Faturas abertas</h3>
-              <div className="tx-recent-filters">
+              <p className="tx-helper">Acompanhe o que ainda está em aberto por período e cartão antes de registrar o pagamento da fatura.</p>
+              <div className="tx-recent-filters accounts-filters">
                 <input
                   type="date"
                   className="invoice-filter-select"
@@ -5917,7 +6043,7 @@ export default function App() {
                 </select>
               </div>
               <div className="tx-table-wrap">
-                <table className="tx-table">
+                <table className="tx-table invoice-table">
                   <thead>
                     <tr>
                       <th>Cartão</th>
@@ -5932,13 +6058,13 @@ export default function App() {
                   <tbody>
                     {openInvoicesVisible.map((i) => (
                       <tr key={i.id}>
-                        <td>{i.card_name}</td>
+                        <td className="invoice-card-cell">{i.card_name}</td>
                         <td>{i.invoice_period}</td>
                         <td>{i.due_date}</td>
-                        <td>{brl.format(Number(i.total_amount || 0))}</td>
-                        <td>{brl.format(Number(i.paid_amount || 0))}</td>
-                        <td>{i.status}</td>
-                        <td>
+                        <td className="invoice-amount-cell">{brl.format(Number(i.total_amount || 0))}</td>
+                        <td className="invoice-paid-cell">{brl.format(Number(i.paid_amount || 0))}</td>
+                        <td><span className="lists-badge">{i.status}</span></td>
+                        <td className="invoice-action-cell">
                           {i.status === "OPEN" && canAddContas ? (
                             <button onClick={() => openPayInvoiceModal(i)}>Pagar fatura</button>
                           ) : (
@@ -5948,7 +6074,7 @@ export default function App() {
                       </tr>
                     ))}
                     {!openInvoicesVisible.length ? (
-                      <tr>
+                      <tr className="tx-empty-row">
                         <td colSpan={7}>Nenhuma fatura aberta para o filtro selecionado.</td>
                       </tr>
                     ) : null}
@@ -5976,15 +6102,18 @@ export default function App() {
             </section>
 
             {manageMsg ? (
-              <section className="card">
-                <p className="status-msg">{manageMsg}</p>
+              <section className="card manager-card manager-message-card">
+                <div className="status-banner">
+                  <p className="status-msg">{manageMsg}</p>
+                </div>
               </section>
             ) : null}
 
             {managerTab === "Cadastro de contas" ? (
               <>
-                <section className="card">
+                <section className="card manager-card">
                   <h3>Nova conta</h3>
+                  <p className="tx-helper">Cadastre contas base do workspace para uso em saldos, lançamentos e vínculos operacionais.</p>
                   {canAddContas ? (
                     <form className="tx-form" onSubmit={onCreateAccount}>
                       <input name="name" type="text" placeholder="Digite o nome da conta" required />
@@ -6008,12 +6137,16 @@ export default function App() {
                       </button>
                     </form>
                   ) : (
-                    <p>Sem permissão para cadastrar contas.</p>
+                    <div className="manager-empty-state">
+                      <h4>Acesso indisponível</h4>
+                      <p>Sem permissão para cadastrar contas.</p>
+                    </div>
                   )}
                 </section>
 
-                <section className="card">
+                <section className="card manager-card">
                   <h3>Gerenciar contas</h3>
+                  <p className="tx-helper">Selecione uma conta existente para ajustar nome, tipo, moeda ou visibilidade no dashboard.</p>
                   <div className="mgr-grid">
                     <select
                       value={accEditId}
@@ -6066,8 +6199,9 @@ export default function App() {
 
             {managerTab === "Cadastro de categorias" ? (
               <>
-                <section className="card">
+                <section className="card manager-card">
                   <h3>Nova categoria</h3>
+                  <p className="tx-helper">Mantenha a classificação de receitas, despesas e transferências consistente entre os lançamentos.</p>
                   {canAddContas ? (
                     <form className="tx-form" onSubmit={onCreateCategory}>
                       <input name="name" type="text" placeholder="Digite o nome da categoria" required />
@@ -6082,12 +6216,16 @@ export default function App() {
                       </button>
                     </form>
                   ) : (
-                    <p>Sem permissão para cadastrar categorias.</p>
+                    <div className="manager-empty-state">
+                      <h4>Acesso indisponível</h4>
+                      <p>Sem permissão para cadastrar categorias.</p>
+                    </div>
                   )}
                 </section>
 
-                <section className="card">
+                <section className="card manager-card">
                   <h3>Gerenciar categorias</h3>
+                  <p className="tx-helper">Revise categorias existentes antes de editar para evitar impacto no histórico já lançado.</p>
                   <div className="mgr-grid">
                     <select
                       value={catEditId}
@@ -6125,8 +6263,9 @@ export default function App() {
 
             {managerTab === "Cadastro cartão de crédito" ? (
               <>
-                <section className="card">
+                <section className="card manager-card">
                   <h3>Cadastro de cartões</h3>
+                  <p className="tx-helper">Cadastre cartões com conta vinculada, fechamento e vencimento para manter faturas e compromissos corretos.</p>
                   {canAddContas ? (
                     <div className="mgr-grid">
                       <input
@@ -6177,12 +6316,16 @@ export default function App() {
                       </button>
                     </div>
                   ) : (
-                    <p>Sem permissão para cadastrar cartões.</p>
+                    <div className="manager-empty-state">
+                      <h4>Acesso indisponível</h4>
+                      <p>Sem permissão para cadastrar cartões.</p>
+                    </div>
                   )}
                 </section>
 
-                <section className="card">
+                <section className="card manager-card">
                   <h3>Cartões cadastrados</h3>
+                  <p className="tx-helper">Atualize os dados do cartão quando houver mudança de vínculo, bandeira, modelo ou calendário da fatura.</p>
                   <div className="mgr-grid">
                     <select value={cardEditId} onChange={(e) => onSelectCardEdit(e.target.value)} disabled={!canEditContas && !canDeleteContas}>
                       <option value="">Selecione um cartão</option>
@@ -6236,15 +6379,20 @@ export default function App() {
                       {isPendingAction("deleteCard") ? "Excluindo..." : "Excluir cartão"}
                     </button>
                   </div>
-                  {cardMsg ? <p>{cardMsg}</p> : null}
+                  {cardMsg ? (
+                    <div className="status-banner">
+                      <p className="status-msg">{cardMsg}</p>
+                    </div>
+                  ) : null}
                 </section>
               </>
             ) : null}
 
             {managerTab === "Usuários e workspaces" ? (
               <>
-                <section className="card">
+                <section className="card manager-card workspace-section">
                   <h3>Workspace atual</h3>
+                  <p className="tx-helper">Gerencie nome, convidados e permissões do workspace ativo sem sair do módulo.</p>
                   <p className="workspace-meta-line">
                     <b>ID:</b> {user.workspace_id || "-"} | <b>Nome:</b> {user.workspace_name || "-"} |{" "}
                     <b>Papel:</b> {user.workspace_role || "-"} | <b>Status:</b> {user.workspace_status || "-"}
@@ -6283,14 +6431,19 @@ export default function App() {
                   <p className="workspace-helper-text">
                     Se o e-mail já existir, o usuário é vinculado ao workspace atual. Se não existir, o Domus cria o acesso e envia um e-mail para definição da senha de primeiro acesso.
                   </p>
-                  {workspaceManageMsg ? <p className="status-msg">{workspaceManageMsg}</p> : null}
+                  {workspaceManageMsg ? (
+                    <div className="status-banner">
+                      <p className="status-msg">{workspaceManageMsg}</p>
+                    </div>
+                  ) : null}
                 </section>
 
-                <section className="card">
+                <section className="card manager-card workspace-permissions-section">
                   <h3>Membros e permissões</h3>
-                  {workspaceMembersLoading ? <p>Carregando membros...</p> : null}
+                  <p className="tx-helper">Guests podem receber permissões granulares por módulo. Owners mantêm gestão completa do workspace.</p>
+                  {workspaceMembersLoading ? <p className="manager-inline-note">Carregando membros...</p> : null}
                   <div className="tx-table-wrap assets-table-wrap">
-                    <table className="tx-table assets-table">
+                    <table className="tx-table assets-table manager-table">
                       <thead>
                         <tr>
                           <th>Usuário</th>
@@ -6376,7 +6529,7 @@ export default function App() {
                                           </label>
                                         </div>
                                       ))}
-                                      <div>
+                                      <div className="manager-permissions-actions">
                                         <button
                                           type="button"
                                           className="tx-action-primary"
@@ -6394,7 +6547,7 @@ export default function App() {
                           );
                         })}
                         {!workspaceMembersSorted.length && !workspaceMembersLoading ? (
-                          <tr>
+                          <tr className="manager-empty-row">
                             <td colSpan={5}>Nenhum membro encontrado para o workspace atual.</td>
                           </tr>
                         ) : null}
@@ -6405,8 +6558,9 @@ export default function App() {
 
                 {isSuperAdmin ? (
                   <>
-                    <section className="card">
+                    <section className="card manager-card workspace-admin-section">
                       <h3>Criar workspace (SUPER_ADMIN)</h3>
+                      <p className="tx-helper">Crie novos workspaces com owner definido para liberar a operação inicial de forma controlada.</p>
                       <form className="workspace-create-form" onSubmit={onCreateAdminWorkspace}>
                         <input
                           type="text"
@@ -6433,13 +6587,18 @@ export default function App() {
                       <p className="workspace-helper-text">
                         Se o e-mail do owner já existir, ele assume o novo workspace como OWNER. Se não existir, o Domus cria o usuário e envia um e-mail para definição da senha de primeiro acesso.
                       </p>
-                      {adminMsg ? <p className="status-msg">{adminMsg}</p> : null}
+                      {adminMsg ? (
+                        <div className="status-banner">
+                          <p className="status-msg">{adminMsg}</p>
+                        </div>
+                      ) : null}
                     </section>
 
-                    <section className="card">
+                    <section className="card manager-card workspace-admin-section">
                       <h3>Workspaces (SUPER_ADMIN)</h3>
+                      <p className="tx-helper">Acompanhe status e operação dos workspaces existentes antes de ativar, pausar ou revisar acessos.</p>
                       <div className="tx-table-wrap">
-                        <table className="tx-table">
+                        <table className="tx-table manager-table">
                           <thead>
                             <tr>
                               <th>ID</th>
@@ -6479,7 +6638,7 @@ export default function App() {
                               );
                             })}
                             {!adminWorkspaces.length ? (
-                              <tr>
+                              <tr className="manager-empty-row">
                                 <td colSpan={6}>Nenhum workspace encontrado.</td>
                               </tr>
                             ) : null}
@@ -6496,8 +6655,9 @@ export default function App() {
 
         {page === "Lançamentos" && canViewLancamentos ? (
           <>
-            <section className="card">
+            <section className="card tx-page-section">
               <h3>Novo lançamento</h3>
+              <p className="tx-helper">Registre entradas, saídas, transferências e compromissos conforme o modo operacional escolhido abaixo.</p>
               <div className="invest-tabs tx-view-tabs">
                 <button
                   type="button"
@@ -6543,7 +6703,7 @@ export default function App() {
               ) : null}
               {txView !== "competencia" ? (
                 canAddLancamentos ? (
-                <form className="tx-form" onSubmit={onCreateTransaction}>
+                <form className="tx-form tx-entry-form" onSubmit={onCreateTransaction}>
                 {txIsTransfer ? (
                   <div className="transfer-hint">
                     <strong className="transfer-badge">Transferência</strong>
@@ -6802,14 +6962,22 @@ export default function App() {
                 </button>
               </form>
                 ) : (
-                  <p>Sem permissão para incluir lançamentos.</p>
+                  <div className="tx-empty-state">
+                    <h4>Acesso indisponível</h4>
+                    <p>Sem permissão para incluir lançamentos.</p>
+                  </div>
                 )
               ) : null}
-              {txView !== "competencia" && txMsg ? <p>{txMsg}</p> : null}
+              {txView !== "competencia" && txMsg ? (
+                <div className="status-banner tx-inline-banner">
+                  <p className="status-msg">{txMsg}</p>
+                </div>
+              ) : null}
             </section>
 
-            <section className="card">
+            <section className="card tx-page-section">
               <h3>{txListTitle}</h3>
+              <p className="tx-helper">Filtre por período, categoria e status para revisar o histórico operacional e agir sobre compromissos pendentes.</p>
               <div className="tx-recent-filters">
                 <input
                   type="date"
@@ -6852,7 +7020,7 @@ export default function App() {
                 Valor total da lista: <strong>{formatBrl(txVisibleTotal)}</strong>
               </p>
               <div className="tx-table-wrap">
-                <table className="tx-table">
+                <table className="tx-table tx-history-table">
                   <thead>
                         <tr>
                           <th>ID</th>
@@ -6870,7 +7038,7 @@ export default function App() {
                     {transactionsVisibleOrdered.map((t) => (
                       <tr key={t.id}>
                         <td>{t.id}</td>
-                        <td>
+                        <td className="tx-history-amount-cell">
                           {commitmentEdit?.id === t.id ? (
                             <input
                               type="date"
@@ -6927,7 +7095,7 @@ export default function App() {
                             Number(t.amount_brl || 0).toFixed(2)
                           )}
                         </td>
-                        <td>
+                        <td className="tx-history-action-cell">
                           {String(t.source_type || "") === "credit_charge" ? (
                             "-"
                           ) : String(t.source_type || "") === "credit_commitment" ? (
@@ -6984,7 +7152,7 @@ export default function App() {
                       </tr>
                     ))}
                     {!transactionsVisibleOrdered.length ? (
-                      <tr>
+                      <tr className="tx-empty-row">
                         <td colSpan={8}>Nenhum lançamento para a categoria selecionada.</td>
                       </tr>
                     ) : null}
@@ -7383,7 +7551,11 @@ export default function App() {
 
             <section className="card">
               <h3>Prévia</h3>
-              {importMsg ? <p>{importMsg}</p> : null}
+              {importMsg ? (
+                <div className="status-banner tx-inline-banner">
+                  <p className="status-msg">{importMsg}</p>
+                </div>
+              ) : null}
               {importPreview.length ? (
                 <div className="tx-table-wrap">
                   <table className="tx-table">
@@ -7426,9 +7598,21 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              {investRentabilitySyncRunning ? <p>Atualizando rentabilidade da renda fixa...</p> : null}
-              {!investRentabilitySyncRunning && investRentabilityMsg ? <p>{investRentabilityMsg}</p> : null}
-              {investMsg ? <p>{investMsg}</p> : null}
+              {investRentabilitySyncRunning ? (
+                <div className="status-banner invest-inline-banner">
+                  <p className="status-msg">Atualizando rentabilidade da renda fixa...</p>
+                </div>
+              ) : null}
+              {!investRentabilitySyncRunning && investRentabilityMsg ? (
+                <div className="status-banner invest-inline-banner">
+                  <p className="status-msg">{investRentabilityMsg}</p>
+                </div>
+              ) : null}
+              {investMsg ? (
+                <div className="status-banner invest-inline-banner">
+                  <p className="status-msg">{investMsg}</p>
+                </div>
+              ) : null}
             </section>
 
             {investTab === "Resumo" ? (
@@ -7465,34 +7649,40 @@ export default function App() {
                     </button>
                   </div>
                 </section>
-                <section className="cards">
-                  <article className="card">
+                <section className="cards invest-kpi-grid">
+                  <article className="card invest-kpi-card">
                     <h3>Ativos</h3>
+                    <span className="invest-kpi-label">Total monitorado</span>
                     <strong>{Number(investSummaryViewData.assets_count || 0)}</strong>
                   </article>
-                  <article className="card">
+                  <article className="card invest-kpi-card">
                     <h3>Total investido</h3>
+                    <span className="invest-kpi-label">Capital alocado</span>
                     <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_invested))}</strong>
                   </article>
-                  <article className="card">
+                  <article className="card invest-kpi-card">
                     <h3>Saldo na corretora</h3>
+                    <span className="invest-kpi-label">Caixa disponível</span>
                     <strong>{brl.format(normalizeSignedZero(investSummaryViewData.broker_balance))}</strong>
                   </article>
-                  <article className="card">
+                  <article className="card invest-kpi-card">
                     <h3>Valor de mercado</h3>
+                    <span className="invest-kpi-label">Posição bruta atual</span>
                     <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_market))}</strong>
                   </article>
-                  <article className="card">
+                  <article className="card invest-kpi-card">
                     <h3>Retorno total</h3>
+                    <span className="invest-kpi-label">Resultado acumulado</span>
                     <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_return))}</strong>
                     <p>{Number(investSummaryViewData.total_return_pct || 0).toFixed(2)}%</p>
                   </article>
-                  <article className="card">
+                  <article className="card invest-kpi-card">
                     <h3>P&L não realizado</h3>
+                    <span className="invest-kpi-label">Ganho ou perda em aberto</span>
                     <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_unrealized))}</strong>
                   </article>
                 </section>
-                <section className="card">
+                <section className="card invest-summary-section">
                   <div className="fair-value-head">
                     <div>
                       <h3>Preço justo e viés</h3>
@@ -7721,7 +7911,7 @@ export default function App() {
                           );
                         })}
                         {!configuredFairValueAssets.length ? (
-                          <tr>
+                          <tr className="invest-empty-row">
                             <td colSpan={10}>Nenhum ativo configurado com preço justo ainda.</td>
                           </tr>
                         ) : null}
@@ -7729,8 +7919,9 @@ export default function App() {
                     </table>
                   </div>
                 </section>
-                <section className="card">
+                <section className="card invest-summary-section">
                   <h3>Carteira (consolidado)</h3>
+                  <p className="tx-helper">Visão consolidada da posição atual por ativo, com custo médio, referência de preço e resultado em aberto.</p>
                   <div className="tx-form invest-portfolio-toolbar">
                     <select
                       className="invoice-filter-select"
@@ -7777,7 +7968,7 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
-                  <p className="tx-helper">
+                  <p className="tx-helper invest-portfolio-note">
                     Mercado Bruto representa o valor atual do ativo antes de descontos de saída. Líquido Estimado replica o bruto enquanto não houver regra fiscal configurada por ativo.
                   </p>
                 </section>
@@ -7786,7 +7977,7 @@ export default function App() {
 
             {investTab === "Rentabilidade" ? (
               <>
-                <section className="card">
+                <section className="card invest-rentability-section">
                   <div className="rentability-head">
                     <div>
                       <h3>Rentabilidade por carteira</h3>
@@ -7813,12 +8004,12 @@ export default function App() {
                     A análise cruza operações, proventos e posição consolidada atual para destacar as classes com atividade no período.
                   </p>
                   <section className="rentability-highlight-grid">
-                    <article className="card rentability-highlight-card">
+                    <article className="card rentability-highlight-card invest-rentability-card">
                       <span className="rentability-highlight-label">Carteiras monitoradas</span>
                       <strong>{investRentabilityHighlights.classes_count}</strong>
                       <p>Classes com posição consolidada na carteira.</p>
                     </article>
-                    <article className="card rentability-highlight-card">
+                    <article className="card rentability-highlight-card invest-rentability-card">
                       <span className="rentability-highlight-label">Melhor desempenho</span>
                       <strong>{investRentabilityHighlights.best ? `${Number(investRentabilityHighlights.best.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
                       <span className="rentability-highlight-value">
@@ -7829,7 +8020,7 @@ export default function App() {
                       </span>
                       <p>{investRentabilityHighlights.best?.asset_class || "Sem dados"}</p>
                     </article>
-                    <article className="card rentability-highlight-card">
+                    <article className="card rentability-highlight-card invest-rentability-card">
                       <span className="rentability-highlight-label">Pior desempenho</span>
                       <strong>{investRentabilityHighlights.worst ? `${Number(investRentabilityHighlights.worst.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
                       <span className="rentability-highlight-value">
@@ -7840,7 +8031,7 @@ export default function App() {
                       </span>
                       <p>{investRentabilityHighlights.worst?.asset_class || "Sem dados"}</p>
                     </article>
-                    <article className="card rentability-highlight-card">
+                    <article className="card rentability-highlight-card invest-rentability-card">
                       <span className="rentability-highlight-label">Maior participação</span>
                       <strong>{investRentabilityHighlights.biggest ? `${Number(investRentabilityHighlights.biggest.participation_pct || 0).toFixed(2)}%` : "-"}</strong>
                       <span className="rentability-highlight-value">
@@ -7848,7 +8039,7 @@ export default function App() {
                       </span>
                       <p>{investRentabilityHighlights.biggest?.asset_class || "Sem dados"}</p>
                     </article>
-                    <article className="card rentability-highlight-card">
+                    <article className="card rentability-highlight-card invest-rentability-card">
                       <span className="rentability-highlight-label">Rentabilidade consolidada</span>
                       <strong>{`${Number(investRentabilityHighlights.consolidated?.total_return_pct || 0).toFixed(2)}%`}</strong>
                       <span className="rentability-highlight-value">
@@ -7856,7 +8047,7 @@ export default function App() {
                       </span>
                       <p>No per&iacute;odo selecionado.</p>
                     </article>
-                    <article className="card rentability-highlight-card">
+                    <article className="card rentability-highlight-card invest-rentability-card">
                       <span className="rentability-highlight-label">Melhor ativo</span>
                       <strong>{investRentabilityHighlights.best_asset ? `${Number(investRentabilityHighlights.best_asset.total_return_pct || 0).toFixed(2)}%` : "-"}</strong>
                       <span className="rentability-highlight-value">
@@ -7869,7 +8060,7 @@ export default function App() {
                       </p>
                     </article>
                   </section>
-                  <section className="card benchmark-comparison-card">
+                  <section className="card benchmark-comparison-card invest-rentability-section">
                     <div className="benchmark-comparison-head">
                       <div>
                         <h3>Carteira x Benchmark</h3>
@@ -7911,12 +8102,12 @@ export default function App() {
                       </div>
                     </div>
                     <div className="benchmark-summary-grid">
-                      <article className="card benchmark-summary-item">
+                      <article className="card benchmark-summary-item invest-benchmark-card">
                         <span className="rentability-highlight-label">Minha carteira</span>
                         <strong>{benchmarkPortfolioLatestPoint ? `${selectedBenchmarkPortfolioReturnPct.toFixed(2)}%` : "-"}</strong>
                         <p>{benchmarkPortfolioLatestPoint ? `Valor: ${brl.format(Number(benchmarkPortfolioLatestPoint.total_return || 0))}` : "Sem dados"}</p>
                       </article>
-                      <article className="card benchmark-summary-item">
+                      <article className="card benchmark-summary-item invest-benchmark-card">
                         <span className="rentability-highlight-label">Benchmark</span>
                         <strong>{selectedBenchmarkOption ? selectedBenchmarkOption.benchmark_label : "-"}</strong>
                         <p>
@@ -7925,7 +8116,7 @@ export default function App() {
                             : "Histórico ainda não disponível no DOMUS"}
                         </p>
                       </article>
-                      <article className="card benchmark-summary-item">
+                      <article className="card benchmark-summary-item invest-benchmark-card">
                         <span className="rentability-highlight-label">Gap</span>
                         <strong>{selectedBenchmarkOption?.benchmark_ready ? `${selectedBenchmarkGapPct >= 0 ? "+" : ""}${selectedBenchmarkGapPct.toFixed(2)} p.p.` : "-"}</strong>
                         <p>
@@ -8041,10 +8232,13 @@ export default function App() {
                       </ResponsiveContainer>
                     </div>
                   ) : (
-                    <p>Sem dados consolidados de rentabilidade por classe.</p>
+                    <div className="invest-empty-state">
+                      <h4>Sem dados consolidados</h4>
+                      <p>Não há dados suficientes para montar o comparativo de rentabilidade por classe no período selecionado.</p>
+                    </div>
                   )}
                 </section>
-                <section className="card">
+                <section className="card invest-rentability-section">
                   <div className="fair-value-head">
                     <div>
                       <h3>Auditoria de divergência</h3>
@@ -8074,7 +8268,11 @@ export default function App() {
                           {investDivergenceRunning ? "Gerando auditoria..." : "Atualizar auditoria"}
                         </button>
                       </div>
-                      {investDivergenceMsg ? <p>{investDivergenceMsg}</p> : null}
+                      {investDivergenceMsg ? (
+                        <div className="status-banner invest-inline-banner">
+                          <p className="status-msg">{investDivergenceMsg}</p>
+                        </div>
+                      ) : null}
                       <div className="tx-table-wrap">
                         <table className="tx-table">
                           <thead>
@@ -8101,7 +8299,7 @@ export default function App() {
                               </tr>
                             ))}
                             {!investDivergenceReport.length ? (
-                              <tr>
+                              <tr className="invest-empty-row">
                                 <td colSpan={7}>Sem divergências acima do limiar selecionado.</td>
                               </tr>
                             ) : null}
@@ -8111,8 +8309,9 @@ export default function App() {
                     </>
                   ) : null}
                 </section>
-                <section className="card">
+                <section className="card invest-rentability-section">
                   <h3>Indicadores por tipo de carteira</h3>
+                  <p className="tx-helper">Tabela operacional com retorno, participação e composição consolidada por classe de ativo.</p>
                   <div className="tx-table-wrap">
                     <table className="tx-table rentability-table">
                       <thead>
@@ -8147,7 +8346,7 @@ export default function App() {
                           </tr>
                         ))}
                         {!investRentabilityByClass.length ? (
-                          <tr>
+                          <tr className="invest-empty-row">
                             <td colSpan={10}>Nenhuma carteira consolidada para exibir.</td>
                           </tr>
                         ) : null}
@@ -8713,7 +8912,10 @@ export default function App() {
                       </ResponsiveContainer>
                     </div>
                   ) : (
-                    <p>Sem histórico de proventos para o período selecionado.</p>
+                    <div className="invest-empty-state">
+                      <h4>Sem histórico no período</h4>
+                      <p>Não há proventos registrados dentro do intervalo selecionado para compor o gráfico.</p>
+                    </div>
                   )}
                 </section>
                 <section className="card">
@@ -8767,28 +8969,28 @@ export default function App() {
             ) : null}
 
             {investTab === "Cotações" ? (
-              <section className="card">
+              <section className="card quote-page-card">
                 <h3>Cotações</h3>
                 <p className="tx-helper quote-page-intro">
                   A organização desta aba foi separada em status geral, automação, entradas manuais e histórico registrado.
                 </p>
                 <section className="cards quote-overview-grid">
-                  <article className="card quote-overview-card">
+                  <article className="card quote-overview-card quote-metric-card">
                     <span className="quote-overview-label">Benchmarks ativos</span>
                     <strong>{investQuotesOverview.activeBenchmarks}</strong>
                     <p>{investQuotesOverview.totalBenchmarks} configurados</p>
                   </article>
-                  <article className="card quote-overview-card">
+                  <article className="card quote-overview-card quote-metric-card">
                     <span className="quote-overview-label">Mercado manual</span>
                     <strong>{investQuotesOverview.manualAssets}</strong>
                     <p>ativos elegíveis</p>
                   </article>
-                  <article className="card quote-overview-card">
+                  <article className="card quote-overview-card quote-metric-card">
                     <span className="quote-overview-label">RF / Fundos</span>
                     <strong>{investQuotesOverview.fixedIncomeAssets}</strong>
                     <p>ativos com ajuste manual</p>
                   </article>
-                  <article className="card quote-overview-card">
+                  <article className="card quote-overview-card quote-metric-card">
                     <span className="quote-overview-label">Histórico</span>
                     <strong>{investQuotesOverview.storedPrices}</strong>
                     <p>{investQuotesOverview.latestPriceDate ? `último em ${formatIsoDatePtBr(investQuotesOverview.latestPriceDate)}` : "sem preços registrados"}</p>
@@ -8814,20 +9016,20 @@ export default function App() {
                       </section>
                     ) : null}
                     <section className="cards quote-summary-flow">
-                      <article className="card quote-summary-card">
+                      <article className="card quote-summary-card quote-step-card">
                         <h4>1. Atualização automática</h4>
                         <p>Configure benchmarks, acompanhe janelas e rode a coleta por classe quando quiser atualizar preços de mercado.</p>
                       </article>
-                      <article className="card quote-summary-card">
+                      <article className="card quote-summary-card quote-step-card">
                         <h4>2. Atualização manual</h4>
                         <p>Use preço unitário para ativos listados e valor atual ou rentabilidade para renda fixa e fundos.</p>
                       </article>
-                      <article className="card quote-summary-card">
+                      <article className="card quote-summary-card quote-step-card">
                         <h4>3. Histórico</h4>
                         <p>Consulte os preços já gravados no banco depois das sincronizações automáticas ou lançamentos manuais.</p>
                       </article>
                     </section>
-                    <section className="card quote-summary-card">
+                    <section className="card quote-summary-card quote-step-card">
                       <h4>Última execução automática</h4>
                       <p className="tx-helper">
                         {investPriceUpdateReport.length
@@ -8839,7 +9041,7 @@ export default function App() {
                 ) : null}
                 {investQuotesTab === "Automática" ? (
                   <>
-                <section className="card quote-section-card">
+                <section className="card quote-section-card quote-block-card">
                   <div className="quote-section-head">
                     <div>
                       <h4>Benchmarks monitorados</h4>
@@ -8909,7 +9111,7 @@ export default function App() {
                     </table>
                   </div>
                 </section>
-                <section className="card quote-section-card">
+                <section className="card quote-section-card quote-block-card">
                   <div className="quote-section-head">
                     <div>
                       <h4>Atualização automática</h4>
@@ -8951,7 +9153,7 @@ export default function App() {
                     </button>
                   </div>
                 </section>
-                <section className="card quote-section-card">
+                <section className="card quote-section-card quote-block-card">
                   <div className="quote-section-head">
                     <div>
                       <h4>Relatório da última execução</h4>
@@ -8986,14 +9188,17 @@ export default function App() {
                     </table>
                   </div>
                 ) : (
-                  <p className="tx-helper">Nenhuma execução automática foi rodada nesta sessão.</p>
+                  <div className="invest-empty-state">
+                    <h4>Sem execução nesta sessão</h4>
+                    <p>Nenhuma atualização automática de cotações foi rodada nesta sessão até o momento.</p>
+                  </div>
                 )}
                 </section>
                   </>
                 ) : null}
                 {investQuotesTab === "Manual" ? (
-                  <section className="quote-manual-grid">
-                <section className="card quote-section-card">
+                <section className="quote-manual-grid">
+                <section className="card quote-section-card quote-block-card">
                   <div className="quote-section-head">
                     <div>
                       <h4>Cotação manual</h4>
@@ -9029,7 +9234,7 @@ export default function App() {
                     </button>
                   </form>
                 </section>
-                <section className="card quote-manual-fixed-card">
+                <section className="card quote-section-card quote-block-card quote-manual-fixed-card">
                   <h3>Atualização manual de renda fixa e fundos</h3>
                   <form className="tx-form" onSubmit={onUpdateInvestManualQuote}>
                     <select value={manualQuoteAssetId} onChange={(e) => setManualQuoteAssetId(e.target.value)}>
@@ -9081,7 +9286,7 @@ export default function App() {
                   </section>
                 ) : null}
                 {investQuotesTab === "Histórico" ? (
-                  <section className="card quote-section-card">
+                  <section className="card quote-section-card quote-block-card">
                     <div className="quote-section-head">
                       <div>
                         <h4>Preços registrados</h4>
@@ -9110,7 +9315,7 @@ export default function App() {
                         </tr>
                       ))}
                       {!investPricesHistory.length ? (
-                        <tr>
+                        <tr className="invest-empty-row">
                           <td colSpan={5}>Nenhuma cotação registrada até o momento.</td>
                         </tr>
                       ) : null}
@@ -9239,7 +9444,11 @@ export default function App() {
                   {profileSaving ? "Salvando..." : "Salvar perfil"}
                 </button>
               </form>
-              {profileMsg ? <p className="status-msg">{profileMsg}</p> : null}
+              {profileMsg ? (
+                <div className="status-banner tx-inline-banner">
+                  <p className="status-msg">{profileMsg}</p>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}
