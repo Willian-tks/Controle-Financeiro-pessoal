@@ -187,3 +187,66 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
         self.assertIsNotNone(asset)
         self.assertAlmostEqual(20000.0, float(asset["principal_amount"]), places=2)
         self.assertAlmostEqual(35916.40, float(asset["current_value"]), places=2)
+
+    def test_delete_fixed_income_buy_reverses_asset_totals(self):
+        with db_module.get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO accounts(id, name, type, currency, show_on_dashboard, user_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (10, "Inter Invest", "Investimento", "BRL", 1, self.uid),
+            )
+            asset_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO assets(
+                        symbol, name, asset_class, sector, currency, broker_account_id,
+                        rentability_type, principal_amount, current_value, last_update, user_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "CDB_INTER",
+                        "CDB Inter",
+                        "Renda Fixa",
+                        "Não definido",
+                        "BRL",
+                        10,
+                        "PCT_CDI",
+                        25000.0,
+                        26000.0,
+                        "2026-05-31",
+                        self.uid,
+                    ),
+                ).lastrowid
+            )
+            trade_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, note, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (asset_id, "2026-05-31", "BUY", 1.0, 10000.0, 1.0, 0.0, 0.0, None, self.uid),
+                ).lastrowid
+            )
+            conn.execute(
+                """
+                INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
+                VALUES (?, ?, ?, ?, NULL, ?, ?, ?)
+                """,
+                ("2026-05-31", "INV BUY CDB_INTER", -10000.0, 10, "INV", None, self.uid),
+            )
+
+        ok, msg = invest_repo.delete_trade_with_cash_reversal(trade_id, user_id=self.uid)
+
+        self.assertTrue(ok, msg)
+        with db_module.get_conn() as conn:
+            asset = dict(conn.execute("SELECT * FROM assets WHERE id = ? AND user_id = ?", (asset_id, self.uid)).fetchone())
+            trade_count = conn.execute("SELECT COUNT(*) FROM trades WHERE id = ? AND user_id = ?", (trade_id, self.uid)).fetchone()[0]
+            tx_count = conn.execute("SELECT COUNT(*) FROM transactions WHERE description = ? AND user_id = ?", ("INV BUY CDB_INTER", self.uid)).fetchone()[0]
+        self.assertEqual(0, trade_count)
+        self.assertEqual(0, tx_count)
+        self.assertAlmostEqual(15000.0, float(asset["principal_amount"]), places=2)
+        self.assertAlmostEqual(16000.0, float(asset["current_value"]), places=2)
+        self.assertIsNone(asset["last_update"])

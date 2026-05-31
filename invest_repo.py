@@ -293,9 +293,99 @@ def list_trades(asset_id=None, date_from=None, date_to=None, user_id: int | None
 def delete_trade(trade_id: int, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
+    trade = _exec(conn,
+        """
+        SELECT
+            t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.exchange_rate, t.fees, t.taxes,
+            a.asset_class, a.principal_amount, a.current_value
+        FROM trades t
+        JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
+        WHERE t.id = ? AND t.user_id = ?
+        """,
+        (int(trade_id), uid),
+    ).fetchone()
+    if trade:
+        _reverse_fixed_income_asset_totals_after_trade_delete(conn, trade, uid)
     _exec(conn, "DELETE FROM trades WHERE id = ? AND user_id = ?", (int(trade_id), uid))
     conn.commit()
     conn.close()
+
+
+def _reverse_fixed_income_asset_totals_after_trade_delete(conn, trade, uid: int) -> None:
+    if _norm_asset_class(str(trade["asset_class"] or "")) not in {"renda_fixa", "tesouro_direto", "coe", "fundos"}:
+        return
+
+    side = str(trade["side"] or "").upper()
+    qty = float(trade["quantity"] or 0.0)
+    price = float(trade["price"] or 0.0)
+    gross = max(0.0, qty * price)
+    if gross <= 0:
+        return
+
+    direct_principal = float(trade["principal_amount"] or 0.0)
+    current = float(trade["current_value"] or 0.0)
+    if side == "BUY":
+        principal = max(0.0, direct_principal - gross)
+        current = max(0.0, current - gross)
+    elif side == "SELL":
+        principal = direct_principal
+        current = max(0.0, current + gross)
+    else:
+        return
+
+    remaining_trades = _exec(conn,
+        """
+        SELECT side, quantity, price, fees, exchange_rate
+        FROM trades
+        WHERE asset_id = ? AND user_id = ? AND id <> ?
+        ORDER BY date ASC, id ASC
+        """,
+        (int(trade["asset_id"]), uid, int(trade["id"])),
+    ).fetchall()
+    remaining_qty = 0.0
+    computed_principal = 0.0
+    for row in remaining_trades:
+        row_side = str(row["side"] or "").upper()
+        row_qty = float(row["quantity"] or 0.0)
+        row_price = float(row["price"] or 0.0)
+        row_fees = float(row["fees"] or 0.0)
+        row_fx = float(row["exchange_rate"] or 1.0)
+        row_gross = row_qty * row_price * row_fx
+        row_fees_brl = row_fees * row_fx
+        if row_side == "BUY":
+            remaining_qty += row_qty
+            computed_principal += max(0.0, row_gross + row_fees_brl)
+        elif row_side == "SELL":
+            avg_cost = (computed_principal / remaining_qty) if remaining_qty > 0 else 0.0
+            computed_principal -= avg_cost * row_qty
+            remaining_qty -= row_qty
+
+    if side == "SELL" and remaining_qty > 0:
+        principal = max(0.0, computed_principal)
+
+    if remaining_qty <= 0 and side == "SELL":
+        principal = 0.0
+        current = 0.0
+
+    last_row = _exec(conn,
+        """
+        SELECT date
+        FROM trades
+        WHERE asset_id = ? AND user_id = ? AND id <> ?
+        ORDER BY date DESC, id DESC
+        LIMIT 1
+        """,
+        (int(trade["asset_id"]), uid, int(trade["id"])),
+    ).fetchone()
+    last_update = last_row["date"] if last_row else None
+    _exec(conn,
+        """
+        UPDATE assets
+        SET principal_amount = ?, current_value = ?, last_update = ?
+        WHERE id = ? AND user_id = ?
+        """,
+        (principal, current, last_update, int(trade["asset_id"]), uid),
+    )
 
 
 def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -> tuple[bool, str]:
@@ -306,7 +396,8 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
             """
             SELECT
                 t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.exchange_rate, t.fees, t.taxes, t.note,
-                a.symbol, a.broker_account_id, a.currency, a.asset_class
+                a.symbol, a.broker_account_id, a.currency, a.asset_class,
+                a.principal_amount, a.current_value
             FROM trades t
             JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
             WHERE t.id = ? AND t.user_id = ?
@@ -383,6 +474,7 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
 
         if chosen_tx_id is None:
             reverse_amount = -target_amount
+            _reverse_fixed_income_asset_totals_after_trade_delete(conn, trade, uid)
             _exec(conn, 
                 """
                 INSERT INTO transactions(date, description, amount_brl, account_id, category_id, method, notes, user_id)
@@ -401,6 +493,7 @@ def delete_trade_with_cash_reversal(trade_id: int, user_id: int | None = None) -
             conn.commit()
             return True, "Operação excluída e saldo da corretora ajustado por lançamento compensatório."
 
+        _reverse_fixed_income_asset_totals_after_trade_delete(conn, trade, uid)
         _exec(conn, "DELETE FROM transactions WHERE id = ? AND user_id = ?", (chosen_tx_id, uid))
         _exec(conn, "DELETE FROM trades WHERE id = ? AND user_id = ?", (int(trade_id), uid))
         conn.commit()
