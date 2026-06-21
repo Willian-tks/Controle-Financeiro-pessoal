@@ -250,3 +250,56 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
         self.assertAlmostEqual(15000.0, float(asset["principal_amount"]), places=2)
         self.assertAlmostEqual(16000.0, float(asset["current_value"]), places=2)
         self.assertIsNone(asset["last_update"])
+
+    def test_fixed_income_current_value_overrides_stale_snapshot_after_new_buy(self):
+        with db_module.get_conn() as conn:
+            asset_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO assets(
+                        symbol, name, asset_class, sector, currency,
+                        rentability_type, principal_amount, current_value, last_update, user_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "CDB_INTER",
+                        "CDB Inter",
+                        "Renda Fixa",
+                        "Não definido",
+                        "BRL",
+                        "MANUAL",
+                        55890.25,
+                        56115.98,
+                        "2026-06-09",
+                        self.uid,
+                    ),
+                ).lastrowid
+            )
+            conn.execute(
+                """
+                INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, note, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (asset_id, "2026-05-28", "BUY", 1.0, 25890.25, 1.0, 0.0, 0.0, None, self.uid),
+            )
+            conn.execute(
+                """
+                INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, note, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (asset_id, "2026-06-09", "BUY", 1.0, 30000.0, 1.0, 0.0, 0.0, None, self.uid),
+            )
+            conn.execute(
+                """
+                INSERT INTO asset_prices(asset_id, px_date, price, source, user_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (asset_id, "2026-05-28", 26115.98, "manual_current_value", self.uid),
+            )
+
+        pos, _, _ = invest_reports.portfolio_view(user_id=self.uid)
+        self.assertEqual(1, len(pos))
+        row = pos.iloc[0]
+        self.assertAlmostEqual(56115.98, float(row["market_value"]), places=2)
+        self.assertEqual("motor", row["value_origin"])

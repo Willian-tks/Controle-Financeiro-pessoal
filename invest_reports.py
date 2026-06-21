@@ -303,15 +303,20 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
     pos["value_origin"] = "cotacao"
     pos["value_ref_date"] = pos.get("price_date")
-    # Para renda fixa, prioriza ajuste manual histórico; depois current_value calculado.
+    # Para renda fixa, prioriza ajuste manual histórico apenas enquanto ele não ficou
+    # mais antigo que o current_value gravado no ativo por uma operação posterior.
     snapshot_price = pd.to_numeric(pos.get("snapshot_price", 0.0), errors="coerce").fillna(0.0)
-    snapshot_override_mask = fixed_income_mask & open_position_mask & (snapshot_price > 0)
+    snapshot_dt = pd.to_datetime(pos.get("snapshot_date"), errors="coerce")
+    current_dt = pd.to_datetime(pos.get("last_update"), errors="coerce")
+    snapshot_current = current_dt.isna() | snapshot_dt.isna() | (snapshot_dt >= current_dt)
+    snapshot_override_mask = fixed_income_mask & open_position_mask & (snapshot_price > 0) & snapshot_current
     pos.loc[snapshot_override_mask, "market_value"] = snapshot_price[snapshot_override_mask]
     pos.loc[snapshot_override_mask, "value_origin"] = "ajuste_manual"
     pos.loc[snapshot_override_mask, "value_ref_date"] = pos.loc[snapshot_override_mask, "snapshot_date"]
     cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
     rf_mask = pos.get("asset_class", "").astype(str).map(_norm_asset_class).isin(_FIXED_INCOME_CLASSES)
-    auto_mask = rf_mask & open_position_mask & (snapshot_price <= 0) & (cv > 0)
+    stale_snapshot_mask = (snapshot_price <= 0) | ~snapshot_current
+    auto_mask = rf_mask & open_position_mask & stale_snapshot_mask & (cv > 0)
     pos.loc[auto_mask, "market_value"] = cv[auto_mask]
     pos.loc[auto_mask, "value_origin"] = "motor"
     pos.loc[auto_mask, "value_ref_date"] = pos.loc[auto_mask, "last_update"]
@@ -422,18 +427,21 @@ def investments_value_timeseries(
             pos["price"] = 0.0
         snapshots = df_asset_snapshots_upto(d_str, user_id=user_id)
         if not snapshots.empty:
-            pos = pos.merge(snapshots[["asset_id", "snapshot_price"]], on="asset_id", how="left")
+            pos = pos.merge(snapshots[["asset_id", "snapshot_price", "snapshot_date"]], on="asset_id", how="left")
         else:
             pos["snapshot_price"] = 0.0
+            pos["snapshot_date"] = None
 
         if not assets.empty:
             pos = pos.merge(
-                assets.rename(columns={"id": "asset_id"})[["asset_id", "currency"]],
+                assets.rename(columns={"id": "asset_id"})[["asset_id", "currency", "current_value", "last_update"]],
                 on="asset_id",
                 how="left",
             )
         else:
             pos["currency"] = None
+            pos["current_value"] = None
+            pos["last_update"] = None
 
         pos["price"] = pd.to_numeric(pos["price"], errors="coerce").fillna(0.0)
         pos["snapshot_price"] = pd.to_numeric(pos.get("snapshot_price", 0.0), errors="coerce").fillna(0.0)
@@ -448,8 +456,16 @@ def investments_value_timeseries(
         fx_factor = fx.where(is_usd_asset, 1.0)
         pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
         open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
-        snapshot_override_mask = fixed_income_mask & open_position_mask & (pos["snapshot_price"] > 0)
+        snapshot_dt = pd.to_datetime(pos.get("snapshot_date"), errors="coerce")
+        current_dt = pd.to_datetime(pos.get("last_update"), errors="coerce")
+        current_applies_to_day = current_dt.notna() & (current_dt <= d)
+        snapshot_current = current_dt.isna() | snapshot_dt.isna() | (snapshot_dt >= current_dt)
+        snapshot_override_mask = fixed_income_mask & open_position_mask & (pos["snapshot_price"] > 0) & snapshot_current
         pos.loc[snapshot_override_mask, "market_value"] = pos.loc[snapshot_override_mask, "snapshot_price"]
+        cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
+        stale_snapshot_mask = (pos["snapshot_price"] <= 0) | ~snapshot_current
+        current_value_mask = fixed_income_mask & open_position_mask & current_applies_to_day & stale_snapshot_mask & (cv > 0)
+        pos.loc[current_value_mask, "market_value"] = cv[current_value_mask]
         income_amount = 0.0
         if incomes_df is not None and not incomes_df.empty:
             income_amount = float(

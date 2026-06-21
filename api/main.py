@@ -4087,6 +4087,13 @@ def invest_create_trade(
             last_update=fixed_income_asset_updates["last_update"],
             user_id=uid,
         )
+        invest_repo.upsert_asset_snapshot(
+            asset_id=int(body.asset_id),
+            px_date=str(fixed_income_asset_updates["last_update"] or body.date),
+            price=float(fixed_income_asset_updates["current_value"] or 0.0),
+            source="manual_current_value",
+            user_id=uid,
+        )
     return {"ok": True}
 
 
