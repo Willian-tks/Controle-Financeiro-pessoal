@@ -967,6 +967,7 @@ def fetch_credit_charges_competencia(
             CASE WHEN COALESCE(ch.paid, FALSE) = TRUE THEN 'Pago' ELSE 'Pendente' END AS charge_status,
             ch.invoice_period,
             ch.due_date,
+            cc.id AS card_id,
             cc.name AS card_name
         FROM credit_card_charges ch
         JOIN credit_cards cc ON cc.id = ch.card_id AND cc.user_id = ch.user_id
@@ -1009,6 +1010,7 @@ def fetch_credit_charges_future(
             'Aguardando Fatura' AS charge_status,
             ch.invoice_period,
             ch.due_date,
+            cc.id AS card_id,
             cc.name AS card_name
         FROM credit_card_charges ch
         JOIN credit_cards cc ON cc.id = ch.card_id AND cc.user_id = ch.user_id

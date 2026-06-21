@@ -310,6 +310,20 @@ function formatIsoDate(date) {
   return `${year}-${month}-${day}`;
 }
 
+function invoicePeriodToDateRange(period) {
+  const match = String(period || "").trim().match(/^(\d{4})-(\d{2})$/);
+  if (!match) return getCurrentMonthRange();
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0 || monthIndex > 11) {
+    return getCurrentMonthRange();
+  }
+  return {
+    from: formatIsoDate(new Date(year, monthIndex, 1)),
+    to: formatIsoDate(new Date(year, monthIndex + 1, 0)),
+  };
+}
+
 function formatIsoDateTimePtBr(value) {
   if (!value) return "";
   const dt = new Date(value);
@@ -406,6 +420,16 @@ function formatLocalizedNumber(value, fractionDigits = 2) {
   return num.toLocaleString("pt-BR", {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
+  });
+}
+
+function formatQuantityInputValue(value, integerOnly = false) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  if (integerOnly) return String(Math.max(0, Math.trunc(num)));
+  return num.toLocaleString("pt-BR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 8,
   });
 }
 
@@ -964,6 +988,8 @@ export default function App() {
   const [txMethod, setTxMethod] = useState("PIX");
   const [txRecentCategoryFilterId, setTxRecentCategoryFilterId] = useState("");
   const [txRecentStatusFilter, setTxRecentStatusFilter] = useState("");
+  const [txRecentCardFilterId, setTxRecentCardFilterId] = useState("");
+  const [txRecentInvoicePeriodFilter, setTxRecentInvoicePeriodFilter] = useState("");
   const [txRecentDateFrom, setTxRecentDateFrom] = useState(defaultMonthRange.from);
   const [txRecentDateTo, setTxRecentDateTo] = useState(defaultMonthRange.to);
   const [txFuturePaymentMethod, setTxFuturePaymentMethod] = useState("PIX");
@@ -1048,6 +1074,7 @@ export default function App() {
   const [investIncomeDateTo, setInvestIncomeDateTo] = useState(defaultMonthRange.to);
   const [tradeAssetClassFilter, setTradeAssetClassFilter] = useState("");
   const [tradeAssetId, setTradeAssetId] = useState("");
+  const [tradeQuantity, setTradeQuantity] = useState("");
   const [incomeAssetClassFilter, setIncomeAssetClassFilter] = useState("");
   const [incomeAssetId, setIncomeAssetId] = useState("");
   const [tradeSide, setTradeSide] = useState("BUY");
@@ -1708,15 +1735,38 @@ export default function App() {
     });
     return mapped;
   }, [transactions]);
+  const txRecentCardOptions = useMemo(() => {
+    const map = new Map();
+    for (const card of cards || []) {
+      if (String(card.card_type || "Credito") !== "Credito") continue;
+      const id = Number(card.id);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      map.set(id, String(card.name || `Cartão ${id}`));
+    }
+    for (const t of transactions || []) {
+      const id = Number(t.card_id);
+      if (!Number.isFinite(id) || id <= 0 || map.has(id)) continue;
+      map.set(id, String(t.card_name || `Cartão ${id}`));
+    }
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
+  }, [cards, transactions]);
   const transactionsVisible = useMemo(() => {
     const targetId = String(txRecentCategoryFilterId);
     const targetName = normalizeText(txRecentCategoryFilter?.name || "");
+    const targetCardId = String(txRecentCardFilterId || "");
+    const targetInvoicePeriod = String(txRecentInvoicePeriodFilter || "").trim();
     const from = String(txRecentDateFrom || "").trim();
     const to = String(txRecentDateTo || "").trim();
     return (transactions || []).filter((t) => {
       const date = String(t.date || "").trim();
-      if (from && date && date < from) return false;
-      if (to && date && date > to) return false;
+      if (!targetInvoicePeriod) {
+        if (from && date && date < from) return false;
+        if (to && date && date > to) return false;
+      }
+      if (targetCardId && String(t.card_id || "") !== targetCardId) return false;
+      if (targetInvoicePeriod && String(t.invoice_period || "") !== targetInvoicePeriod) return false;
       if (txRecentCategoryFilterId) {
         const categoryMatches =
           String(t.category_id || "") === targetId ||
@@ -1734,7 +1784,16 @@ export default function App() {
       }
       return true;
     });
-  }, [transactions, txRecentCategoryFilterId, txRecentCategoryFilter, txRecentStatusFilter, txRecentDateFrom, txRecentDateTo]);
+  }, [
+    transactions,
+    txRecentCategoryFilterId,
+    txRecentCategoryFilter,
+    txRecentStatusFilter,
+    txRecentCardFilterId,
+    txRecentInvoicePeriodFilter,
+    txRecentDateFrom,
+    txRecentDateTo,
+  ]);
   const transactionsVisibleOrdered = useMemo(() => {
     if (txView !== "futuro" && txView !== "competencia") return transactionsVisible;
     const rows = [...transactionsVisible];
@@ -2698,6 +2757,10 @@ export default function App() {
     () => investAssets.find((a) => String(a.id) === String(tradeAssetId)) || null,
     [investAssets, tradeAssetId]
   );
+  const selectedTradePosition = useMemo(
+    () => (investPortfolio?.positions || []).find((p) => String(p.asset_id) === String(tradeAssetId)) || null,
+    [investPortfolio, tradeAssetId]
+  );
   const tradeAssetClassOptions = useMemo(() => {
     const labels = [];
     const seen = new Set();
@@ -2821,6 +2884,7 @@ export default function App() {
     const stillValid = tradeAssetOptions.some((a) => String(a.id) === String(tradeAssetId));
     if (!stillValid) {
       setTradeAssetId("");
+      setTradeQuantity("");
     }
   }, [tradeAssetOptions, tradeAssetId]);
   const tradeEffectiveClass = useMemo(
@@ -2868,6 +2932,12 @@ export default function App() {
   const tradeQuantityPlaceholder = tradeQuantityMustBeInteger
     ? "Quantidade (inteiro)"
     : "Quantidade (aceita fracionado)";
+  const selectedTradePositionQty = Number(selectedTradePosition?.qty || 0);
+  const canFillFullTradePosition =
+    !tradeAssetIsFixedIncome &&
+    tradeSide === "SELL" &&
+    Number.isFinite(selectedTradePositionQty) &&
+    selectedTradePositionQty > 0;
   const tradeSideOptions = useMemo(
     () =>
       tradeAssetIsFixedIncome
@@ -4334,7 +4404,7 @@ export default function App() {
     const assetId = Number(tradeAssetId || form.get("asset_id"));
     const date = String(form.get("date") || "");
     const side = String(tradeSide || form.get("side") || "BUY").toUpperCase();
-    const quantityRaw = parseLocaleNumber(form.get("quantity") || "0");
+    const quantityRaw = parseLocaleNumber(tradeQuantity || form.get("quantity") || "0");
     const priceRaw = parseLocaleNumber(form.get("price") || "0");
     const appliedValue = parseLocaleNumber(form.get("applied_value") || "0");
     const irIofPct = parseLocaleNumber(form.get("ir_iof") || "0");
@@ -4392,6 +4462,7 @@ export default function App() {
       });
       formEl.reset();
       setTradeAssetId("");
+      setTradeQuantity("");
       setTradeSide("BUY");
       setTradeExchangeRate("");
       setInvestMsg("Operação salva.");
@@ -5204,6 +5275,8 @@ export default function App() {
     setTxRecentDateTo(dashDateTo);
     setTxRecentCategoryFilterId("");
     setTxRecentStatusFilter(status);
+    setTxRecentCardFilterId("");
+    setTxRecentInvoicePeriodFilter("");
   }
 
   function openTransactionsCategoryFromDashboard(categoryName = "") {
@@ -5217,6 +5290,22 @@ export default function App() {
     setTxRecentDateTo(dashDateTo);
     setTxRecentStatusFilter("");
     setTxRecentCategoryFilterId(matchedCategory ? matchedCategory.id : "");
+    setTxRecentCardFilterId("");
+    setTxRecentInvoicePeriodFilter("");
+  }
+
+  function openInvoiceTransactions(invoice) {
+    if (!canViewLancamentos || !invoice) return;
+    const period = String(invoice.invoice_period || "").trim();
+    const range = invoicePeriodToDateRange(period);
+    setPage("Lançamentos");
+    setTxView("competencia");
+    setTxRecentDateFrom(range.from);
+    setTxRecentDateTo(range.to);
+    setTxRecentCategoryFilterId("");
+    setTxRecentStatusFilter("");
+    setTxRecentCardFilterId(invoice.card_id ? String(invoice.card_id) : "");
+    setTxRecentInvoicePeriodFilter(period);
   }
 
   function openInvestmentsClassFromDashboard(assetClass = "") {
@@ -5224,6 +5313,11 @@ export default function App() {
     setPage("Investimentos");
     setInvestTab("Resumo");
     setInvestSummaryClassFilter(String(assetClass || "").trim());
+  }
+
+  function fillFullTradePositionQuantity() {
+    if (!canFillFullTradePosition) return;
+    setTradeQuantity(formatQuantityInputValue(selectedTradePositionQty, tradeQuantityMustBeInteger));
   }
 
   function renderPasswordInput({
@@ -5860,9 +5954,19 @@ export default function App() {
                     </>
                   ) : null}
                   {activeCardCurrentInvoice ? (
-                    <button type="button" className="mini-tab active" onClick={() => openPayInvoiceModal(activeCardCurrentInvoice)}>
-                      Pagar fatura
-                    </button>
+                    <div className="dash-card-bill-actions">
+                      <button type="button" className="mini-tab active" onClick={() => openPayInvoiceModal(activeCardCurrentInvoice)}>
+                        Pagar fatura
+                      </button>
+                      <button
+                        type="button"
+                        className="mini-tab"
+                        onClick={() => openInvoiceTransactions(activeCardCurrentInvoice)}
+                        disabled={!canViewLancamentos}
+                      >
+                        Ver fatura
+                      </button>
+                    </div>
                   ) : null}
                 </div>
               </article>
@@ -6065,11 +6169,17 @@ export default function App() {
                         <td className="invoice-paid-cell">{brl.format(Number(i.paid_amount || 0))}</td>
                         <td><span className="lists-badge">{i.status}</span></td>
                         <td className="invoice-action-cell">
-                          {i.status === "OPEN" && canAddContas ? (
-                            <button onClick={() => openPayInvoiceModal(i)}>Pagar fatura</button>
-                          ) : (
-                            "-"
-                          )}
+                          <div className="invoice-action-group">
+                            {i.status === "OPEN" && canAddContas ? (
+                              <button type="button" onClick={() => openPayInvoiceModal(i)}>Pagar fatura</button>
+                            ) : null}
+                            {canViewLancamentos ? (
+                              <button type="button" className="tx-action-neutral" onClick={() => openInvoiceTransactions(i)}>
+                                Ver fatura
+                              </button>
+                            ) : null}
+                            {!(i.status === "OPEN" && canAddContas) && !canViewLancamentos ? "-" : null}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -7005,6 +7115,21 @@ export default function App() {
                 </select>
                 <select
                   className="invoice-filter-select"
+                  value={txRecentCardFilterId}
+                  onChange={(e) => {
+                    setTxRecentCardFilterId(e.target.value);
+                    setTxRecentInvoicePeriodFilter("");
+                  }}
+                >
+                  <option value="">Todos os cartões</option>
+                  {txRecentCardOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="invoice-filter-select"
                   value={txRecentStatusFilter}
                   onChange={(e) => setTxRecentStatusFilter(e.target.value)}
                 >
@@ -7016,6 +7141,14 @@ export default function App() {
                   ))}
                 </select>
               </div>
+              {txRecentInvoicePeriodFilter ? (
+                <div className="tx-filter-chip-row">
+                  <span className="tx-filter-chip">Fatura {txRecentInvoicePeriodFilter}</span>
+                  <button type="button" className="tx-action-neutral" onClick={() => setTxRecentInvoicePeriodFilter("")}>
+                    Limpar fatura
+                  </button>
+                </div>
+              ) : null}
               <p className="tx-helper">
                 Valor total da lista: <strong>{formatBrl(txVisibleTotal)}</strong>
               </p>
@@ -8602,7 +8735,11 @@ export default function App() {
                     <select
                       name="asset_class_filter"
                       value={tradeAssetClassFilter}
-                      onChange={(e) => setTradeAssetClassFilter(e.target.value)}
+                      onChange={(e) => {
+                        setTradeAssetClassFilter(e.target.value);
+                        setTradeAssetId("");
+                        setTradeQuantity("");
+                      }}
                     >
                       <option value="" disabled>Classe do ativo</option>
                       {tradeAssetClassOptions.map((c) => (
@@ -8612,7 +8749,10 @@ export default function App() {
                     <select
                       name="asset_id"
                       value={tradeAssetId}
-                      onChange={(e) => setTradeAssetId(e.target.value)}
+                      onChange={(e) => {
+                        setTradeAssetId(e.target.value);
+                        setTradeQuantity("");
+                      }}
                       disabled={!tradeAssetClassFilter}
                     >
                       <option value="" disabled>
@@ -8623,21 +8763,50 @@ export default function App() {
                       ))}
                     </select>
                     <input name="date" type="date" required />
-                    <select name="side" value={tradeSide} onChange={(e) => setTradeSide(e.target.value)}>
+                    <select
+                      name="side"
+                      value={tradeSide}
+                      onChange={(e) => {
+                        setTradeSide(e.target.value);
+                        setTradeQuantity("");
+                      }}
+                    >
                       {tradeSideOptions.map((opt) => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </select>
                     {tradeShowQuantityPrice ? (
                       <>
-                        <input
-                          name="quantity"
-                          type="text"
-                          inputMode="decimal"
-                          placeholder={tradeQuantityPlaceholder}
-                          onInput={(e) => applyDecimalMaskInput(e, { maxDecimals: 8, maxIntegerDigits: 12 })}
-                          required
-                        />
+                        <div className="trade-quantity-field">
+                          <input
+                            name="quantity"
+                            type="text"
+                            inputMode="decimal"
+                            placeholder={tradeQuantityPlaceholder}
+                            value={tradeQuantity}
+                            onChange={(e) =>
+                              setTradeQuantity(
+                                sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 12 })
+                              )
+                            }
+                            required
+                          />
+                          {tradeSide === "SELL" ? (
+                            <button
+                              type="button"
+                              className="trade-fill-position-btn"
+                              onClick={fillFullTradePositionQuantity}
+                              disabled={!canFillFullTradePosition}
+                              title={
+                                canFillFullTradePosition
+                                  ? `Usar posição total: ${formatQuantityInputValue(selectedTradePositionQty, tradeQuantityMustBeInteger)}`
+                                  : "Selecione um ativo com posição aberta"
+                              }
+                            >
+                              Total
+                            </button>
+                          ) : null}
+                        </div>
                         <input
                           name="price"
                           type="text"
