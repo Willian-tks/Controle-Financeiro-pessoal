@@ -268,10 +268,10 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     cls_norm = pos.get("asset_class", "").astype(str).map(_norm_asset_class)
     fixed_income_mask = cls_norm.isin(_FIXED_INCOME_CLASSES)
     missing_price_mask = pos["price"] <= 0
-    # Renda fixa sem cotação diária usa custo médio como proxy de valor de mercado.
-    pos.loc[fixed_income_mask & missing_price_mask, "price"] = pd.to_numeric(
-        pos.get("avg_cost", 0.0), errors="coerce"
-    ).fillna(0.0)
+    avg_cost_price = pd.to_numeric(pos.get("avg_cost", 0.0), errors="coerce").fillna(0.0)
+    # Ativos sem cotação ainda usam o custo médio como proxy inicial de valor.
+    # Assim uma compra recém-registrada aparece na carteira até a primeira cotação.
+    pos.loc[missing_price_mask, "price"] = avg_cost_price[missing_price_mask]
 
     assets = df_assets(user_id=user_id)
     if not assets.empty and not pos.empty:
@@ -448,9 +448,8 @@ def investments_value_timeseries(
         cls_norm = pos.get("asset_class", "").astype(str).map(_norm_asset_class)
         fixed_income_mask = cls_norm.isin(_FIXED_INCOME_CLASSES)
         missing_price_mask = pos["price"] <= 0
-        pos.loc[fixed_income_mask & missing_price_mask, "price"] = pd.to_numeric(
-            pos.get("avg_cost", 0.0), errors="coerce"
-        ).fillna(0.0)
+        avg_cost_price = pd.to_numeric(pos.get("avg_cost", 0.0), errors="coerce").fillna(0.0)
+        pos.loc[missing_price_mask, "price"] = avg_cost_price[missing_price_mask]
         fx = pd.to_numeric(pos.get("last_fx", 1.0), errors="coerce").fillna(1.0)
         is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
         fx_factor = fx.where(is_usd_asset, 1.0)

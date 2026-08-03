@@ -3252,6 +3252,40 @@ body {
   justify-content: space-between;
 }
 
+.dash-week-commitments {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(153, 184, 251, 0.18);
+}
+
+.dash-week-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: #d8e5ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dash-week-head strong {
+  color: #fff;
+}
+
+.dash-week-list li {
+  padding: 7px 0;
+}
+
+.dash-week-link span,
+.dash-week-link strong {
+  font-size: 13px;
+}
+
+.dash-week-link strong {
+  font-weight: 700;
+}
+
 .dash-cards-card {
   grid-area: cartoes;
   display: grid;

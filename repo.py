@@ -784,8 +784,116 @@ def update_credit_card(
             uid,
         ),
     )
+    _sync_open_credit_card_invoice_calendar(
+        conn,
+        card_id=int(card_id),
+        due_day=int(due_day),
+        close_day=int(close_day) if close_day is not None else None,
+        user_id=uid,
+    )
     conn.commit()
     conn.close()
+
+
+def _sync_open_credit_card_invoice_calendar(
+    conn,
+    card_id: int,
+    due_day: int,
+    close_day: int | None,
+    user_id: int,
+) -> None:
+    charges = _exec(
+        conn,
+        """
+        SELECT id, purchase_date, invoice_period, due_date
+        FROM credit_card_charges
+        WHERE card_id = ? AND user_id = ? AND COALESCE(paid, FALSE) = FALSE
+        """,
+        (int(card_id), int(user_id)),
+    ).fetchall()
+    affected_periods: set[str] = set()
+    for charge in charges:
+        old_period = str(charge["invoice_period"])
+        new_period, new_due_date = _due_date_by_cycle(
+            str(charge["purchase_date"]),
+            int(due_day),
+            int(close_day) if close_day is not None else None,
+        )
+        affected_periods.add(old_period)
+        affected_periods.add(new_period)
+        if old_period != new_period or str(charge["due_date"] or "") != new_due_date:
+            _exec(
+                conn,
+                """
+                UPDATE credit_card_charges
+                SET invoice_period = ?, due_date = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (new_period, new_due_date, int(charge["id"]), int(user_id)),
+            )
+
+    if not affected_periods:
+        return
+
+    for period in sorted(affected_periods):
+        agg = _exec(
+            conn,
+            """
+            SELECT
+                COUNT(*) AS qty,
+                MAX(due_date) AS due_date,
+                COALESCE(SUM(amount), 0) AS total_amount,
+                COALESCE(SUM(CASE WHEN COALESCE(paid, FALSE) = TRUE THEN amount ELSE 0 END), 0) AS paid_amount
+            FROM credit_card_charges
+            WHERE card_id = ? AND user_id = ? AND invoice_period = ?
+            """,
+            (int(card_id), int(user_id), period),
+        ).fetchone()
+        qty = int(agg["qty"] or 0) if agg else 0
+        existing = _exec(
+            conn,
+            """
+            SELECT id, status
+            FROM credit_card_invoices
+            WHERE card_id = ? AND user_id = ? AND invoice_period = ?
+            """,
+            (int(card_id), int(user_id), period),
+        ).fetchone()
+        if qty <= 0:
+            if existing and str(existing["status"] or "").upper() != "PAID":
+                _exec(
+                    conn,
+                    """
+                    UPDATE credit_card_invoices
+                    SET total_amount = 0, paid_amount = 0, status = 'PAID'
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    (int(existing["id"]), int(user_id)),
+                )
+            continue
+
+        total_amount = float(agg["total_amount"] or 0.0)
+        paid_amount = float(agg["paid_amount"] or 0.0)
+        status = "OPEN" if total_amount > paid_amount else "PAID"
+        if existing:
+            _exec(
+                conn,
+                """
+                UPDATE credit_card_invoices
+                SET due_date = ?, total_amount = ?, paid_amount = ?, status = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (str(agg["due_date"]), total_amount, paid_amount, status, int(existing["id"]), int(user_id)),
+            )
+        else:
+            _exec(
+                conn,
+                """
+                INSERT INTO credit_card_invoices(card_id, invoice_period, due_date, total_amount, paid_amount, status, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (int(card_id), period, str(agg["due_date"]), total_amount, paid_amount, status, int(user_id)),
+            )
 
 
 def delete_credit_card(card_id: int, user_id: int | None = None) -> int:

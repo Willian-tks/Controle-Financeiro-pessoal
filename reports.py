@@ -311,6 +311,10 @@ def commitments_summary(
     user_id: int | None = None,
 ) -> dict:
     uid = _uid(user_id)
+    today = pd.Timestamp.today().normalize()
+    week_end = today + pd.Timedelta(days=6)
+    week_dates = [(today + pd.Timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    week_by_date = {d: 0.0 for d in week_dates}
     conn = get_conn()
     q = """
         SELECT
@@ -335,18 +339,43 @@ def commitments_summary(
     q += " ORDER BY t.date ASC, t.id ASC"
 
     rows = _exec(conn, q, params).fetchall()
+    week_q = """
+        SELECT
+            t.date,
+            t.amount_brl,
+            a.name AS account
+        FROM transactions t
+        JOIN accounts a ON a.id = t.account_id AND a.user_id = t.user_id
+        WHERE t.user_id = ?
+          AND UPPER(TRIM(COALESCE(t.method, ''))) IN ('FUTURO', 'AGENDADO')
+          AND t.date >= ?
+          AND t.date <= ?
+    """
+    week_params: list = [uid, today.strftime("%Y-%m-%d"), week_end.strftime("%Y-%m-%d")]
+    if account:
+        week_q += " AND a.name = ?"
+        week_params.append(account)
+    week_rows = _exec(conn, week_q, week_params).fetchall()
     conn.close()
 
-    if not rows:
-        return {"a_vencer": 0.0, "vencidos": 0.0}
+    a_vencer = 0.0
+    vencidos = 0.0
 
-    df = pd.DataFrame([dict(r) for r in rows])
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["amount_brl"] = pd.to_numeric(df["amount_brl"], errors="coerce").fillna(0.0)
+    if rows:
+        df = pd.DataFrame([dict(r) for r in rows])
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["amount_brl"] = pd.to_numeric(df["amount_brl"], errors="coerce").fillna(0.0)
+        a_vencer = float(df.loc[df["date"] >= today, "amount_brl"].abs().sum())
+        vencidos = float(df.loc[df["date"] < today, "amount_brl"].abs().sum())
 
-    today = pd.Timestamp.today().normalize()
-    a_vencer = float(df.loc[df["date"] >= today, "amount_brl"].abs().sum())
-    vencidos = float(df.loc[df["date"] < today, "amount_brl"].abs().sum())
+    if week_rows:
+        wdf = pd.DataFrame([dict(r) for r in week_rows])
+        wdf["date"] = pd.to_datetime(wdf["date"], errors="coerce")
+        wdf["amount_brl"] = pd.to_numeric(wdf["amount_brl"], errors="coerce").fillna(0.0)
+        for row in wdf.dropna(subset=["date"]).itertuples(index=False):
+            key = row.date.strftime("%Y-%m-%d")
+            if key in week_by_date:
+                week_by_date[key] += abs(float(row.amount_brl or 0.0))
 
     # Compromissos em cartão ainda não faturados (futuros).
     cc_rows = repo.fetch_credit_charges_future(date_from=date_from, date_to=date_to, user_id=user_id) or []
@@ -359,6 +388,23 @@ def commitments_summary(
         cdf = cdf.loc[cdf["date"] >= today]
         a_vencer += float(cdf["amount_brl"].abs().sum())
 
-    return {"a_vencer": a_vencer, "vencidos": vencidos}
+    cc_week_rows = repo.fetch_credit_charges_future(
+        date_from=today.strftime("%Y-%m-%d"),
+        date_to=week_end.strftime("%Y-%m-%d"),
+        user_id=user_id,
+    ) or []
+    if cc_week_rows:
+        cwdf = pd.DataFrame([dict(r) for r in cc_week_rows])
+        cwdf["date"] = pd.to_datetime(cwdf["date"], errors="coerce")
+        cwdf["amount_brl"] = pd.to_numeric(cwdf["amount_brl"], errors="coerce").fillna(0.0)
+        if account:
+            cwdf = cwdf.loc[cwdf["account"].astype(str) == str(account)]
+        for row in cwdf.dropna(subset=["date"]).itertuples(index=False):
+            key = row.date.strftime("%Y-%m-%d")
+            if key in week_by_date:
+                week_by_date[key] += abs(float(row.amount_brl or 0.0))
+
+    week = [{"date": d, "total": float(week_by_date[d])} for d in week_dates]
+    return {"a_vencer": a_vencer, "vencidos": vencidos, "week": week}
 
 

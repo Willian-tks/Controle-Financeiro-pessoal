@@ -108,6 +108,35 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
         self.assertAlmostEqual(0.0, float(row["market_value"]), places=6)
         self.assertAlmostEqual(3372.05, float(row["realized_pnl"]), places=6)
 
+    def test_market_asset_without_quote_uses_average_cost_as_initial_market_value(self):
+        with db_module.get_conn() as conn:
+            asset_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO assets(symbol, name, asset_class, sector, currency, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    ("IVVB11", "IVVB11", "ETFs BR", "Não definido", "BRL", self.uid),
+                ).lastrowid
+            )
+            conn.execute(
+                """
+                INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, note, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (asset_id, "2026-08-03", "BUY", 10.0, 350.0, 1.0, 5.0, 0.0, None, self.uid),
+            )
+
+        pos, _, _ = invest_reports.portfolio_view(user_id=self.uid)
+
+        self.assertEqual(1, len(pos))
+        row = pos.iloc[0]
+        self.assertEqual("ETFs BR", row["asset_class"])
+        self.assertAlmostEqual(10.0, float(row["qty"]), places=6)
+        self.assertAlmostEqual(3505.0, float(row["cost_basis"]), places=2)
+        self.assertAlmostEqual(3505.0, float(row["market_value"]), places=2)
+        self.assertEqual("cotacao", row["value_origin"])
+
     def test_partial_fixed_income_sell_keeps_remaining_position(self):
         with db_module.get_conn() as conn:
             asset_id = int(

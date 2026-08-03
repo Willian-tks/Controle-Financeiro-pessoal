@@ -913,6 +913,17 @@ function formatIsoDatePtBr(value) {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
+function formatWeekCommitmentLabel(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw || "-";
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (raw === todayIso) return "Hoje";
+  const [year, month, day] = raw.split("-").map(Number);
+  const dt = new Date(year, month - 1, day);
+  const weekday = dt.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
+  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)}, ${formatIsoDatePtBr(raw).slice(0, 5)}`;
+}
+
 function formatMonthYearPtBr(value) {
   const raw = String(value || "").trim();
   if (!/^\d{4}-\d{2}$/.test(raw)) return raw;
@@ -2047,6 +2058,13 @@ export default function App() {
     }),
     [dashCommitments]
   );
+  const commitmentsWeek = useMemo(() => {
+    const rows = Array.isArray(dashCommitments?.week) ? dashCommitments.week : [];
+    return rows.slice(0, 7).map((row) => ({
+      date: String(row?.date || ""),
+      total: Number(row?.total || 0),
+    }));
+  }, [dashCommitments]);
   const creditCards = useMemo(
     () => (cards || []).filter((c) => String(c.card_type || "Credito") === "Credito"),
     [cards]
@@ -5267,12 +5285,12 @@ export default function App() {
     });
   }
 
-  function openCommitmentsFromDashboard(status = "") {
+  function openCommitmentsFromDashboard(status = "", dateFrom = "", dateTo = "") {
     if (!canViewLancamentos) return;
     setPage("Lançamentos");
     setTxView("futuro");
-    setTxRecentDateFrom(dashDateFrom);
-    setTxRecentDateTo(dashDateTo);
+    setTxRecentDateFrom(dateFrom || dashDateFrom);
+    setTxRecentDateTo(dateTo || dashDateTo);
     setTxRecentCategoryFilterId("");
     setTxRecentStatusFilter(status);
     setTxRecentCardFilterId("");
@@ -6064,6 +6082,29 @@ export default function App() {
                   <span>Total</span>
                   <strong>{brl.format(commitmentsAging.aVencer + commitmentsAging.vencidos)}</strong>
                 </div>
+                {commitmentsWeek.length ? (
+                  <div className="dash-week-commitments">
+                    <div className="dash-week-head">
+                      <span>Próximos 7 dias</span>
+                      <strong>{brl.format(commitmentsWeek.reduce((acc, row) => acc + Number(row.total || 0), 0))}</strong>
+                    </div>
+                    <ul className="dash-list dash-week-list">
+                      {commitmentsWeek.map((row, idx) => (
+                        <li key={row.date || `week-${idx}`}>
+                          <button
+                            type="button"
+                            className="dash-list-link dash-week-link"
+                            onClick={() => openCommitmentsFromDashboard(TX_STATUS_FILTER_OPEN, row.date, row.date)}
+                            disabled={!canViewLancamentos || !row.date}
+                          >
+                            <span>{formatWeekCommitmentLabel(row.date)}</span>
+                            <strong>{brl.format(row.total)}</strong>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </article>
             </section>
 
