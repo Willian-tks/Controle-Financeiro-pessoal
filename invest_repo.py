@@ -268,7 +268,7 @@ def list_trades(asset_id=None, date_from=None, date_to=None, user_id: int | None
     uid = _uid(user_id)
     conn = get_conn()
     q = """
-        SELECT t.*, a.symbol, a.asset_class
+        SELECT t.*, a.symbol, a.asset_class, a.currency
         FROM trades t
         JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
         WHERE t.user_id = ?

@@ -551,17 +551,8 @@ def _norm_asset_class(value: Any) -> str:
     return "_".join(raw.split())
 
 
-def _is_us_stock_asset(asset: dict) -> bool:
-    cls_raw = None
-    if isinstance(asset, dict):
-        cls_raw = asset.get("asset_class")
-    else:
-        try:
-            cls_raw = asset["asset_class"]
-        except Exception:
-            cls_raw = None
-    cls = _norm_asset_class(cls_raw)
-    return cls in {"stock_us", "stocks_us"}
+def _is_usd_asset(asset: dict) -> bool:
+    return str(asset["currency"] or "").strip().upper() == "USD"
 
 
 def _is_fixed_income_asset(asset: dict) -> bool:
@@ -3989,12 +3980,12 @@ def invest_create_trade(
 
     qty = float(body.quantity)
     price = float(body.price)
-    is_us_stock = _is_us_stock_asset(asset)
+    is_usd = _is_usd_asset(asset)
     is_fixed_income = _is_fixed_income_asset(asset)
     exchange_rate = float(body.exchange_rate or 0.0)
-    if is_us_stock and exchange_rate <= 0:
-        raise HTTPException(status_code=400, detail="Cotação USD/BRL é obrigatória para Stocks US")
-    fx = exchange_rate if is_us_stock else 1.0
+    if is_usd and exchange_rate <= 0:
+        raise HTTPException(status_code=400, detail="Cotação USD/BRL é obrigatória para ativos em USD")
+    fx = exchange_rate if is_usd else 1.0
 
     fixed_income_asset_updates: dict[str, float | None] | None = None
     if is_fixed_income:
@@ -4015,8 +4006,8 @@ def invest_create_trade(
         }
 
     gross = qty * price * fx
-    fees_brl = fees * fx if is_us_stock else fees
-    taxes_brl = taxes * fx if is_us_stock else taxes
+    fees_brl = fees * fx if is_usd else fees
+    taxes_brl = taxes * fx if is_usd else taxes
     # Em renda fixa, impostos de IR/IOF devem incidir no resgate, não na aplicação.
     total_cost = (gross + fees_brl) if is_fixed_income else (gross + fees_brl + taxes_brl)
     if total_cost < 0:

@@ -433,6 +433,15 @@ function formatQuantityInputValue(value, integerOnly = false) {
   });
 }
 
+function formatTradeMoney(value, currency) {
+  return Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: String(currency || "BRL").trim().toUpperCase(),
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function formatBrl(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "R$ 0,00";
@@ -2931,10 +2940,9 @@ export default function App() {
       setManualPriceClassFilter("");
     }
   }, [manualPriceClassFilter]);
-  const tradeAssetIsUsStock = useMemo(
+  const tradeAssetIsUsd = useMemo(
     () =>
-      isUsStockClass(tradeEffectiveClass) ||
-      String(selectedTradeAsset?.currency || "").toUpperCase() === "USD",
+      String(selectedTradeAsset?.currency || "").trim().toUpperCase() === "USD",
     [selectedTradeAsset, tradeEffectiveClass]
   );
   const tradeAssetIsCrypto = useMemo(
@@ -4461,8 +4469,8 @@ export default function App() {
         return;
       }
     }
-    if (tradeAssetIsUsStock && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) {
-      setInvestMsg("Para Stocks US, informe a cotação USD/BRL.");
+    if (tradeAssetIsUsd && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) {
+      setInvestMsg("Para ativos em USD, informe a cotação USD/BRL.");
       return;
     }
     await withPendingAction("createInvestTrade", async () => {
@@ -4473,7 +4481,7 @@ export default function App() {
         side,
         quantity,
         price,
-        exchange_rate: tradeAssetIsUsStock ? exchangeRate : null,
+        exchange_rate: tradeAssetIsUsd ? exchangeRate : null,
         fees: Number.isFinite(fees) ? fees : 0,
         taxes: taxes,
         note: note || null,
@@ -8852,7 +8860,7 @@ export default function App() {
                           name="price"
                           type="text"
                           inputMode="numeric"
-                          placeholder={tradeAssetIsUsStock ? "Preço (USD)" : "Preço"}
+                          placeholder={tradeAssetIsUsd ? "Preço (USD)" : "Preço"}
                           onInput={applyCurrencyMaskInput}
                           required
                         />
@@ -8879,7 +8887,7 @@ export default function App() {
                         onInput={(e) => applyDecimalMaskInput(e, { maxDecimals: 4, maxIntegerDigits: 3 })}
                       />
                     ) : null}
-                    {tradeAssetIsUsStock ? (
+                    {tradeAssetIsUsd ? (
                       <input
                         name="exchange_rate"
                         type="text"
@@ -8969,13 +8977,13 @@ export default function App() {
                             <td>{t.symbol}</td>
                             <td>{formatTradeSideLabel(t.side, t.asset_class)}</td>
                             <td>{formatPortfolioQty(t.quantity)}</td>
-                            <td>{formatBrl(t.price)}</td>
+                            <td>{formatTradeMoney(t.price, t.currency)}</td>
                             <td>
                               {Number(t.exchange_rate || 0) > 0 && Number(t.exchange_rate || 1) !== 1
                                 ? formatLocalizedNumber(t.exchange_rate, 4)
                                 : "-"}
                             </td>
-                            <td>{formatBrl(t.fees)}</td>
+                            <td>{formatTradeMoney(t.fees, t.currency)}</td>
                             <td>
                               <button type="button" onClick={() => onDeleteInvestTrade(t.id)} disabled={isPendingAction(`deleteInvestTrade-${t.id}`)}>
                                 {isPendingAction(`deleteInvestTrade-${t.id}`) ? "Excluindo..." : "Excluir"}
