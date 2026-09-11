@@ -298,10 +298,12 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
 
     fx = pd.to_numeric(pos.get("last_fx", 1.0), errors="coerce").fillna(1.0)
     is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
-    fx_factor = fx.where(is_usd_asset, 1.0)
+    # O custo médio usado sem cotação já está em BRL.
+    fx_factor = fx.where(is_usd_asset & ~missing_price_mask, 1.0)
     pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
     open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
     pos["value_origin"] = "cotacao"
+    pos.loc[missing_price_mask, "value_origin"] = "custo_medio"
     pos["value_ref_date"] = pos.get("price_date")
     # Para renda fixa, prioriza ajuste manual histórico apenas enquanto ele não ficou
     # mais antigo que o current_value gravado no ativo por uma operação posterior.
@@ -452,7 +454,8 @@ def investments_value_timeseries(
         pos.loc[missing_price_mask, "price"] = avg_cost_price[missing_price_mask]
         fx = pd.to_numeric(pos.get("last_fx", 1.0), errors="coerce").fillna(1.0)
         is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
-        fx_factor = fx.where(is_usd_asset, 1.0)
+        # O custo médio usado sem cotação já está em BRL.
+        fx_factor = fx.where(is_usd_asset & ~missing_price_mask, 1.0)
         pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
         open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
         snapshot_dt = pd.to_datetime(pos.get("snapshot_date"), errors="coerce")

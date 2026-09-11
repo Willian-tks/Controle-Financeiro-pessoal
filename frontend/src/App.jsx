@@ -674,6 +674,7 @@ function formatValueOriginLabel(value) {
   if (key === "ajuste_manual") return "Ajuste manual";
   if (key === "motor") return "Motor automático";
   if (key === "cotacao") return "Cotação";
+  if (key === "custo_medio") return "Custo médio";
   return key || "-";
 }
 

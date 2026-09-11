@@ -135,7 +135,7 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
         self.assertAlmostEqual(10.0, float(row["qty"]), places=6)
         self.assertAlmostEqual(3505.0, float(row["cost_basis"]), places=2)
         self.assertAlmostEqual(3505.0, float(row["market_value"]), places=2)
-        self.assertEqual("cotacao", row["value_origin"])
+        self.assertEqual("custo_medio", row["value_origin"])
 
     def test_partial_fixed_income_sell_keeps_remaining_position(self):
         with db_module.get_conn() as conn:
@@ -332,3 +332,32 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
         row = pos.iloc[0]
         self.assertAlmostEqual(56115.98, float(row["market_value"]), places=2)
         self.assertEqual("motor", row["value_origin"])
+
+
+    def test_usd_etf_valuation_with_and_without_quote(self):
+        with db_module.get_conn() as conn:
+            asset_id = conn.execute(
+                "INSERT INTO assets(symbol, name, asset_class, sector, currency, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+                ("SPY", "SPY", "ETFs US", "ETF", "USD", self.uid),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (asset_id, "2026-08-17", "BUY", 0.64658795, 773.29, 5.2, 0, 0, self.uid),
+            )
+        cost = 0.64658795 * 773.29 * 5.2
+        for quote in (None, 800.0):
+            with self.subTest(quote=quote):
+                if quote:
+                    with db_module.get_conn() as conn:
+                        conn.execute(
+                            "INSERT INTO prices(asset_id, date, price, user_id) VALUES (?, ?, ?, ?)",
+                            (asset_id, "2026-08-17", quote, self.uid),
+                        )
+                expected = 0.64658795 * quote * 5.2 if quote else cost
+                pos, _, _ = invest_reports.portfolio_view(user_id=self.uid)
+                row = pos.iloc[0]
+                self.assertAlmostEqual(expected, row["market_value"], places=6)
+                self.assertAlmostEqual(expected, row["estimated_net_value"], places=6)
+                self.assertEqual("cotacao" if quote else "custo_medio", row["value_origin"])
+                history = invest_reports.investments_value_timeseries("2026-08-17", "2026-08-17", user_id=self.uid)
+                self.assertAlmostEqual(expected, history.iloc[0]["invest_market_value"], places=6)
