@@ -210,3 +210,10 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 - `requirements-dev.txt` inclui httpx para FastAPI TestClient.
 - Suíte local: 59 testes aprovados. A instalação limpa e o build Linux permanecem pendentes da primeira execução remota.
 - Proteção de branch com checks obrigatórios ainda não configurada. Não há deploy automático.
+
+### Correção da primeira execução CI
+
+- A execução GitHub Actions 35638743689 falhou no checkout dos dois jobs, antes dos testes.
+- Causa: gitlink legado `Controle-Financeiro-pessoal` sem configuração `.gitmodules`.
+- Referência órfã removida do índice; a pasta local estava vazia e não foi apagada.
+- Nova execução Linux pendente após envio da correção.
