@@ -1,0 +1,3 @@
+-r requirements.txt
+# FastAPI TestClient needs httpx; keep test-only dependencies out of production.
+httpx>=0.27,<1

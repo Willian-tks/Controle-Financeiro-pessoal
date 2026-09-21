@@ -18,3 +18,10 @@ desktop.ini
 secrets/
 BRAPI_TOKEN.txt
 frontend/.env.local
+
+# Logs do ambiente local
+work/local-logs/
+
+# Dependencias e caches instalados por plataforma
+node_modules/
+frontend/dist-next/

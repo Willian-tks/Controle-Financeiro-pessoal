@@ -90,3 +90,10 @@
   - V1 sem recorrência, modelos, valor real pago ou metas complexas
   - item com `sort_order` e `completion_date` já previstos desde a primeira versão
 - Ao retomar esse tema em nova sessão, começar pela `Fase 1 - Modelo de dados` do backlog e manter o escopo da V1 enxuto.
+
+## Planejamento versionado — 2026-09-21
+
+- O planejamento da versão-alvo 1.5.0 está em `Backlog1.5.md`, com prioridades, dependências e critérios de aceite.
+- Consultar esse documento antes de iniciar melhorias gerais; ele não implica que a versão 1.5 esteja implementada ou publicada.
+- Para Listas, consultar o status do `BACKLOG_MODULO_LISTAS_DOMUS.md`: a orientação antiga de começar pela Fase 1 está superada pelo backlog revisado. Validar pendências antes de iniciar nova implementação.
+- Atualizar o estado e as evidências dos itens durante a execução e registrar a versão/commit efetivamente publicados.

@@ -1,0 +1,73 @@
+name: DOMUS CI
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: domus-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend tests (SQLite)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LOCAL_DEV_FORCE_SQLITE: '1'
+      DATABASE_URL: ''
+      JWT_SECRET: ci-only-not-a-production-secret
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install backend and test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Verify dependency compatibility
+        run: python -m pip check
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+  frontend-build:
+    name: Frontend build (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      VITE_API_BASE_URL: ''
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Reject tracked installed dependencies
+        run: |
+          if [ -n "$(git ls-files node_modules)" ]; then
+            echo 'node_modules must not be tracked in Git.'
+            exit 1
+          fi
+      - name: Install dependencies from lockfile
+        run: npm ci --include=dev --include=optional
+      - name: Build frontend from source
+        run: npm run build -- --outDir dist-next
+      - name: Check generated entry point
+        run: test -s dist-next/index.html

@@ -80,8 +80,7 @@ Neste modelo, `VITE_API_BASE_URL` deve ficar vazio para o frontend usar a mesma 
 Build:
 
 ```bash
-npm install
-chmod +x node_modules/.bin/vite
+npm ci --include=dev --include=optional
 npm run build
 ```
 
@@ -189,27 +188,78 @@ sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx
 ```
 
-## 8. Atualizacao de deploy
+## 8. Atualizacao de deploy — versão 1.5 em preparação
 
-Fluxo recomendado para atualizar o VPS:
+O VPS observado usa `/opt/apps/domus` e `domus-api.service`. O template
+`deploy/systemd/controle-financeiro-api.service` é uma instalação alternativa,
+com caminho `/var/www/controle-financeiro`: não o copie sobre o serviço existente.
+Confirme `systemctl cat domus-api.service` e o caminho usado pelo Nginx antes de publicar.
+
+### Política de dependências e build
+
+- Node `22.12.0` e Python `3.12.4` são a referência do ambiente local desta etapa,
+  registrada em `.nvmrc` e `.python-version`; a validação Linux ainda está pendente.
+- Instalar o frontend com `npm ci --include=dev --include=optional`, usando o lockfile.
+- `node_modules` deixa de ser versionado. Nunca copiar dependências Windows para Linux.
+- O backend ainda usa intervalos em `requirements.txt`; seu congelamento reproduzível
+  permanece pendente. Não tratar esses intervalos como um lockfile.
+- Nesta transição, `frontend/dist` continua versionado para evitar sua remoção abrupta
+  no servidor. O build gerado no Linux para o commit implantado é a referência de publicação.
+- Não executar `npm ci` no ambiente local enquanto o Vite estiver em uso.
+
+### Antes da atualização
+
+1. Registrar o commit atual com `git rev-parse HEAD`, a unidade systemd ativa e as versões de runtime.
+2. Fazer backup do frontend servido e das configurações fora do checkout.
+3. Se houver mudança de banco, produzir backup consistente: SQLite via API de backup
+   ou com serviço parado; PostgreSQL via ferramenta apropriada. Não copiar SQLite em escrita.
+4. Inspecionar `git status --short`. Preservar alterações legítimas antes do pull;
+   não usar `git reset --hard`, `git clean` ou stash indiscriminado como rotina.
+5. Na primeira atualização que remove `node_modules` do Git, caches locais podem impedir
+   o pull. Revisar as diferenças e preservar apenas essa pasta gerada fora do checkout
+   antes da atualização; não descartar código ou configurações para resolver o conflito.
+
+### Preparar e publicar
+
+Execute cada etapa somente se a anterior terminar sem erro:
 
 ```bash
 cd /opt/apps/domus
-git stash push -u -m "tmp-vps" # se houver alteracoes locais
-git pull origin main
+git pull --ff-only origin main
 cd frontend
-printf 'VITE_API_BASE_URL=\n' > .env.production
-npm run build
-sudo systemctl reload nginx
-sudo systemctl restart controle-financeiro-api
-sudo systemctl restart domus-update-quotes.timer
+npm ci --include=dev --include=optional
+VITE_API_BASE_URL= npm run build -- --outDir dist-next
 ```
 
-Se `npm run build` falhar com `vite: Permission denied`:
+O build é preparado em `dist-next`, sem sobrescrever o site servido durante a compilação.
+Verifique o conteúdo e a ausência de URL local de API nos arquivos gerados.
+Depois de preservar uma cópia do `dist` atual fora do checkout, promova o novo build
+em janela controlada. A promoção automatizada/atômica será validada em etapa posterior.
+Não publicar `dist-next` se o build falhar.
+
+Após promover o build:
 
 ```bash
-chmod +x node_modules/.bin/vite
+sudo systemctl restart domus-api.service
+sudo systemctl is-active domus-api.service
+curl --fail http://127.0.0.1:8000/health
+sudo nginx -t
 ```
+
+Recarregue o Nginx apenas se sua configuração mudou. Não é necessário reiniciar
+os timers de cotações quando eles não foram alterados. Valide login, Dashboard,
+Lançamentos e Investimentos pelo endereço público, incluindo atualização do navegador.
+
+### Reversão
+
+- Conservar o commit anterior e o backup do frontend até a validação pós-deploy.
+- Em caso de falha, restaurar o artefato anterior e preparar o código do commit anterior
+  em checkout controlado, preservando `.env`, dados e permissões do serviço.
+- Antes de reverter backend com migração de banco, verificar compatibilidade do schema.
+  Restauração de backup de dados exige avaliar lançamentos feitos após o backup.
+- Reiniciar a unidade correta e repetir as verificações de saúde e navegação.
+- Registrar commit, data e resultado da reversão. Este procedimento ainda exige ensaio
+  em ambiente controlado antes de considerar o item 1.5-001 concluído.
 
 ## 9. Observacoes importantes
 
@@ -227,3 +277,22 @@ chmod +x node_modules/.bin/vite
 - `nginx -t` valido
 - `curl http://SEU_IP/dashboard/kpis` responde API, nao `index.html`
 - HTTPS ativo
+
+## 11. Verificações automáticas — DOMUS CI
+
+O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`codex/**`,
+PRs para `main` e por acionamento manual na aba Actions.
+
+- `Backend tests (SQLite)`: instala `requirements-dev.txt`, executa `pip check`
+  e a suíte unittest em Python definido por `.python-version`.
+- `Frontend build (Linux)`: usa `.nvmrc`, instala pelo lockfile com `npm ci`,
+  impede dependências instaladas versionadas e compila em `dist-next`.
+- Os jobs rodam em Ubuntu 24.04, sem credenciais de produção e sem deploy.
+- Cache guarda downloads de dependências; não substitui instalação limpa.
+- A primeira execução remota só ocorrerá após enviar estes arquivos ao GitHub.
+- Após a primeira execução aprovada, configurar os dois checks como obrigatórios
+  na proteção de `main`, se disponível no repositório. O workflow sozinho não bloqueia merges/pushes.
+- CI não comprova compatibilidade PostgreSQL nem valida publicação/reversão no VPS.
+
+Referências das actions: https://github.com/actions/checkout,
+https://github.com/actions/setup-node e https://github.com/actions/setup-python.
