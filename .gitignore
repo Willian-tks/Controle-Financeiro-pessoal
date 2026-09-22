@@ -25,3 +25,4 @@ work/local-logs/
 # Dependencias e caches instalados por plataforma
 node_modules/
 frontend/dist-next/
+frontend/dist-backup-*/

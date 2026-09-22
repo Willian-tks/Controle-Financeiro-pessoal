@@ -234,7 +234,7 @@ VITE_API_BASE_URL= npm run build -- --outDir dist-next
 O build é preparado em `dist-next`, sem sobrescrever o site servido durante a compilação.
 Verifique o conteúdo e a ausência de URL local de API nos arquivos gerados.
 Depois de preservar uma cópia do `dist` atual fora do checkout, promova o novo build
-em janela controlada. A promoção automatizada/atômica será validada em etapa posterior.
+em janela controlada. O utilitário da seção 12 automatiza a promoção e reversão; sua validação Linux permanece pendente.
 Não publicar `dist-next` se o build falhar.
 
 Após promover o build:
@@ -296,3 +296,33 @@ PRs para `main` e por acionamento manual na aba Actions.
 
 Referências das actions: https://github.com/actions/checkout,
 https://github.com/actions/setup-node e https://github.com/actions/setup-python.
+
+## 12. Promoção e reversão do frontend
+
+Após gerar e verificar `frontend/dist-next`, a partir da raiz do checkout:
+
+```bash
+python3 deploy/frontend_release.py promote --frontend /opt/apps/domus/frontend
+```
+
+O comando preserva `dist` em uma pasta `dist-backup-*` e informa seu caminho.
+Registre esse nome junto do commit implantado. Para voltar ao build preservado:
+
+```bash
+python3 deploy/frontend_release.py rollback --frontend /opt/apps/domus/frontend --backup NOME_DIST_BACKUP_INFORMADO
+```
+
+Substitua o nome pelo backup real; não copie o placeholder literalmente.
+A versão substituída na reversão também é preservada. O script não apaga backups,
+não modifica banco ou configurações e não reinicia serviços. Ele verifica a existência
+do index.html; testes funcionais e a integridade dos demais assets continuam necessários.
+
+Execute uma publicação por vez. A troca usa duas renomeações e não é atômica:
+há uma pequena janela sem `dist`; execute em janela de manutenção. Erros de renomeação
+restauram a versão anterior quando possível; interrupção abrupta do processo ou falha
+de disco pode exigir recuperar manualmente a pasta preservada. Não executar limpeza
+automática dos backups. Este utilitário não faz rollback de backend/schema.
+
+Validação inicial: testes em diretórios temporários no Windows, incluindo promoção,
+reversão, candidato inválido, proteção de caminho e falhas simuladas. A suíte CI existente
+inclui estes testes após o próximo push. Ensaio Linux/VPS permanece pendente.

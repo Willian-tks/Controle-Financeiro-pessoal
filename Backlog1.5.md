@@ -187,7 +187,7 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 | Item | Estado | Evidência / commit | Validação local | Publicação / validação VPS |
 |---|---|---|---|---|
 | DOMUS-1.5-001 | Em andamento | Dependências removidas do índice Git; arquivos locais preservados; guia de deploy revisado; runtimes locais registrados | API e login local verificados; Linux e reversão pendentes | Não publicada |
-| DOMUS-1.5-003 | Em andamento | Workflow DOMUS CI criado; dependência httpx declarada para testes | 59 testes Python aprovados; workflow Linux ainda não executado | Aguardando envio ao GitHub |
+| DOMUS-1.5-003 | Em andamento | Workflow DOMUS CI criado; dependência httpx declarada para testes | 59 testes Python locais aprovados; CI Linux aprovado no commit 7d01078 | CI publicado; VPS não validado |
 | DOMUS-1.5-002 e 004 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
 
 ## Histórico do documento
@@ -217,3 +217,18 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 - Causa: gitlink legado `Controle-Financeiro-pessoal` sem configuração `.gitmodules`.
 - Referência órfã removida do índice; a pasta local estava vazia e não foi apagada.
 - Nova execução Linux pendente após envio da correção.
+
+### Retomada — 2026-09-22
+
+- CI aprovado: execução [35639530907](https://github.com/Willian-tks/Controle-Financeiro-pessoal/actions/runs/35639530907), commit `7d01078`, verificada no GitHub na sessão anterior.
+- Essa evidência supera as pendências históricas de primeira execução Linux acima: instalação e build do frontend e testes backend concluíram no CI.
+- Os itens 001 e 003 permanecem em andamento: ainda faltam ensaio de publicação/reversão, dependências Python reproduzíveis, proteção de branch e verificações adicionais previstas.
+- Ambiente local: API inicia pelo Codex; Vite encontra restrição de leitura neste ambiente e precisa ser iniciado pelo PowerShell do usuário, conforme validado na sessão anterior.
+
+### Publicação e reversão do frontend — 2026-09-22
+
+- Implementado `deploy/frontend_release.py`: promoção de dist-next, preservação de dist e reversão explícita por nome de backup.
+- Cinco testes em diretórios temporários cobrem sucesso, candidato inválido, caminho inválido e falhas de promoção/reversão.
+- Troca não atômica: exige janela controlada; não trata banco nem backend.
+- CI executará os novos testes no próximo envio; ensaio Linux/VPS ainda pendente.
+- Item 1.5-001 permanece Em andamento; ambiente local servido não foi alterado pelo ensaio.
