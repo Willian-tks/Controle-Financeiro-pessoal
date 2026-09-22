@@ -201,8 +201,7 @@ Confirme `systemctl cat domus-api.service` e o caminho usado pelo Nginx antes de
   registrada em `.nvmrc` e `.python-version`; a validação Linux ainda está pendente.
 - Instalar o frontend com `npm ci --include=dev --include=optional`, usando o lockfile.
 - `node_modules` deixa de ser versionado. Nunca copiar dependências Windows para Linux.
-- O backend ainda usa intervalos em `requirements.txt`; seu congelamento reproduzível
-  permanece pendente. Não tratar esses intervalos como um lockfile.
+- O backend usa os locks com hashes descritos na seção 14; a nova resolução ainda deve passar no CI Linux antes da publicação.
 - Nesta transição, `frontend/dist` continua versionado para evitar sua remoção abrupta
   no servidor. O build gerado no Linux para o commit implantado é a referência de publicação.
 - Não executar `npm ci` no ambiente local enquanto o Vite estiver em uso.
@@ -326,3 +325,62 @@ automática dos backups. Este utilitário não faz rollback de backend/schema.
 Validação inicial: testes em diretórios temporários no Windows, incluindo promoção,
 reversão, candidato inválido, proteção de caminho e falhas simuladas. A suíte CI existente
 inclui estes testes após o próximo push. Ensaio Linux/VPS permanece pendente.
+
+## 13. Ensaio isolado no VPS, sem atualizar produção
+
+O commit `056ee88` contém o utilitário e os cinco testes de publicação/reversão.
+O ensaio abaixo extrai apenas esses arquivos para uma pasta temporária. Não faz
+`git pull`, não instala dependências e não reinicia serviços. Os testes usam builds
+mínimos de teste; não equivalem a validar Nginx, permissões do serviço ou o build real.
+
+```bash
+cd /opt/apps/domus &&
+git fetch origin main &&
+git cat-file -e 056ee88^{commit} &&
+ensaio_domus=$(mktemp -d /tmp/domus-release-test.XXXXXX) &&
+git archive --format=tar --output="$ensaio_domus/rehearsal.tar" 056ee88 deploy/frontend_release.py tests/test_frontend_release.py &&
+tar -xf "$ensaio_domus/rehearsal.tar" -C "$ensaio_domus" &&
+cd "$ensaio_domus" &&
+/opt/apps/domus/.venv/bin/python -m unittest discover -s tests -p 'test_frontend_release.py' -v
+```
+
+Usar Python 3.10 ou superior (referência do projeto: 3.12.4). O ambiente virtual
+acima é o esperado no guia; ajustar o executável se o serviço usar outro caminho.
+Resultado esperado: `Ran 5 tests` e `OK`. Registrar saída e data no backlog.
+A pasta de ensaio é preservada para inspeção; os dados temporários dos testes são
+limpos pelo próprio unittest. Sem esse resultado, o ensaio VPS segue pendente.
+
+## 14. Dependências Python fixadas
+
+- `requirements.in` e `requirements-dev.in` declaram as dependências diretas.
+- `requirements.lock` e `requirements-dev.lock` fixam dependências transitivas e hashes.
+- `requirements.txt` e `requirements-dev.txt` encaminham para os locks com `--require-hashes`.
+- `api/requirements.txt` reutiliza o mesmo conjunto de produção, evitando versões divergentes.
+- Resolução feita com uv 0.12.17, Python 3.12, modo universal (marcadores por plataforma).
+  A referência inicial foi o ambiente local que já passava nos testes, não uma atualização geral.
+
+Instalação de produção em ambiente virtual novo:
+
+```bash
+python3.12 -m venv .venv-next
+.venv-next/bin/python -m pip install -r requirements.txt
+.venv-next/bin/python -m pip check
+```
+
+Para testes, usar `requirements-dev.txt` em ambiente separado. Não é necessário instalar uv
+no servidor: pip consome os arquivos gerados. Não substituir o ambiente ativo antes da
+validação em Linux e da preparação de reversão. Estes locks não são uma auditoria de segurança;
+atualizações devem ter revisão própria. Pacotes distribuídos como fonte podem precisar compilar:
+os hashes fixam a distribuição de origem, não garantem artefatos binários idênticos.
+
+Regeneração controlada (ambiente de ferramentas com `uv==0.12.17`):
+
+```bash
+uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes --constraint requirements-dev.lock --output-file work/requirements-dev.next.lock
+uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --constraint work/requirements-dev.next.lock --output-file work/requirements.next.lock
+```
+
+Revisar os arquivos novos, substituir os locks correspondentes e executar instalação limpa,
+`pip check`, testes e CI. Para atualizar versões, revisar explicitamente as constraints; não editar
+hashes à mão. Guardar locks anteriores no histórico Git para reconstruir a versão anterior.
+No Windows, preferir cache uv em caminho temporário curto se surgir WinError 206.

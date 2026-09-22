@@ -232,3 +232,30 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 - Troca não atômica: exige janela controlada; não trata banco nem backend.
 - CI executará os novos testes no próximo envio; ensaio Linux/VPS ainda pendente.
 - Item 1.5-001 permanece Em andamento; ambiente local servido não foi alterado pelo ensaio.
+
+### Ensaio isolado preparado — 2026-09-22
+
+- Usuário informou aprovação do CI do commit `056ee88`.
+- Extração limpa de apenas utilitário e testes do commit `056ee88` validada localmente em diretório temporário: 5 testes aprovados.
+- Seção 13 do guia contém comandos para repetir no VPS sem atualizar o checkout de produção.
+- O ensaio cobre renomeação, preservação e recuperação com builds mínimos; não valida o build servido nem Nginx.
+- Execução no VPS depende do terminal do usuário; não há sessão SSH disponível nesta tarefa. Item 001 permanece Em andamento.
+
+### Ensaio VPS aprovado — 2026-09-22
+
+- Evidência: saída do terminal VPS enviada pelo usuário; commit extraído `056ee88`.
+- Cinco testes executados em `/tmp/domus-release-test.*` com o Python do ambiente virtual do VPS: todos aprovados (`Ran 5 tests`, `OK`).
+- Cobertura: promoção/reversão com builds mínimos, preservação das versões, rejeição de candidato inválido, proteção de caminho e recuperação de falhas simuladas.
+- O comando executou `git fetch` e extraiu arquivos em pasta temporária; não atualizou o checkout servido nem reiniciou serviços.
+- Esta evidência substitui a pendência do ensaio isolado no VPS nas notas anteriores. Não comprova publicação de um build real, configuração Nginx, interrupção abrupta ou reversão de backend/banco.
+- Próxima etapa do item 001: tornar reproduzíveis as dependências Python; depois validar a publicação operacional real em janela controlada.
+- Item 001 permanece Em andamento.
+
+### Dependências Python fixadas — 2026-09-22
+
+- Criados requirements.in/requirements-dev.in e locks de produção/testes com versões exatas e hashes, resolvidos para Python 3.12 em modo universal.
+- requirements.txt, requirements-dev.txt e api/requirements.txt agora usam os locks; cache CI inclui os dois arquivos gerados.
+- Instalação isolada Windows via uv sync com verificação de hashes: 41 pacotes; pip check sem incompatibilidades; 64 testes aprovados.
+- Resolução baseada nas versões locais existentes. Pacotes de produção e testes têm versões compartilhadas coerentes.
+- Aplicação local e ambiente do VPS não foram reinstalados.
+- Validação Linux dos novos locks pendente do próximo CI; instalação de produção real permanece pendente. Item 001 segue Em andamento.

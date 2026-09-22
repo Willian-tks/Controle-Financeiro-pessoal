@@ -26,3 +26,9 @@ work/local-logs/
 node_modules/
 frontend/dist-next/
 frontend/dist-backup-*/
+
+# Ambientes isolados de resolucao e validacao Python
+work/lock-tools/
+work/locked-validation/
+work/uv-cache/
+work/baseline-constraints.txt
