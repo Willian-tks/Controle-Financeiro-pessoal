@@ -21,7 +21,10 @@ class ValuationContract:
             for table in ("investment_fx_rates", "prices", "asset_prices", "trades", "income_events",
                           "assets", "workspace_users", "workspaces", "users"):
                 conn.execute(f"DELETE FROM {table}")
-            conn.execute("INSERT INTO users(id, email, password_hash, display_name, role, is_active) VALUES (9001, 'fx@test.invalid', 'x', 'Test', 'user', 1)")
+            conn.execute(
+                "INSERT INTO users(id, email, password_hash, display_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+                (9001, "fx@test.invalid", "x", "Test", "user", True),
+            )
             conn.execute("INSERT INTO workspaces(id, name, owner_user_id, status) VALUES (7001, 'FX Test', 9001, 'active')")
             conn.execute("INSERT INTO workspaces(id, name, owner_user_id, status) VALUES (7002, 'Other', 9001, 'active')")
             for asset_id, currency, workspace in [(8001, "USD", 7001), (8002, "BRL", 7001), (8003, "USD", 7002)]:

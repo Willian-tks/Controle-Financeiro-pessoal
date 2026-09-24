@@ -306,3 +306,9 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 - Build local realizado pela API JavaScript do Vite, importando o mesmo vite.config.js diretamente, pois o empacotamento da configuração pelo esbuild encontra restrição de leitura em pasta ancestral no Windows. Saída isolada em dist-next; configuração e dependências do projeto preservadas.
 - Itens 002 e 003 ficam **Em validação**, sem declaração de conclusão antes das evidências pendentes. Nenhuma publicação ou alteração de operações de produção nesta etapa.
 - Evidências finais locais: 76 testes Python aprovados, build frontend aprovado (aviso preexistente de bundle >500 kB), compilação Python e diff --check sem erros.
+
+### Correção da preparação PostgreSQL — 2026-09-24
+
+- CI #5 (commit 64976e8): SQLite e frontend aprovados; PostgreSQL falhou antes dos cálculos, na criação do usuário da fixture.
+- Causa: literal inteiro 1 enviado para users.is_active, que é BOOLEAN no PostgreSQL. Corrigido para parâmetro Python True, compatível com ambos os drivers.
+- Nove testes locais de avaliação/provedor aprovados após a correção. A execução PostgreSQL permanece pendente do novo CI; nenhum teste foi removido ou desativado.
