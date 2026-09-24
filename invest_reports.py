@@ -1,5 +1,7 @@
 import pandas as pd
 import re
+import math
+import invest_fx
 from contextvars import ContextVar
 
 from db import get_conn
@@ -176,7 +178,7 @@ def df_latest_asset_snapshots(user_id: int | None = None):
 
 def positions_avg_cost(trades_df: pd.DataFrame):
     if trades_df.empty:
-        return pd.DataFrame(columns=["asset_id", "symbol", "asset_class", "qty", "avg_cost", "cost_basis", "realized_pnl"])
+        return pd.DataFrame(columns=["asset_id", "symbol", "asset_class", "qty", "avg_cost", "cost_basis", "realized_pnl", "last_fx", "last_fx_date", "cost_warning"])
 
     trades_df = trades_df.sort_values(["date", "id"]).copy()
     state = {}
@@ -193,7 +195,7 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         taxes = float(r["taxes"] or 0.0)
         exchange_rate = float(r.get("exchange_rate") or 1.0)
         is_usd = str(r.get("currency") or "").strip().upper() == "USD"
-        fx = exchange_rate if is_usd and exchange_rate > 0 else 1.0
+        fx = exchange_rate if is_usd and math.isfinite(exchange_rate) and exchange_rate > 0 else 1.0
         gross_brl = qty * price * fx
         fees_brl = fees * fx if is_usd else fees
         taxes_brl = taxes * fx if is_usd else taxes
@@ -201,10 +203,13 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         is_fixed_income = cls_norm in _FIXED_INCOME_CLASSES
 
         if aid not in state:
-            state[aid] = dict(symbol=sym, asset_class=cls, qty=0.0, cost_basis=0.0, realized_pnl=0.0, last_fx=1.0)
+            state[aid] = dict(symbol=sym, asset_class=cls, qty=0.0, cost_basis=0.0, realized_pnl=0.0, last_fx=1.0, cost_warning="")
 
         s = state[aid]
+        if is_usd and (not math.isfinite(exchange_rate) or exchange_rate <= 0 or exchange_rate == 1):
+            s["cost_warning"] = " Conferir câmbio histórico das operações; custo pode estar estimado."
         s["last_fx"] = fx
+        s["last_fx_date"] = pd.Timestamp(r["date"]).strftime("%Y-%m-%d")
         if side == "BUY":
             s["qty"] += qty
             buy_cost = (gross_brl + fees_brl) if is_fixed_income else (gross_brl + fees_brl + taxes_brl)
@@ -236,23 +241,22 @@ def positions_avg_cost(trades_df: pd.DataFrame):
                 "cost_basis": s["cost_basis"],
                 "realized_pnl": s["realized_pnl"],
                 "last_fx": s["last_fx"],
+                "last_fx_date": s["last_fx_date"],
+                "cost_warning": s["cost_warning"],
             }
         )
 
     return pd.DataFrame(rows)
 
 
-def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
-    tdf = df_trades(date_from, date_to, user_id=user_id)
-    pos = positions_avg_cost(tdf)
-
-    prices = df_latest_prices(user_id=user_id)
+def _value_positions(pos, assets, prices, snapshots, date_to, fx_rates):
+    """All position values are BRL; quoted prices are in the asset currency."""
+    pos = pos.copy()
     if not prices.empty and not pos.empty:
         pos = pos.merge(prices[["asset_id", "price", "price_date"]], on="asset_id", how="left")
     else:
         pos["price"] = 0.0
         pos["price_date"] = None
-    snapshots = df_latest_asset_snapshots(user_id=user_id)
     if not snapshots.empty and not pos.empty:
         pos = pos.merge(
             snapshots[["asset_id", "snapshot_price", "snapshot_date", "snapshot_source"]],
@@ -273,7 +277,6 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     # Assim uma compra recém-registrada aparece na carteira até a primeira cotação.
     pos.loc[missing_price_mask, "price"] = avg_cost_price[missing_price_mask]
 
-    assets = df_assets(user_id=user_id)
     if not assets.empty and not pos.empty:
         pos = pos.merge(
             assets.rename(columns={"id": "asset_id"})[
@@ -296,11 +299,30 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
         if "rentability_type" not in pos.columns:
             pos["rentability_type"] = None
 
-    fx = pd.to_numeric(pos.get("last_fx", 1.0), errors="coerce").fillna(1.0)
-    is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
-    # O custo médio usado sem cotação já está em BRL.
-    fx_factor = fx.where(is_usd_asset & ~missing_price_mask, 1.0)
-    pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
+    # Evaluation FX is independent of acquisition costs. Never convert BRL cost twice.
+    reference = invest_fx.reference_at(fx_rates, date_to)
+    usd_quote = pos["currency"].astype(str).str.strip().str.upper().eq("USD") & ~missing_price_mask
+    pos["valuation_fx"] = 1.0
+    pos["fx_source"] = "BRL"
+    pos["fx_ref_date"] = None
+    pos["valuation_warning"] = ""
+    pos.loc[missing_price_mask, "fx_source"] = "Custo histórico em BRL"
+    pos.loc[missing_price_mask, "valuation_warning"] = "Sem cotação: valor estimado pelo custo histórico."
+    if reference:
+        pos.loc[usd_quote, "valuation_fx"] = float(reference["rate"])
+        pos.loc[usd_quote, "fx_source"] = reference["source"]
+        pos.loc[usd_quote, "fx_ref_date"] = str(reference["rate_date"])
+        if (pd.Timestamp(date_to) - pd.Timestamp(reference["rate_date"])).days > 4:
+            pos.loc[usd_quote, "valuation_warning"] = "Câmbio sem atualização há mais de 4 dias."
+    else:
+        pos.loc[usd_quote, "valuation_fx"] = pos.loc[usd_quote, "last_fx"]
+        pos.loc[usd_quote, "fx_source"] = "Estimativa: câmbio da operação"
+        pos.loc[usd_quote, "fx_ref_date"] = pos.loc[usd_quote, "last_fx_date"]
+        pos.loc[usd_quote, "valuation_warning"] = "Sem PTAX: estimativa pelo câmbio da última operação."
+    quote_dates = pd.to_datetime(pos.get("price_date"), errors="coerce")
+    stale_quotes = ~missing_price_mask & ((pd.Timestamp(date_to) - quote_dates).dt.days > 4)
+    pos.loc[stale_quotes, "valuation_warning"] += " Cotação do ativo sem atualização há mais de 4 dias."
+    pos["market_value"] = pos["qty"] * pos["price"] * pos["valuation_fx"]
     open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
     pos["value_origin"] = "cotacao"
     pos.loc[missing_price_mask, "value_origin"] = "custo_medio"
@@ -310,7 +332,8 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     snapshot_price = pd.to_numeric(pos.get("snapshot_price", 0.0), errors="coerce").fillna(0.0)
     snapshot_dt = pd.to_datetime(pos.get("snapshot_date"), errors="coerce")
     current_dt = pd.to_datetime(pos.get("last_update"), errors="coerce")
-    snapshot_current = current_dt.isna() | snapshot_dt.isna() | (snapshot_dt >= current_dt)
+    current_in_period = current_dt.notna() & (current_dt <= pd.Timestamp(date_to)) if date_to else pd.Series(True, index=pos.index)
+    snapshot_current = ~current_in_period | current_dt.isna() | snapshot_dt.isna() | (snapshot_dt >= current_dt)
     snapshot_override_mask = fixed_income_mask & open_position_mask & (snapshot_price > 0) & snapshot_current
     pos.loc[snapshot_override_mask, "market_value"] = snapshot_price[snapshot_override_mask]
     pos.loc[snapshot_override_mask, "value_origin"] = "ajuste_manual"
@@ -318,15 +341,35 @@ def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
     cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
     rf_mask = pos.get("asset_class", "").astype(str).map(_norm_asset_class).isin(_FIXED_INCOME_CLASSES)
     stale_snapshot_mask = (snapshot_price <= 0) | ~snapshot_current
-    auto_mask = rf_mask & open_position_mask & stale_snapshot_mask & (cv > 0)
+    auto_mask = rf_mask & open_position_mask & stale_snapshot_mask & current_in_period & (cv > 0)
     pos.loc[auto_mask, "market_value"] = cv[auto_mask]
     pos.loc[auto_mask, "value_origin"] = "motor"
     pos.loc[auto_mask, "value_ref_date"] = pos.loc[auto_mask, "last_update"]
+    fixed_override = snapshot_override_mask | auto_mask
+    pos.loc[fixed_override, "valuation_warning"] = ""
+    pos.loc[fixed_override, "fx_source"] = "Saldo em BRL"
+    pos.loc[fixed_override, "valuation_fx"] = 1.0
+    pos.loc[fixed_override, "fx_ref_date"] = None
+    pos["valuation_warning"] += pos["cost_warning"]
     pos["market_value_gross"] = pos["market_value"]
     # Sem uma regra fiscal configurada por ativo, o líquido estimado replica o bruto.
     pos["estimated_discount"] = 0.0
     pos["estimated_net_value"] = pos["market_value_gross"] - pos["estimated_discount"]
     pos["unrealized_pnl"] = pos["market_value"] - pos["cost_basis"]
+
+    return pos
+
+
+def portfolio_view(date_from=None, date_to=None, user_id: int | None = None):
+    date_to = str(date_to or invest_fx.today())[:10]
+    # date_from filters period income, never the inventory acquired earlier.
+    tdf = df_trades(None, date_to, user_id=user_id)
+    pos = _value_positions(
+        positions_avg_cost(tdf), df_assets(user_id=user_id),
+        df_prices_upto(date_to, user_id=user_id),
+        df_asset_snapshots_upto(date_to, user_id=user_id),
+        date_to, invest_fx.load_rates(),
+    )
 
     inc = df_income(date_from, date_to, user_id=user_id)
     if not inc.empty and not pos.empty:
@@ -414,6 +457,7 @@ def investments_value_timeseries(
     if asset_class and not incomes_df.empty:
         incomes_df = incomes_df[incomes_df["asset_class"].astype(str) == selected].copy()
     out = []
+    fx_rates = invest_fx.load_rates()
 
     for d in dates:
         d_str = d.strftime("%Y-%m-%d")
@@ -422,52 +466,10 @@ def investments_value_timeseries(
         if pos.empty:
             continue
 
-        prices = df_prices_upto(d_str, user_id=user_id)
-        if not prices.empty:
-            pos = pos.merge(prices[["asset_id", "price"]], on="asset_id", how="left")
-        else:
-            pos["price"] = 0.0
-        snapshots = df_asset_snapshots_upto(d_str, user_id=user_id)
-        if not snapshots.empty:
-            pos = pos.merge(snapshots[["asset_id", "snapshot_price", "snapshot_date"]], on="asset_id", how="left")
-        else:
-            pos["snapshot_price"] = 0.0
-            pos["snapshot_date"] = None
-
-        if not assets.empty:
-            pos = pos.merge(
-                assets.rename(columns={"id": "asset_id"})[["asset_id", "currency", "current_value", "last_update"]],
-                on="asset_id",
-                how="left",
-            )
-        else:
-            pos["currency"] = None
-            pos["current_value"] = None
-            pos["last_update"] = None
-
-        pos["price"] = pd.to_numeric(pos["price"], errors="coerce").fillna(0.0)
-        pos["snapshot_price"] = pd.to_numeric(pos.get("snapshot_price", 0.0), errors="coerce").fillna(0.0)
-        cls_norm = pos.get("asset_class", "").astype(str).map(_norm_asset_class)
-        fixed_income_mask = cls_norm.isin(_FIXED_INCOME_CLASSES)
-        missing_price_mask = pos["price"] <= 0
-        avg_cost_price = pd.to_numeric(pos.get("avg_cost", 0.0), errors="coerce").fillna(0.0)
-        pos.loc[missing_price_mask, "price"] = avg_cost_price[missing_price_mask]
-        fx = pd.to_numeric(pos.get("last_fx", 1.0), errors="coerce").fillna(1.0)
-        is_usd_asset = pos.get("currency", "").astype(str).str.upper().eq("USD")
-        # O custo médio usado sem cotação já está em BRL.
-        fx_factor = fx.where(is_usd_asset & ~missing_price_mask, 1.0)
-        pos["market_value"] = pos["qty"] * pos["price"] * fx_factor
-        open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
-        snapshot_dt = pd.to_datetime(pos.get("snapshot_date"), errors="coerce")
-        current_dt = pd.to_datetime(pos.get("last_update"), errors="coerce")
-        current_applies_to_day = current_dt.notna() & (current_dt <= d)
-        snapshot_current = current_dt.isna() | snapshot_dt.isna() | (snapshot_dt >= current_dt)
-        snapshot_override_mask = fixed_income_mask & open_position_mask & (pos["snapshot_price"] > 0) & snapshot_current
-        pos.loc[snapshot_override_mask, "market_value"] = pos.loc[snapshot_override_mask, "snapshot_price"]
-        cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
-        stale_snapshot_mask = (pos["snapshot_price"] <= 0) | ~snapshot_current
-        current_value_mask = fixed_income_mask & open_position_mask & current_applies_to_day & stale_snapshot_mask & (cv > 0)
-        pos.loc[current_value_mask, "market_value"] = cv[current_value_mask]
+        pos = _value_positions(
+            pos, assets, df_prices_upto(d_str, user_id=user_id),
+            df_asset_snapshots_upto(d_str, user_id=user_id), d_str, fx_rates,
+        )
         income_amount = 0.0
         if incomes_df is not None and not incomes_df.empty:
             income_amount = float(

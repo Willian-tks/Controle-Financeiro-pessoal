@@ -4874,9 +4874,9 @@ export default function App() {
       const report = Array.isArray(out.report) ? out.report : [];
       const failed = report.filter((row) => !row?.ok).length;
       setInvestPriceUpdateReport(report);
-      setInvestMsg(`Cotações salvas: ${out.saved}/${out.total}${failed ? ` | Falhas: ${failed}` : ""}`);
+      setInvestMsg(`Cotações salvas: ${out.saved}/${out.total}${failed ? ` | Falhas: ${failed}` : ""}${out.fx?.ok === false ? " | PTAX indisponível; referência anterior preservada." : ""}`);
       if (!silentSuccess) {
-        showGlobalSuccess("Cotações atualizadas.");
+        showGlobalSuccess(failed || out.fx?.ok === false ? "Atualização concluída com pendências. Consulte os detalhes." : "Cotações atualizadas.");
       }
       if (reloadAfter) {
         await reloadInvestData();
@@ -6001,9 +6001,12 @@ export default function App() {
               <article className="card dash-invest-card">
                 <h3>Resumo de investimentos</h3>
                 <p className="dash-invest-total">
-                  Total investido: <strong>{brl.format(Number(investmentTotal || 0))}</strong>
+                  Valor de mercado (BRL): <strong>{brl.format(Number(investmentTotal || 0))}</strong>
                 </p>
-                <p className="tx-helper">Distribuição consolidada por classe para identificar concentração e peso relativo da carteira.</p>
+                <p className="tx-helper">Distribuição pelo valor de mercado, em reais. O custo de aquisição está disponível em Investimentos.</p>
+                {(investPortfolio?.positions || []).some((p) => Number(p.qty) > 0 && p.valuation_warning) ? (
+                  <p className="tx-helper">Há valores estimados ou referências antigas. Confira as datas e os avisos na carteira de investimentos.</p>
+                ) : null}
                 {investmentRadialData.length ? (
                   <div className="dash-invest-layout">
                     <ul className="dash-legend">
@@ -8143,8 +8146,10 @@ export default function App() {
                             <td>{brl.format(Number(p.cost_basis || 0))}</td>
                             <td>{brl.format(Number((p.market_value_gross ?? p.market_value) || 0))}</td>
                             <td>{brl.format(Number((p.estimated_net_value ?? p.market_value) || 0))}</td>
-                            <td>{formatValueOriginLabel(p.value_origin)}</td>
-                            <td>{formatIsoDatePtBr(p.value_ref_date)}</td>
+                            <td>{formatValueOriginLabel(p.value_origin)}{p.valuation_warning ? <small className="tx-helper" style={{ display: "block" }}>{p.valuation_warning}</small> : null}</td>
+                            <td>{formatIsoDatePtBr(p.value_ref_date)}{p.currency === "USD" ? <small className="tx-helper" style={{ display: "block" }}>
+                              {p.fx_source}{p.fx_ref_date ? `: ${Number(p.valuation_fx).toLocaleString("pt-BR", { minimumFractionDigits: 4 })} em ${formatIsoDatePtBr(p.fx_ref_date)}` : ""}
+                            </small> : null}</td>
                             <td>{brl.format(Number(p.unrealized_pnl || 0))}</td>
                           </tr>
                         ))}
