@@ -23,6 +23,7 @@ import invest_rentability
 import invest_repo
 import invest_reports
 import invest_quotes
+import invest_fx
 import lists_repo
 import repo
 import reports
@@ -162,7 +163,7 @@ def _build_investments_report_html(
     selected_class = _safe_asset_class_filter(asset_class)
     report_date = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
 
-    pos, _, _ = invest_reports.portfolio_view(user_id=user_id)
+    pos, _, _ = invest_reports.portfolio_view(date_from=date_from, date_to=date_to, user_id=user_id)
     trades_df = invest_reports.df_trades(date_from=date_from, date_to=date_to, user_id=user_id)
     incomes_df = invest_reports.df_income(date_from=date_from, date_to=date_to, user_id=user_id)
 
@@ -227,6 +228,8 @@ def _build_investments_report_html(
                     _format_brl(row.get("cost_basis")),
                     _format_brl(row.get("market_value")),
                     _format_pct(row.get("participation_pct")),
+                    f"{row.get('fx_source', 'BRL')} / {row.get('fx_ref_date') or '-'}",
+                    str(row.get("valuation_warning") or "-"),
                 ]
             )
             asset_rentability_rows.append(
@@ -293,7 +296,7 @@ def _build_investments_report_html(
         trades_df["fees_brl"] = trades_df["fees"] * trades_df["fx_factor"]
         trades_df["taxes_brl"] = trades_df["taxes"] * trades_df["fx_factor"]
         trades_df["flow_brl"] = trades_df.apply(
-            lambda row: float(row["gross_brl"] + row["fees_brl"] + row["taxes_brl"]) if str(row.get("side") or "").upper() == "BUY"
+            lambda row: float(row["gross_brl"] + row["fees_brl"] + (0.0 if _is_fixed_income_asset(row) else row["taxes_brl"])) if str(row.get("side") or "").upper() == "BUY"
             else float(row["gross_brl"] - row["fees_brl"] - row["taxes_brl"]),
             axis=1,
         )
@@ -358,8 +361,8 @@ def _build_investments_report_html(
     <p class="section-note">Rentabilidade separa realizado e não realizado. Proventos ficam em bloco próprio.</p>
   </section>
   <section>
-    <h2>Posição atual da carteira</h2>
-    {_render_html_table(["Ativo", "Nome", "Classe", "Quantidade", "Preço médio", "Valor investido", "Valor atual", "Participação"], position_rows)}
+    <h2>Posição da carteira na data final do relatório</h2>
+    {_render_html_table(["Ativo", "Nome", "Classe", "Quantidade", "Preço médio", "Valor investido", "Valor atual", "Participação", "Câmbio / data", "Observações"], position_rows)}
   </section>
   <section>
     <h2>Rentabilidade por ativo</h2>
@@ -4105,7 +4108,7 @@ def invest_portfolio(user: dict = Depends(_current_user)) -> dict:
     uid = int(user["id"])
     pos, trades_df, incomes_df = invest_reports.portfolio_view(user_id=uid)
     return {
-        "positions": [] if pos is None or pos.empty else pos.to_dict(orient="records"),
+        "positions": [] if pos is None or pos.empty else pos.astype(object).where(pd.notna(pos), None).to_dict(orient="records"),
         "trades": [] if trades_df is None or trades_df.empty else trades_df.to_dict(orient="records"),
         "incomes": [] if incomes_df is None or incomes_df.empty else incomes_df.to_dict(orient="records"),
     }
@@ -4355,13 +4358,14 @@ def invest_update_all_prices(
             )
         return {"ok": True, "saved": 0, "total": 0, "report": []}
     started_at = datetime.now(now_tz).isoformat()
+    fx_result = invest_fx.refresh_for_assets(assets)
     report = invest_quotes.update_all_prices(
         assets=[dict(a) for a in assets],
         timeout_s=body.timeout_s,
         max_workers=body.max_workers,
     )
     saved = 0
-    error_total = 0
+    error_total = 0 if fx_result.get("ok") else 1
     for r in report:
         if r.get("ok"):
             invest_repo.upsert_price(
@@ -4386,7 +4390,7 @@ def invest_update_all_prices(
             last_error_total=error_total,
             last_run_scope="manual",
         )
-    return {"ok": True, "saved": saved, "total": len(report), "report": report}
+    return {"ok": error_total == 0, "saved": saved, "total": len(report), "report": report, "fx": fx_result}
 
 
 @app.get("/invest/prices/job-status")

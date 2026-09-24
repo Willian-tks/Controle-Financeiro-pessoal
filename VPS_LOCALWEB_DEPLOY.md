@@ -384,3 +384,10 @@ Revisar os arquivos novos, substituir os locks correspondentes e executar instal
 `pip check`, testes e CI. Para atualizar versões, revisar explicitamente as constraints; não editar
 hashes à mão. Guardar locks anteriores no histórico Git para reconstruir a versão anterior.
 No Windows, preferir cache uv em caminho temporário curto se surgir WinError 206.
+
+
+## Validação de valores e câmbio (DOMUS-1.5-002 / 003)
+
+Antes de publicar esta etapa, exigir aprovação dos jobs SQLite, PostgreSQL e frontend do DOMUS CI no mesmo commit. A política, diagnóstico de legado somente leitura e checklist de publicação estão em [INVESTMENT_VALUATION.md](INVESTMENT_VALUATION.md).
+
+A inicialização da API cria `investment_fx_rates` (referências públicas PTAX). Fazer backup do banco/configuração conforme o procedimento acima. O frontend precisa de rebuild. Após reiniciar a API, atualizar cotações USD e conferir fonte/data e custo histórico. A tabela nova não reescreve operações; o rollback do código antigo pode mantê-la. O diagnóstico do banco de produção não deve ser substituído pela base local vazia.

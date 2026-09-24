@@ -1638,6 +1638,7 @@ def _rebuild_sqlite_unique_tables(cur):
 
 
 def init_db() -> None:
+    from invest_fx import create_schema
     with get_conn() as conn:
         cur = conn.cursor()
         if USE_POSTGRES:
@@ -1646,3 +1647,4 @@ def init_db() -> None:
         else:
             _sqlite_schema(cur)
             _migrate_multitenant_sqlite(cur)
+        create_schema(conn)

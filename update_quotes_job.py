@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 import auth
 import invest_quotes
+import invest_fx
 import invest_repo
 from tenant import clear_tenant_context, set_current_user_id, set_current_workspace_id
 
@@ -191,6 +192,9 @@ def run_job(
                 summary["workspaces"].append(workspace_info)
                 continue
 
+            workspace_info["fx"] = invest_fx.refresh_for_assets(assets)
+            if not workspace_info["fx"].get("ok"):
+                workspace_info["errors"] += 1
             report = invest_quotes.update_all_prices(
                 assets=assets,
                 timeout_s=timeout_s,

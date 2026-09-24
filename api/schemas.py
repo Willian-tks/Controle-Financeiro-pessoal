@@ -197,11 +197,11 @@ class TradeCreateRequest(BaseModel):
     asset_id: int
     date: str
     side: str
-    quantity: float
-    price: float
-    exchange_rate: float | None = None
-    fees: float = 0.0
-    taxes: float = 0.0
+    quantity: float = Field(gt=0, allow_inf_nan=False)
+    price: float = Field(gt=0, allow_inf_nan=False)
+    exchange_rate: float | None = Field(default=None, allow_inf_nan=False)
+    fees: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    taxes: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     note: str | None = None
 
 

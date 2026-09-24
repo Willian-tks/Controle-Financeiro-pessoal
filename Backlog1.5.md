@@ -2,7 +2,7 @@
 
 Versão-alvo do sistema: **1.5.0**
 Criado em: **2026-09-21**
-Estado: **Em andamento — preparação de ambiente e CI**
+Estado: **Em andamento — revisão de valores e câmbio**
 Objetivo: aumentar a confiabilidade dos números e simplificar o uso diário, preparando a base para lançamentos por IA e voz.
 
 ## Convenção de versionamento
@@ -47,34 +47,38 @@ Todos os itens abaixo começam em **Planejado**. As estimativas são relativas, 
 Motivação: a cópia analisada contém 5.007 arquivos versionados em `frontend/node_modules`; o deploy anterior encontrou binário Windows no Linux.
 
 - [x] Retirar `node_modules` do controle do Git e incluir no `.gitignore`, preservando os manifestos e lockfile necessários.
-- [ ] Definir versões suportadas de Node e Python e validar dependências reproduzíveis.
-- [ ] Revisar a política de `frontend/dist` e documentar onde o build é produzido.
-- [ ] Padronizar instalação, build, reinício da API, verificação de saúde e reversão no VPS.
-- [ ] Documentar backup antes de mudanças em dados/schema e preservação das configurações do servidor.
+- [x] Definir versões suportadas de Node e Python e validar dependências reproduzíveis.
+- [x] Revisar a política de `frontend/dist` e documentar onde o build é produzido.
+- [x] Padronizar instalação, build, reinício da API, verificação de saúde e reversão no VPS.
+- [x] Documentar backup antes de mudanças em dados/schema e preservação das configurações do servidor.
 
 Aceite: checkout limpo gera build no Linux sem dependências copiadas do Windows; procedimento de deploy e reversão validado em ambiente controlado; nenhuma credencial adicionada ao Git.
 
 ### DOMUS-1.5-002 — Valores e câmbio
 
+Estado: **Em validação** — implementação local pronta; diagnóstico de legado no VPS e validação após publicação pendentes.
+
 Motivação: corrigimos descarte do câmbio de ETFs e conversão duplicada sem cotação; o código também usa o câmbio da última operação na avaliação da carteira.
 
-- [ ] Documentar unidades: preço na moeda do ativo, custo em BRL e valor de mercado em BRL.
-- [ ] Separar câmbio de aquisição de câmbio de avaliação; definir fonte, data de referência e comportamento sem atualização.
-- [ ] Preservar câmbio histórico das operações e não reescrever custos com câmbio atual.
-- [ ] Unificar a regra entre carteira, Dashboard, histórico e relatórios.
-- [ ] Definir avaliação histórica sem usar informações futuras.
-- [ ] Revisar custos, taxas, impostos, compras, vendas parciais e posições encerradas.
+- [x] Documentar unidades: preço na moeda do ativo, custo em BRL e valor de mercado em BRL.
+- [x] Separar câmbio de aquisição de câmbio de avaliação; definir fonte, data de referência e comportamento sem atualização.
+- [x] Preservar câmbio histórico das operações e não reescrever custos com câmbio atual.
+- [x] Unificar a regra entre carteira, Dashboard, histórico e relatórios.
+- [x] Definir avaliação histórica sem usar informações futuras.
+- [x] Revisar custos, taxas, impostos, compras, vendas parciais e posições encerradas.
 - [ ] Avaliar dados legados; qualquer reparo deve ter diagnóstico, backup e execução explícita.
 
 Aceite: testes demonstram conversão única, consistência entre telas e histórico e identificação de dados estimados/desatualizados. O caso SPY de 0,64658795 × US$ 773,29 × 5,20 resulta em aproximadamente R$ 2.600,00 sem cotação, nunca R$ 13.520,00. Cotação disponível segue a política de avaliação definida.
 
 ### DOMUS-1.5-003 — Verificações automatizadas
 
-- [ ] Configurar pipeline de testes Python e build do frontend em ambiente limpo.
-- [ ] Cobrir BRL/USD, ausência de cotação, câmbio, taxas e vendas parciais.
-- [ ] Verificar lançamentos, cartões, datas e isolamento entre workspaces nos fluxos alterados.
+Estado: **Em validação** — suíte SQLite e build local aprovados; novo job PostgreSQL aguarda execução no CI.
+
+- [x] Configurar pipeline de testes Python e build do frontend em ambiente limpo.
+- [x] Cobrir BRL/USD, ausência de cotação, câmbio, taxas e vendas parciais.
+- [x] Verificar lançamentos, cartões, datas e isolamento entre workspaces nos fluxos alterados.
 - [ ] Validar compatibilidade PostgreSQL dos caminhos modificados, além de SQLite.
-- [ ] Criar roteiro curto de teste funcional após deploy.
+- [x] Criar roteiro curto de teste funcional após deploy.
 
 Aceite: falhas relevantes impedem liberar a versão; resultados ficam associados ao commit validado.
 
@@ -186,7 +190,7 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 
 | Item | Estado | Evidência / commit | Validação local | Publicação / validação VPS |
 |---|---|---|---|---|
-| DOMUS-1.5-001 | Em andamento | Dependências removidas do índice Git; arquivos locais preservados; guia de deploy revisado; runtimes locais registrados | API e login local verificados; Linux e reversão pendentes | Não publicada |
+| DOMUS-1.5-001 | Concluído | Produção f6ff746; backup /opt/apps/domus-backup.F0L2HZ | CI Linux, 64 testes isolados no VPS e 5 testes de reversão aprovados | Publicado; usuário confirmou login, Dashboard, Lançamentos e Investimentos |
 | DOMUS-1.5-003 | Em andamento | Workflow DOMUS CI criado; dependência httpx declarada para testes | 59 testes Python locais aprovados; CI Linux aprovado no commit 7d01078 | CI publicado; VPS não validado |
 | DOMUS-1.5-002 e 004 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
 
@@ -259,3 +263,46 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 - Resolução baseada nas versões locais existentes. Pacotes de produção e testes têm versões compartilhadas coerentes.
 - Aplicação local e ambiente do VPS não foram reinstalados.
 - Validação Linux dos novos locks pendente do próximo CI; instalação de produção real permanece pendente. Item 001 segue Em andamento.
+
+### Dependências validadas no VPS — 2026-09-22
+
+- Usuário informou aprovação do CI para o commit `f6ff746`.
+- Evidência enviada: execução em `/tmp/domus-python-test.6Ewspf`, com `Ran 64 tests in 26.731s` e `OK`.
+- O procedimento fornecido extrai o commit `f6ff746` para uma pasta temporária, cria ambiente virtual separado, instala requirements-dev.txt e executa pip check antes dos testes com SQLite forçado. A chegada aos testes no bloco encadeado indica sucesso das etapas anteriores.
+- Validada instalação isolada das dependências fixadas e suíte no VPS, sem atualização do checkout servido, reinício de serviços ou alteração do banco de produção pelo procedimento.
+- Pendências anteriores de validação Linux/VPS dos locks estão resolvidas. Ainda faltam publicação controlada, conferência do serviço/Nginx e teste funcional pós-publicação.
+- Item 1.5-001 permanece Em andamento até a validação operacional real. Não executar deploy apenas com base nesta anotação.
+
+### Fechamento DOMUS-1.5-001 — 2026-09-22
+
+- Publicação concluída no VPS no commit `f6ff746`, conforme saída enviada pelo usuário; Nginx válido, API saudável e checagem HTTPS aprovada.
+- Backup: `/opt/apps/domus-backup.F0L2HZ`. Ambiente Python ativo preservado em `/opt/apps/domus-preparo.NeauFh/.venv`, referenciado por `/opt/apps/domus/.venv`; não remover essa pasta de preparação enquanto estiver em uso.
+- Usuário confirmou login, Dashboard, carregamento dos Lançamentos e Investimentos funcionando em produção.
+- Usuário percebeu melhora na troca de telas; observação subjetiva, sem benchmark antes/depois ou causa comprovada.
+- Item 001 concluído. Notas anteriores de pendência desse item são históricas e superadas por este registro.
+- Versões validadas: CI/local conforme arquivos de runtime; VPS com Node 20.20.1 e Python 3.12.3. Padronização futura de runtime deve preservar essa distinção.
+- Item 003 continua em andamento (inclui verificações adicionais e proteção de branch). Próximo foco: DOMUS-1.5-002, valores e câmbio.
+
+### Início DOMUS-1.5-002 — 2026-09-24
+
+- Estado: Em andamento; primeira correção local do recorte histórico.
+- Carteira com data final considera todas as operações até essa data, incluindo compras anteriores ao início do intervalo, e limita cotações e snapshots à data consultada.
+- Valores atuais de renda fixa posteriores ao dia consultado não substituem snapshots históricos; sem snapshot válido, permanece a referência de custo.
+- Novos testes cobrem compra anterior ao período, venda parcial, exclusão de compra/cotação futura e snapshots de renda fixa. Caso SPY de conversão única continua coberto.
+- Política vigente: preços de operações e cotações na moeda do ativo; custo médio, custo total e avaliação consolidados em BRL. Sem cotação, o custo médio já convertido não deve receber câmbio novamente.
+- Pendente: separar a referência cambial de avaliação do câmbio da última operação, expor fonte/data e revisar custos/relatórios/dados legados. Nenhuma alteração em dados de produção ou câmbio histórico de operações.
+- Publicação desta etapa pendente; o item 002 não está concluído.
+- Validação local: 66 testes Python aprovados; git diff --check sem erros.
+
+### Implementação DOMUS-1.5-002 / 003 — 2026-09-24
+
+- Política e roteiro de validação em `INVESTMENT_VALUATION.md`.
+- Câmbio de avaliação separado do câmbio das operações: PTAX de venda/fechamento, persistida com data/fonte em tabela pública independente. Atualização manual e job de cotações integram a consulta; leitura da carteira não depende de rede.
+- Mesmo motor para carteira/histórico; relatório respeita data final. Referências futuras são excluídas. Custo sem cotação não é convertido novamente.
+- Carteira e relatório exibem origem/data do câmbio e avisos de estimativa/referência antiga. Dashboard identifica o total como valor de mercado em BRL.
+- Validação de números finitos e despesas não negativas; diagnóstico de legado somente leitura em `audit_investments.py`. Cópia SQLite local consultada sem operações; base de produção ainda não auditada.
+- Consulta real ao BCB aprovada, sem gravação na base local (fechamentos de 21–23/09/2026).
+- CI ampliado com PostgreSQL 16 descartável e o mesmo contrato de testes de avaliação usado no SQLite. Não há PostgreSQL/Docker instalado neste ambiente; aprovação desse job depende do próximo envio ao GitHub.
+- Build local realizado pela API JavaScript do Vite, importando o mesmo vite.config.js diretamente, pois o empacotamento da configuração pelo esbuild encontra restrição de leitura em pasta ancestral no Windows. Saída isolada em dist-next; configuração e dependências do projeto preservadas.
+- Itens 002 e 003 ficam **Em validação**, sem declaração de conclusão antes das evidências pendentes. Nenhuma publicação ou alteração de operações de produção nesta etapa.
+- Evidências finais locais: 76 testes Python aprovados, build frontend aprovado (aviso preexistente de bundle >500 kB), compilação Python e diff --check sem erros.

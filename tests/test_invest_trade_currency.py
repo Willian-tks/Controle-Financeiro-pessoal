@@ -40,3 +40,14 @@ class TradeCurrencyTests(unittest.TestCase):
         cash, trade = self.run_trade('BRL', 'ETFs BR', 5.2)
         self.assertEqual(trade['exchange_rate'], 1)
         self.assertAlmostEqual(cash['amount'], -(0.64658795 * 773.29 + 3))
+
+    def test_nonfinite_and_negative_trade_values_are_rejected(self):
+        from pydantic import ValidationError
+        base = dict(asset_id=1, date="2026-01-01", side="BUY", quantity=1, price=100)
+        for key in ("quantity", "price", "exchange_rate", "fees", "taxes"):
+            for value in (float("nan"), float("inf"), float("-inf")):
+                with self.subTest(key=key, value=value), self.assertRaises(ValidationError):
+                    TradeCreateRequest(**{**base, key: value})
+        for key in ("quantity", "price", "fees", "taxes"):
+            with self.subTest(key=key), self.assertRaises(ValidationError):
+                TradeCreateRequest(**{**base, key: -1})

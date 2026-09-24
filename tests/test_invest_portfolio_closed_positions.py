@@ -361,3 +361,51 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
                 self.assertEqual("cotacao" if quote else "custo_medio", row["value_origin"])
                 history = invest_reports.investments_value_timeseries("2026-08-17", "2026-08-17", user_id=self.uid)
                 self.assertAlmostEqual(expected, history.iloc[0]["invest_market_value"], places=6)
+
+    def test_historical_portfolio_keeps_prior_buys_and_ignores_future_quotes(self):
+        with db_module.get_conn() as conn:
+            asset_id = conn.execute(
+                "INSERT INTO assets(symbol, name, asset_class, currency, user_id) VALUES (?, ?, ?, ?, ?)",
+                ("SPY", "SPY", "ETFs US", "USD", self.uid),
+            ).lastrowid
+            for day, side, qty, price, fx in [
+                ("2026-01-10", "BUY", 10, 100, 5),
+                ("2026-02-10", "SELL", 2, 120, 5),
+                ("2026-03-10", "BUY", 20, 200, 6),
+            ]:
+                conn.execute(
+                    "INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (asset_id, day, side, qty, price, fx, 0, 0, self.uid),
+                )
+            for day, price in [("2026-02-15", 125), ("2026-03-15", 250)]:
+                conn.execute("INSERT INTO prices(asset_id, date, price, user_id) VALUES (?, ?, ?, ?)",
+                             (asset_id, day, price, self.uid))
+        pos, _, _ = invest_reports.portfolio_view("2026-02-01", "2026-02-28", user_id=self.uid)
+        row = pos.iloc[0]
+        self.assertEqual(8, row["qty"])
+        self.assertAlmostEqual(4000, row["cost_basis"])
+        self.assertAlmostEqual(5000, row["market_value"])
+        history = invest_reports.investments_value_timeseries("2026-02-28", "2026-02-28", user_id=self.uid)
+        self.assertAlmostEqual(row["market_value"], history.iloc[0]["invest_market_value"])
+
+    def test_historical_fixed_income_uses_past_snapshot_despite_future_update(self):
+        with db_module.get_conn() as conn:
+            asset_id = conn.execute(
+                "INSERT INTO assets(symbol, name, asset_class, currency, current_value, last_update, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("CDB", "CDB", "Renda Fixa", "BRL", 9000, "2026-03-15", self.uid),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (asset_id, "2026-01-10", "BUY", 1, 1000, 1, 0, 0, self.uid),
+            )
+            for day, value in [("2026-02-15", 1100), ("2026-03-15", 9000)]:
+                conn.execute("INSERT INTO asset_prices(asset_id, px_date, price, source, user_id) VALUES (?, ?, ?, ?, ?)",
+                             (asset_id, day, value, "manual_current_value", self.uid))
+        pos, _, _ = invest_reports.portfolio_view(date_to="2026-02-28", user_id=self.uid)
+        self.assertAlmostEqual(1100, pos.iloc[0]["market_value"])
+        history = invest_reports.investments_value_timeseries("2026-02-28", "2026-02-28", user_id=self.uid)
+        self.assertAlmostEqual(1100, history.iloc[0]["invest_market_value"])
+        with db_module.get_conn() as conn:
+            conn.execute("DELETE FROM asset_prices WHERE asset_id = ?", (asset_id,))
+        pos, _, _ = invest_reports.portfolio_view(date_to="2026-02-28", user_id=self.uid)
+        self.assertAlmostEqual(1000, pos.iloc[0]["market_value"])
