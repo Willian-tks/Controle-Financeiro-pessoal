@@ -312,3 +312,12 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 - CI #5 (commit 64976e8): SQLite e frontend aprovados; PostgreSQL falhou antes dos cálculos, na criação do usuário da fixture.
 - Causa: literal inteiro 1 enviado para users.is_active, que é BOOLEAN no PostgreSQL. Corrigido para parâmetro Python True, compatível com ambos os drivers.
 - Nove testes locais de avaliação/provedor aprovados após a correção. A execução PostgreSQL permanece pendente do novo CI; nenhum teste foi removido ou desativado.
+
+### 2026-09-25 — Validacao de producao e correcao Yahoo (pendente de publicacao)
+
+- Usuario confirmou sistema ativo e funcional apos deploy 4a813f2; stocks falharam com Yahoo HTTP 401.
+- Coleta HTTP substituida de quote v7 para chart v8, com preco/data da referencia, validacao de valores finitos positivos e fallback para fechamento valido.
+- Stooq permanece como alternativa; falhas das duas fontes passam a aparecer juntas.
+- Consultas publicas locais AAL e SPY responderam com sucesso em 25/09; seis testes especificos passaram. Confirmacao no VPS ainda pendente.
+- Backup de producao informado como concluido em /opt/apps/domus-backup.heqPD4/database-retry.dump. Deploy 4a813f2 teve health OK e servico ativo.
+- Diagnostico de legado e comparacao financeira final continuam pendentes. Esta correcao requer atualizar backend e reiniciar API; nao altera schema nem dependencias/frontend.
