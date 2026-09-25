@@ -236,33 +236,47 @@ def fetch_last_price_yahoo_http(symbol: str) -> Tuple[Optional[float], Optional[
     if not sym:
         return None, None, None, "Símbolo vazio."
 
-    url = "https://query1.finance.yahoo.com/v7/finance/quote"
+    from datetime import datetime, timezone, timedelta
+    from math import isfinite
+    from urllib.parse import quote
+
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(sym, safe='')}"
     headers = {"User-Agent": "finance_app/1.0"}
-    params = {"symbols": sym}
+    params = {"range": "5d", "interval": "1d"}
     try:
         r = requests.get(url, params=params, headers=headers, timeout=8, verify=certifi.where())
         if r.status_code != 200:
-            return None, None, None, f"Yahoo HTTP {r.status_code}"
-        data = r.json() or {}
-        rows = (((data.get("quoteResponse") or {}).get("result")) or [])
+            return None, None, None, f"Yahoo chart HTTP {r.status_code}"
+        chart = (r.json() or {}).get("chart") or {}
+        if chart.get("error"):
+            return None, None, None, "Yahoo chart retornou erro para o ativo."
+        rows = chart.get("result") or []
         if not rows:
-            return None, None, None, "Yahoo sem resultados."
+            return None, None, None, "Yahoo chart sem resultados."
         row = rows[0]
-        px = row.get("regularMarketPrice")
-        if px is None:
-            return None, None, None, "Yahoo sem regularMarketPrice."
-        ts = row.get("regularMarketTime")
-        if ts:
+        meta = row.get("meta") or {}
+        # Preço e instante devem pertencer à mesma referência, nunca à data da coleta.
+        candidates = [(meta.get("regularMarketPrice"), meta.get("regularMarketTime"))]
+        quotes = (row.get("indicators") or {}).get("quote") or [{}]
+        closes = quotes[0].get("close") or []
+        candidates.extend(reversed(list(zip(closes, row.get("timestamp") or []))))
+        offset = timezone(timedelta(seconds=int(meta.get("gmtoffset") or 0)))
+        for px, ts in candidates:
             try:
-                import datetime as _dt
-                px_date = _dt.datetime.fromtimestamp(int(ts)).date().isoformat()
-            except Exception:
-                px_date = today_str()
-        else:
-            px_date = today_str()
-        return float(px), str(px_date), "yahoo_http", None
+                if isinstance(px, bool) or isinstance(ts, bool):
+                    continue
+                px, ts = float(px), float(ts)
+                if not isfinite(px) or px <= 0 or not isfinite(ts) or ts <= 0:
+                    continue
+                if ts > datetime.now(timezone.utc).timestamp() + 300:
+                    continue
+                px_date = datetime.fromtimestamp(ts, offset).date().isoformat()
+                return px, px_date, "yahoo_chart", None
+            except (TypeError, ValueError, OverflowError, OSError):
+                continue
+        return None, None, None, "Yahoo chart sem preço e data válidos."
     except Exception as e:
-        return None, None, None, f"Yahoo HTTP erro: {e}"
+        return None, None, None, f"Yahoo chart erro: {type(e).__name__}"
 
 
 def fetch_last_price_stooq_us(symbol: str) -> Tuple[Optional[float], Optional[str], Optional[str], Optional[str]]:
@@ -371,7 +385,7 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
             if px is not None:
                 return px, px_date, src, None
             if err_stooq:
-                err = err or err_stooq
+                err = " | ".join(filter(None, (err, err_stooq)))
         else:
             # Não-BR (exceto stock US): mantém tentativa padrão via yfinance + HTTP.
             px, px_date, src = fetch_last_price_yf(sym)
