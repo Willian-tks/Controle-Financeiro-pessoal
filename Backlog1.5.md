@@ -40,7 +40,8 @@ Todos os itens abaixo começam em **Planejado**. As estimativas são relativas, 
 | DOMUS-1.5-007 | P1 | Tornar fonte e atualização das cotações transparentes | M | 002 |
 | DOMUS-1.5-008 | P2 | Separar gradualmente código dos módulos alterados | M | Executar junto de 004–007 |
 | DOMUS-1.5-009 | P2 | Definir contrato de lançamento assistido por IA | M | 004 e regras do backend revisadas |
-| DOMUS-1.5-010 | P1 | Consolidar documentação e publicar a versão 1.5 | M | 001–009 ou adiamento explícito registrado |
+| DOMUS-1.5-010 | P1 | Consolidar documentação e publicar a versão 1.5 | M | 001–009 e 011 ou adiamento explícito registrado |
+| DOMUS-1.5-011 | P1 | Ajuste explícito de posição de investimentos | M | 002 e 003 |
 
 ### DOMUS-1.5-001 — Dependências e deploy
 
@@ -84,13 +85,15 @@ Aceite: falhas relevantes impedem liberar a versão; resultados ficam associados
 
 ### DOMUS-1.5-004 — Lançamento rápido
 
-- [ ] Criar protótipo para celular e desktop antes de implementar o layout definitivo.
+Estado: **Em andamento — protótipo aprovado pelo usuário em 28/09/2026**. Proposta em `PROPOSTA_LANCAMENTO_RAPIDO.md`; integração ao sistema e validações com a API ainda pendentes.
+
+- [x] Criar protótipo para celular e desktop antes de implementar o layout definitivo; usuário concluiu o teste e aprovou a proposta em 28/09/2026.
 - [ ] Disponibilizar ação “Novo lançamento” a partir das telas principais.
 - [ ] Selecionar Despesa, Receita ou Transferência explicitamente.
 - [ ] Destacar valor, preencher data com hoje no fuso do usuário e oferecer contas/métodos favoritos.
 - [ ] Mostrar categorias recentes e permitir repetir lançamento com revisão.
 - [ ] Mover campos adicionais para “Mais opções”, preservando os fluxos de cartão e compromissos.
-- [ ] Reservar entrada “Digitar ou falar” para ativação futura, sem botão inoperante na versão publicada.
+- [ ] Preparar o fluxo comum para futura entrada por texto, voz e foto de nota/cupom fiscal, sem botão inoperante na versão publicada.
 
 Aceite: registrar despesa ou receita comum exige menos interações que o fluxo atual, medido com os mesmos cenários; usuário identifica conta, valor e data antes de salvar; não há regressão em transferências/cartões. Validar o protótipo com o responsável pelo produto.
 
@@ -140,8 +143,12 @@ Aceite: módulos extraídos mantêm contratos e comportamento, com testes propor
 - [ ] Definir interpretação → validação → revisão → confirmação → gravação.
 - [ ] Reutilizar regras e permissões do backend; a IA não recebe acesso direto ao banco.
 - [ ] Definir comportamento para ambiguidades, cancelamento e reenvio sem duplicação.
-- [ ] Planejar limites de uso, custos, segredos no backend e tratamento de áudio/texto.
-- [ ] Montar conjunto de frases reais de receitas/despesas para avaliação futura.
+- [ ] Planejar limites de uso, custos, segredos no backend e tratamento de áudio, texto e imagem, incluindo retenção e exclusão dos arquivos.
+- [ ] Montar conjunto de frases e imagens de teste anonimizadas para avaliação futura.
+- [ ] Imagem: extrair estabelecimento, data, moeda, total e itens quando legíveis; separar total pago de subtotal, desconto e troco. Campos incertos exigem revisão.
+- [ ] Não inferir conta/cartão pelo cupom; usuário confirma forma de pagamento e categoria.
+- [ ] Tratar fotos repetidas, documentos já lançados, imagens ilegíveis e múltiplos cupons; conteúdo do documento é dado, nunca instrução para a IA.
+- [ ] Reutilizar o mesmo rascunho revisável para manual, texto, voz e imagem, sem gravar automaticamente.
 
 Aceite: contrato e cenários documentados, inclusive “Gastei 42,90 no almoço, no débito do Inter” e “Recebi 1.500 de um serviço ontem”. Esta entrega é preparação; não inclui ativação de IA paga.
 
@@ -155,13 +162,30 @@ Aceite: contrato e cenários documentados, inclusive “Gastei 42,90 no almoço,
 
 Aceite: versão, commit e data implantados são identificáveis; pendências e itens adiados estão registrados; confirmação de funcionamento após publicação.
 
+### DOMUS-1.5-011 — Ajuste de posição de investimentos
+
+Estado: **Planejado**. Prioridade: **P1**. Esforço: **M**. Dependências: 002 e 003.
+
+Objetivo: permitir conciliação de posições sem cadastrar uma compra fictícia a preço zero.
+
+- [ ] Criar operação explícita de ajuste, com ativo, data, quantidade, motivo obrigatório e custo informado na moeda do ativo; câmbio explícito quando aplicável.
+- [ ] Definir acréscimo/redução de posição e efeitos no custo médio, histórico e rentabilidade, sem gerar receita/despesa ou resultado realizado fictício.
+- [ ] Distinguir ajuste manual, transferência e bonificação; não presumir custo zero pela ausência de desembolso.
+- [ ] Mostrar prévia de quantidade e custo antes/depois e exigir confirmação ao salvar.
+- [ ] Registrar autor, data e motivo, respeitar workspace e permitir reversão rastreável.
+- [ ] Cobrir BRL/USD, aumento/redução, custo zero justificado e consistência entre carteira, Dashboard e relatório.
+- [ ] Revisar individualmente os lançamentos legados 85–88; nenhuma conversão ou alteração automática.
+
+Aceite: ajuste identificado separadamente de compra/venda, com efeitos documentados, trilha de auditoria e testes; preservar registros antigos até conferência e autorização de eventual correção.
+
 ## Roadmap posterior — proposta, não compromisso de entrega da 1.5
 
 | Versão sugerida | Prioridade | Entrega | Condição de entrada / aceite esperado |
 |---|---|---|---|
 | 1.6.0 | P1 | Lançamento por texto natural | Contrato 1.5-009 pronto; uma despesa/receita por frase; revisão, permissões, validação e proteção contra duplicação |
 | 1.7.0 | P1 | Lançamento por voz | Reutilizar o fluxo por texto; gravar/transcrever, revisar e confirmar; medir qualidade em português, latência e custo; testar microfone nos navegadores-alvo |
-| 1.8.0 ou posterior | P2 | Confirmação e correção por voz | Resolver campos ausentes por diálogo e confirmar verbalmente antes de gravar; versão exata depende do tamanho da entrega |
+| 1.8.0 | P1 | Lançamento por foto de nota ou cupom fiscal | Captura/upload, extração, revisão do total/data/estabelecimento e confirmação da conta; prevenção de duplicação e política de retenção; primeira entrega registra uma compra pelo total, sem rateio automático de itens |
+| 1.9.0 ou posterior | P2 | Confirmação e correção por voz | Resolver campos ausentes por diálogo e confirmar verbalmente antes de gravar; versão exata depende do tamanho da entrega |
 | A definir | P3 | Assistente de consultas financeiras e BRAPI/MCP | Validar necessidade, cobertura, permissões, custo e respostas com fonte/data; não permitir que a IA invente números da carteira |
 | A definir | P3 | Frases com múltiplos lançamentos, parcelamentos e transferências | Somente após validar confiabilidade do fluxo simples |
 
@@ -313,11 +337,58 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 - Causa: literal inteiro 1 enviado para users.is_active, que é BOOLEAN no PostgreSQL. Corrigido para parâmetro Python True, compatível com ambos os drivers.
 - Nove testes locais de avaliação/provedor aprovados após a correção. A execução PostgreSQL permanece pendente do novo CI; nenhum teste foi removido ou desativado.
 
-### 2026-09-25 — Validacao de producao e correcao Yahoo (pendente de publicacao)
+### 2026-09-25 — Validacao de producao e correcao Yahoo (publicada e validada)
 
 - Usuario confirmou sistema ativo e funcional apos deploy 4a813f2; stocks falharam com Yahoo HTTP 401.
 - Coleta HTTP substituida de quote v7 para chart v8, com preco/data da referencia, validacao de valores finitos positivos e fallback para fechamento valido.
 - Stooq permanece como alternativa; falhas das duas fontes passam a aparecer juntas.
-- Consultas publicas locais AAL e SPY responderam com sucesso em 25/09; seis testes especificos passaram. Confirmacao no VPS ainda pendente.
+- Consultas publicas locais AAL e SPY responderam com sucesso em 25/09; seis testes especificos e a suite completa de 82 testes passaram. Usuario confirmou cotacoes das stocks funcionando no VPS, sem HTTP 401, em 25/09/2026.
 - Backup de producao informado como concluido em /opt/apps/domus-backup.heqPD4/database-retry.dump. Deploy 4a813f2 teve health OK e servico ativo.
 - Diagnostico de legado e comparacao financeira final continuam pendentes. Esta correcao requer atualizar backend e reiniciar API; nao altera schema nem dependencias/frontend.
+
+- Encerramento da correcao Yahoo: PR #2 integrado como ba93f1f, com seis checks aprovados; usuario confirmou publicacao e funcionamento das stocks. Esta evidencia encerra a falha de coleta, sem encerrar as pendencias financeiras dos itens 1.5-002/003.
+
+### Diagnóstico de legado e ajuste de posição — 2026-09-25
+
+- Consulta confirmada no PostgreSQL de produção em modo somente leitura: 115 operações verificadas, quatro alertas de preço e zero alterações. A tentativa anterior com zero operações consultou SQLite e não serve como evidência de produção.
+- Workspace 1: IDs 85 (ITSA3, 6), 86 (KLBN11, 3), 87 (EZTC3, 27), 88 (BLAU3, 150), todos BUY em BRL em 06/03/2026, preço zero. Nenhum alerta cambial no diagnóstico executado.
+- Usuário considera que provavelmente foram ajustes manuais; natureza e custo ainda não confirmados. Preservar os quatro registros. Custo médio e rentabilidade desses ativos permanecem pendentes de conferência.
+- Usuário conferiu os valores que conseguiu e informou que aparentemente fecham; evidência parcial, não conciliação integral de todas as telas/relatórios.
+- Aprovada inclusão do item 011 no planejamento; implementação não iniciada. Item 002 permanece em validação das exceções legadas.
+
+### Retomada — lançamento rápido e imagem — 2026-09-28
+
+- Usuário priorizou 004 e solicitou incluir foto de notas/cupons fiscais no escopo futuro, além de voz.
+- Imagem prevista como P1 na versão sugerida 1.8.0; diálogo por voz deslocado para 1.9.0 ou posterior. Datas/versões continuam propostas de planejamento.
+- Iniciado desenho do fluxo manual em PROPOSTA_LANCAMENTO_RAPIDO.md. Nenhum provedor de IA ativado; nenhuma alteração nos lançamentos de produção.
+
+### Protótipo 1.5-004 — 2026-09-28
+
+- Criado prototypes/lancamento-rapido.html, independente da aplicação, com dados fictícios e sem persistência.
+- Inclui seleção de tipo, valor/data/contas, categorias, repetição, Mais opções, simulação de falha e confirmação. Cartão/compromissos sinalizam encaminhamento futuro ao fluxo completo; não simulam cálculos de fatura.
+- Aberto em http://127.0.0.1:5175/lancamento-rapido.html. Repetição de despesa, confirmação e reinício verificados no navegador; modo compacto disponível no botão Ver celular.
+- Aprovação visual, medição comparativa de interações e integração com API continuam pendentes. Voz/imagem permanecem no roadmap futuro.
+
+### Aprovação do protótipo 1.5-004 — 2026-09-28
+
+- Usuário concluiu o teste e aprovou: “Ficou ótimo, simples e rápido”.
+- Aprovação qualitativa do protótipo; não houve medição formal comparativa de interações nem validação de gravação real.
+- Próxima etapa: integrar o fluxo ao frontend e à API existentes, preservando permissões, cartões, transferências e rascunhos. Item 004 continua em andamento; nenhuma publicação de produção nesta etapa.
+
+### Integração local do lançamento rápido — 2026-09-28
+
+- Branch codex/quick-entry: componente QuickEntry integrado ao cabeçalho das telas, condicionado às permissões de visualizar/incluir lançamentos.
+- Usa contas/categorias/transações do workspace e POST /transactions existente. Seleção explícita de tipo, data local, categorias recentes, repetição com revisão, observações e confirmação.
+- Transferência envia origem/destino conforme contrato da API; não cria categoria de despesa. Compras no cartão e compromissos encaminham ao formulário completo com valor/data/descrição/observações e seleções preservados quando aplicáveis.
+- Bloqueio de clique duplo durante envio; falha mantém rascunho. Falha na atualização dos painéis após gravação não induz nova gravação. Rascunho é reiniciado na troca de workspace; nenhum arquivo sensível é persistido.
+- Oito testes Node de validação/payload passaram, incluídos no CI; 82 testes Python passaram. Build local aprovado, com aviso preexistente de bundle grande.
+- Teste de navegador com o componente real em fixture isolada: transferência de R$ 200 com origem 1/destino 2, confirmação e falha de receita de R$ 1.500 mantendo campos. Nenhuma API/banco real foi usado nessa fixture.
+- Pendente: teste autenticado ponta a ponta com dados descartáveis, cartões/compromissos no formulário completo, layout móvel com dados reais, CI remoto e publicação. Não declarar 004 concluído nem ganho medido de interações. Favoritos de conta/método ainda não implementados.
+
+### 2026-09-28 - Validacao autenticada local do lancamento rapido
+
+- SQLite local com duas contas e categorias ficticias identificadas por TESTE 1.5; producao nao alterada.
+- Gravacao pela interface autenticada: despesa de R$ 42,90, receita de R$ 1.500,00 e transferencia de R$ 200,00. Historico confirmou quatro registros, incluindo debito na origem e credito no destino, total liquido R$ 1.457,10.
+- Encaminhamento ao formulario de cartao preservou valor, descricao, categoria e data; compromisso preservou valor, descricao, categoria, conta e observacoes. Nao foram salvos cartao nem compromisso nesta verificacao.
+- Corrigido submit involuntario ao encaminhar para cartao e limpar o rascunho; reabertura verificada sem mensagens de erro. Oito testes Node aprovados.
+- Pendentes: gravacao completa de cartao/compromisso, validacao movel, favoritos, CI remoto e publicacao. Item 004 permanece em andamento.

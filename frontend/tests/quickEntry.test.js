@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {emptyQuickDraft,quickPayload,quickAmount} from '../src/quickEntry.js';
+const accounts=[{id:1},{id:2}], categories=[{id:3,kind:'Despesa'},{id:4,kind:'Receita'}];
+const draft=()=>({...emptyQuickDraft(),kind:'Despesa',amount:'1.234,56',account:'1',category:'3'});
+const validate=d=>quickPayload(d,accounts,categories,accounts);
+test('expense preserves magnitude and category for backend signing',()=>{const r=validate(draft());assert.deepEqual(r.errors,{});assert.equal(r.payload.amount,1234.56);assert.equal(r.payload.kind,'Despesa');assert.equal(r.payload.account_id,1);});
+test('income category cannot be used for expense',()=>assert.ok(validate({...draft(),category:'4'}).errors.category));
+test('transfer maps origin and destination and omits expense category',()=>{const r=validate({...draft(),kind:'Transferencia',destination:'2'});assert.deepEqual(r.errors,{});assert.equal(r.payload.source_account_id,1);assert.equal(r.payload.account_id,2);assert.equal(r.payload.category_id,null);});
+test('same account and foreign account rejected',()=>{assert.ok(validate({...draft(),kind:'Transferencia',destination:'1'}).errors.destination);assert.ok(validate({...draft(),account:'99'}).errors.account);});
+test('invalid values never produce an accepted payload',()=>{for(const amount of ['0','-1','NaN','Infinity','1,2,3','12.34','1e3'])assert.ok(validate({...draft(),amount}).errors.amount,amount);assert.equal(quickAmount('42,90'),42.9);});
+test('credit and future must use full workflow',()=>{for(const method of ['Credito','Futuro'])assert.ok(validate({...draft(),method}).errors.method);});
+test('invalid calendar dates rejected',()=>assert.ok(validate({...draft(),date:'2026-02-30'}).errors.date));
+test('explicit type and destination required',()=>{assert.ok(validate({...draft(),kind:''}).errors.kind);assert.ok(validate({...draft(),kind:'Transferencia',destination:''}).errors.destination);});
