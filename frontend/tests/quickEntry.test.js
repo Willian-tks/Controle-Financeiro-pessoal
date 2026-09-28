@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {emptyQuickDraft,quickPayload,quickAmount} from '../src/quickEntry.js';
+import {emptyQuickDraft,quickPayload,quickAmount,quickCreditCard} from '../src/quickEntry.js';
 const accounts=[{id:1},{id:2}], categories=[{id:3,kind:'Despesa'},{id:4,kind:'Receita'}];
 const draft=()=>({...emptyQuickDraft(),kind:'Despesa',amount:'1.234,56',account:'1',category:'3'});
 const validate=d=>quickPayload(d,accounts,categories,accounts);
@@ -12,3 +12,4 @@ test('invalid values never produce an accepted payload',()=>{for(const amount of
 test('credit and future must use full workflow',()=>{for(const method of ['Credito','Futuro'])assert.ok(validate({...draft(),method}).errors.method);});
 test('invalid calendar dates rejected',()=>assert.ok(validate({...draft(),date:'2026-02-30'}).errors.date));
 test('explicit type and destination required',()=>{assert.ok(validate({...draft(),kind:''}).errors.kind);assert.ok(validate({...draft(),kind:'Transferencia',destination:''}).errors.destination);});
+test('credit card must be credit type and linked to selected account',()=>{const cards=[{id:5,card_type:'Credito',card_account_id:1},{id:6,card_type:'Credito',card_account_id:2},{id:7,card_type:'Debito',card_account_id:1}];assert.equal(quickCreditCard({...draft(),method:'Credito',card:'5'},cards)?.id,5);assert.equal(quickCreditCard({...draft(),method:'Credito',card:'6'},cards),null);assert.equal(quickCreditCard({...draft(),method:'Credito',card:'7'},cards),null);});

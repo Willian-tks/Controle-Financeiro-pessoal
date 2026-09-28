@@ -3,7 +3,11 @@ export function localToday() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 export function emptyQuickDraft() {
-  return {kind:'', amount:'', date:localToday(), account:'', destination:'', category:'', method:'PIX', description:'', notes:''};
+  return {kind:'', amount:'', date:localToday(), account:'', destination:'', category:'', method:'PIX', card:'', description:'', notes:''};
+}
+export function quickCreditCard(d, cards) {
+  if (d.kind!=='Despesa'||d.method!=='Credito') return null;
+  return (cards||[]).find(c=>String(c.id)===String(d.card)&&String(c.card_type||'Credito')==='Credito'&&String(c.card_account_id)===String(d.account))||null;
 }
 export function quickAmount(value) {
   const s=String(value).trim();

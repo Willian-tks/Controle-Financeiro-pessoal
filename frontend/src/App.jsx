@@ -4047,6 +4047,7 @@ export default function App() {
       ? String(categories.find(c => c.kind === "Transferencia")?.id || "") : draft.category);
     setTxAccountId(draft.kind === "Transferencia" ? draft.destination : draft.account);
     setTxSourceAccountId(draft.kind === "Transferencia" ? draft.account : "");
+    setTxCardId(draft.card || "");
     setTxMethod(draft.method);
     setTxFuturePaymentMethod(draft.method);
     setTxView(future ? "futuro" : "caixa");
@@ -5770,7 +5771,7 @@ export default function App() {
         </header>
         {canViewLancamentos && canAddLancamentos && !workspaceSwitchingId ? <QuickEntry
           key={currentWorkspaceId} open={quickOpen} onClose={() => setQuickOpen(false)}
-          accounts={accounts} categories={categories} transferAccounts={transferAccounts}
+          accounts={accounts} categories={categories} cards={cards} transferAccounts={transferAccounts}
           transactions={transactions} onSave={saveQuickTransaction} onFull={openFullTransaction}
         /> : null}
 
