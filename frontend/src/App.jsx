@@ -1,3 +1,5 @@
+import QuickEntry from "./QuickEntry.jsx";
+import { localToday } from "./quickEntry";
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import brandLogo from "./icons/DOMUS2.png";
 import icDashboard from "./icons/dashboard.png";
@@ -1004,6 +1006,9 @@ export default function App() {
   const [invoiceDateTo, setInvoiceDateTo] = useState(defaultMonthRange.to);
   const [dashMsg, setDashMsg] = useState("");
   const [txMsg, setTxMsg] = useState("");
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [txDraft, setTxDraft] = useState({ date: localToday(), amount: "", description: "", notes: "" });
+  useEffect(() => { setQuickOpen(false); setTxDraft({date:localToday(),amount:"",description:"",notes:""}); }, [user?.workspace_id]);
   const [txAccountId, setTxAccountId] = useState("");
   const [txCategoryId, setTxCategoryId] = useState("");
   const [txMethod, setTxMethod] = useState("PIX");
@@ -4021,6 +4026,35 @@ export default function App() {
     }
   }
 
+  async function saveQuickTransaction(payload) {
+    if (!canAddLancamentos || workspaceSwitchingId) throw new Error("Sem permissão ou workspace em troca");
+    await createTransaction(payload);
+    const message = payload.kind === "Transferencia"
+      ? "Transferência registrada: débito na origem e crédito no destino."
+      : "Lançamento salvo.";
+    showGlobalSuccess(message);
+    try {
+      await Promise.all([reloadTransactions(), reloadCardsData(), reloadDashboard(), reloadInvestData()]);
+      return message;
+    } catch {
+      return `${message} Alguns painéis não foram atualizados; atualize a página. Não é necessário salvar novamente.`;
+    }
+  }
+
+  function openFullTransaction(draft, future) {
+    setTxDraft({date:draft.date,amount:draft.amount,description:draft.description,notes:draft.notes});
+    setTxCategoryId(draft.kind === "Transferencia"
+      ? String(categories.find(c => c.kind === "Transferencia")?.id || "") : draft.category);
+    setTxAccountId(draft.kind === "Transferencia" ? draft.destination : draft.account);
+    setTxSourceAccountId(draft.kind === "Transferencia" ? draft.account : "");
+    setTxMethod(draft.method);
+    setTxFuturePaymentMethod(draft.method);
+    setTxView(future ? "futuro" : "caixa");
+    setTxMsg("Rascunho recebido do lançamento rápido. Confira os campos antes de salvar.");
+    setPage("Lançamentos");
+    setQuickOpen(false);
+  }
+
   async function onCreateTransaction(e) {
     e.preventDefault();
     setTxMsg("");
@@ -4127,6 +4161,7 @@ export default function App() {
       });
       let successMsg = "Lançamento salvo.";
       formEl.reset();
+      setTxDraft({date:localToday(),amount:"",description:"",notes:""});
       setTxCategoryId("");
       setTxMethod(txIsFutureTab ? "Futuro" : "PIX");
       setTxFuturePaymentMethod("PIX");
@@ -5731,7 +5766,13 @@ export default function App() {
             {workspaceSwitchingId ? <span className="workspace-msg">Trocando workspace...</span> : null}
             {!workspaceSwitchingId && workspaceMsg ? <span className="workspace-msg">{workspaceMsg}</span> : null}
           </div>
+          {canViewLancamentos && canAddLancamentos ? <button className="quick-launch" type="button" disabled={Boolean(workspaceSwitchingId)} onClick={() => setQuickOpen(true)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>Novo lançamento</span></button> : null}
         </header>
+        {canViewLancamentos && canAddLancamentos && !workspaceSwitchingId ? <QuickEntry
+          key={currentWorkspaceId} open={quickOpen} onClose={() => setQuickOpen(false)}
+          accounts={accounts} categories={categories} transferAccounts={transferAccounts}
+          transactions={transactions} onSave={saveQuickTransaction} onFull={openFullTransaction}
+        /> : null}
 
         {loginSyncNotice?.message ? (
           <section className={`status-banner ${loginSyncNotice.level === "warning" ? "warning" : "success"}`}>
@@ -6941,7 +6982,7 @@ export default function App() {
                     />
                   </>
                 ) : (
-                  <input name="date" type="date" required />
+                  <input name="date" type="date" required value={txDraft.date} onChange={e => setTxDraft(d => ({...d,date:e.target.value}))} />
                 )}
                 {txIsCashTab ? (
                   <>
@@ -7022,15 +7063,17 @@ export default function App() {
                           ))}
                       </select>
                     ) : null}
-                    <input name="notes" type="text" placeholder="Obs (opcional)" />
+                    <input name="notes" type="text" placeholder="Obs (opcional)" value={txDraft.notes} onChange={e => setTxDraft(d => ({...d,notes:e.target.value}))} />
                   </>
                 ) : null}
-                <input name="description" type="text" placeholder="Descrição (opcional)" />
+                <input name="description" type="text" placeholder="Descrição (opcional)" value={txDraft.description} onChange={e => setTxDraft(d => ({...d,description:e.target.value}))} />
                 <input
                   name="amount"
                   type="text"
                   inputMode="numeric"
                   placeholder="Valor"
+                  value={txDraft.amount}
+                  onChange={e => setTxDraft(d => ({...d,amount:e.target.value}))}
                   onInput={applyCurrencyMaskInput}
                   required
                 />
@@ -7117,7 +7160,7 @@ export default function App() {
                         disabled
                       />
                     ) : null}
-                    <input name="notes" type="text" placeholder="Obs (opcional)" />
+                    <input name="notes" type="text" placeholder="Obs (opcional)" value={txDraft.notes} onChange={e => setTxDraft(d => ({...d,notes:e.target.value}))} />
                   </>
                 ) : null}
                 <button type="submit" disabled={isPendingAction("createTransaction")}>

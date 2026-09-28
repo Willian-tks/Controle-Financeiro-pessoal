@@ -106,6 +106,8 @@ jobs:
           fi
       - name: Install dependencies from lockfile
         run: npm ci --include=dev --include=optional
+      - name: Test quick entry payload and validation
+        run: node --test tests/quickEntry.test.js
       - name: Build frontend from source
         run: npm run build -- --outDir dist-next
       - name: Check generated entry point
