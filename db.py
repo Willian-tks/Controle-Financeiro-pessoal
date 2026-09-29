@@ -384,6 +384,10 @@ def _sqlite_schema(cur):
         fees REAL NOT NULL DEFAULT 0,
         taxes REAL NOT NULL DEFAULT 0,
         note TEXT,
+        operation_type TEXT NOT NULL DEFAULT 'TRADE',
+        reason TEXT,
+        reversed_trade_id INTEGER,
+        created_by_user_id INTEGER,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY(asset_id) REFERENCES assets(id)
     );
@@ -726,6 +730,10 @@ def _postgres_schema(cur):
         fees DOUBLE PRECISION NOT NULL DEFAULT 0,
         taxes DOUBLE PRECISION NOT NULL DEFAULT 0,
         note TEXT,
+        operation_type TEXT NOT NULL DEFAULT 'TRADE',
+        reason TEXT,
+        reversed_trade_id BIGINT,
+        created_by_user_id BIGINT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         CONSTRAINT fk_trades_asset FOREIGN KEY (asset_id) REFERENCES assets(id)
     );
@@ -1075,6 +1083,10 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS exchange_rate DOUBLE PRECISION NOT NULL DEFAULT 1")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS operation_type TEXT NOT NULL DEFAULT 'TRADE'")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS reason TEXT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS reversed_trade_id BIGINT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS created_by_user_id BIGINT")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE income_events ADD COLUMN IF NOT EXISTS credit_account_id BIGINT")
@@ -1327,6 +1339,10 @@ def _migrate_multitenant_sqlite(cur):
     """)
     _add_column_sqlite(cur, "trades", "user_id INTEGER")
     _add_column_sqlite(cur, "trades", "exchange_rate REAL NOT NULL DEFAULT 1")
+    _add_column_sqlite(cur, "trades", "operation_type TEXT NOT NULL DEFAULT 'TRADE'")
+    _add_column_sqlite(cur, "trades", "reason TEXT")
+    _add_column_sqlite(cur, "trades", "reversed_trade_id INTEGER")
+    _add_column_sqlite(cur, "trades", "created_by_user_id INTEGER")
     _add_column_sqlite(cur, "income_events", "user_id INTEGER")
     _add_column_sqlite(cur, "income_events", "credit_account_id INTEGER")
     _add_column_sqlite(cur, "prices", "user_id INTEGER")

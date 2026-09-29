@@ -37,6 +37,7 @@ import {
   createInvestAsset,
   createInvestIncome,
   createInvestTrade,
+  createInvestAdjustment,
   createListItem,
   createTransaction,
   createList,
@@ -48,6 +49,7 @@ import {
   deleteInvestAsset,
   deleteInvestIncome,
   deleteInvestTrade,
+  reverseInvestAdjustment,
   deleteListItem,
   deleteList,
   downloadInvestReport,
@@ -67,6 +69,7 @@ import {
   getInvestMeta,
   getInvestIndexRates,
   getInvestPortfolio,
+  previewInvestAdjustment,
   getInvestPortfolioTimeseries,
   getInvestPriceJobStatus,
   getInvestPrices,
@@ -778,6 +781,8 @@ function isFixedIncomeClass(assetClass) {
 
 function formatTradeSideLabel(side, assetClass) {
   const s = String(side || "").trim().toUpperCase();
+  if (s === "ADJUST_IN") return "AJUSTE +";
+  if (s === "ADJUST_OUT") return "AJUSTE -";
   if (isFixedIncomeClass(assetClass)) {
     if (s === "BUY") return "APLICAÇÃO";
     if (s === "SELL") return "RESGATE";
@@ -1105,6 +1110,15 @@ export default function App() {
   const [incomeAssetId, setIncomeAssetId] = useState("");
   const [tradeSide, setTradeSide] = useState("BUY");
   const [tradeExchangeRate, setTradeExchangeRate] = useState("");
+  const [adjustmentAssetId, setAdjustmentAssetId] = useState("");
+  const [adjustmentDate, setAdjustmentDate] = useState(localToday());
+  const [adjustmentDirection, setAdjustmentDirection] = useState("INCREASE");
+  const [adjustmentType, setAdjustmentType] = useState("MANUAL");
+  const [adjustmentQuantity, setAdjustmentQuantity] = useState("");
+  const [adjustmentUnitCost, setAdjustmentUnitCost] = useState("");
+  const [adjustmentExchangeRate, setAdjustmentExchangeRate] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [adjustmentPreview, setAdjustmentPreview] = useState(null);
   const [assetCreateClass, setAssetCreateClass] = useState("");
   const [assetCreateRentabilityType, setAssetCreateRentabilityType] = useState("");
   const [assetCreateIndexPct, setAssetCreateIndexPct] = useState("");
@@ -2794,6 +2808,18 @@ export default function App() {
     () => (investPortfolio?.positions || []).find((p) => String(p.asset_id) === String(tradeAssetId)) || null,
     [investPortfolio, tradeAssetId]
   );
+  const adjustmentAssets = useMemo(
+    () => investAssets.filter((asset) => !isFixedIncomeClass(asset.asset_class)),
+    [investAssets]
+  );
+  const selectedAdjustmentAsset = useMemo(
+    () => adjustmentAssets.find((asset) => String(asset.id) === String(adjustmentAssetId)) || null,
+    [adjustmentAssets, adjustmentAssetId]
+  );
+  const adjustmentAssetIsUsd = String(selectedAdjustmentAsset?.currency || "").toUpperCase() === "USD";
+  useEffect(() => {
+    setAdjustmentPreview(null);
+  }, [adjustmentAssetId, adjustmentDate, adjustmentDirection, adjustmentType, adjustmentQuantity, adjustmentUnitCost, adjustmentExchangeRate, adjustmentReason]);
   const tradeAssetClassOptions = useMemo(() => {
     const labels = [];
     const seen = new Set();
@@ -4540,6 +4566,70 @@ export default function App() {
     } catch (err) {
       setInvestMsg(String(err.message || err));
     }
+    });
+  }
+
+  function buildAdjustmentPayload() {
+    return {
+      asset_id: Number(adjustmentAssetId),
+      date: adjustmentDate,
+      direction: adjustmentDirection,
+      quantity: parseLocaleNumber(adjustmentQuantity || "0"),
+      unit_cost: adjustmentDirection === "INCREASE" ? parseLocaleNumber(adjustmentUnitCost || "0") : null,
+      exchange_rate: adjustmentAssetIsUsd ? parseLocaleNumber(adjustmentExchangeRate || "0") : null,
+      adjustment_type: adjustmentType,
+      reason: adjustmentReason.trim(),
+    };
+  }
+
+  async function onPreviewInvestAdjustment(e) {
+    e.preventDefault();
+    if (!canAddInvestimentos) return setInvestMsg("Sem permissão para ajustar posições.");
+    const payload = buildAdjustmentPayload();
+    if (!payload.asset_id || !payload.date || !Number.isFinite(payload.quantity) || payload.quantity <= 0 || payload.reason.length < 3) {
+      return setInvestMsg("Preencha ativo, data, quantidade e motivo do ajuste.");
+    }
+    await withPendingAction("previewInvestAdjustment", async () => {
+      try {
+        setInvestMsg("");
+        setAdjustmentPreview(await previewInvestAdjustment(payload));
+      } catch (err) {
+        setInvestMsg(String(err.message || err));
+      }
+    });
+  }
+
+  async function onConfirmInvestAdjustment() {
+    await withPendingAction("createInvestAdjustment", async () => {
+      try {
+        await createInvestAdjustment(buildAdjustmentPayload());
+        setAdjustmentAssetId("");
+        setAdjustmentQuantity("");
+        setAdjustmentUnitCost("");
+        setAdjustmentExchangeRate("");
+        setAdjustmentReason("");
+        setAdjustmentPreview(null);
+        setInvestMsg("Ajuste de posição salvo sem movimentação de caixa.");
+        showGlobalSuccess("Ajuste de posição salvo.");
+        await reloadInvestData();
+        await reloadDashboard();
+      } catch (err) {
+        setInvestMsg(String(err.message || err));
+      }
+    });
+  }
+
+  async function onReverseInvestAdjustment(id) {
+    await withPendingAction(`reverseInvestAdjustment-${id}`, async () => {
+      try {
+        const result = await reverseInvestAdjustment(Number(id));
+        setInvestMsg(result.message || "Ajuste revertido.");
+        showGlobalSuccess("Ajuste revertido com registro no histórico.");
+        await reloadInvestData();
+        await reloadDashboard();
+      } catch (err) {
+        setInvestMsg(String(err.message || err));
+      }
     });
   }
 
@@ -8991,6 +9081,75 @@ export default function App() {
                 </section>
 
                 <section className="card">
+                  <h3>Ajuste de posição</h3>
+                  <p className="tx-helper">
+                    Concilie quantidade e custo sem criar compra, venda ou movimentação de caixa. O motivo fica registrado no histórico.
+                  </p>
+                  <form className="tx-form" onSubmit={onPreviewInvestAdjustment}>
+                    <select value={adjustmentAssetId} onChange={(e) => setAdjustmentAssetId(e.target.value)} required>
+                      <option value="" disabled>Ativo</option>
+                      {adjustmentAssets.map((asset) => (
+                        <option key={asset.id} value={asset.id}>{asset.symbol} · {asset.asset_class}</option>
+                      ))}
+                    </select>
+                    <input type="date" value={adjustmentDate} onChange={(e) => setAdjustmentDate(e.target.value)} required />
+                    <select value={adjustmentDirection} onChange={(e) => setAdjustmentDirection(e.target.value)}>
+                      <option value="INCREASE">Aumentar posição</option>
+                      <option value="DECREASE">Reduzir posição</option>
+                    </select>
+                    <select value={adjustmentType} onChange={(e) => setAdjustmentType(e.target.value)}>
+                      <option value="MANUAL">Conciliação manual</option>
+                      <option value="TRANSFER">Transferência de custódia</option>
+                      <option value="BONUS">Bonificação</option>
+                    </select>
+                    <input
+                      type="text" inputMode="decimal" placeholder="Quantidade"
+                      value={adjustmentQuantity}
+                      onChange={(e) => setAdjustmentQuantity(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 12 }))}
+                      required
+                    />
+                    {adjustmentDirection === "INCREASE" ? (
+                      <input
+                        type="text" inputMode="numeric"
+                        placeholder={`Custo unitário (${adjustmentAssetIsUsd ? "USD" : "BRL"})`}
+                        value={adjustmentUnitCost}
+                        onChange={(e) => setAdjustmentUnitCost(e.target.value)}
+                        onInput={applyCurrencyMaskInput}
+                        required
+                      />
+                    ) : null}
+                    {adjustmentAssetIsUsd ? (
+                      <input
+                        type="text" inputMode="decimal" placeholder="Cotação USD/BRL"
+                        value={adjustmentExchangeRate}
+                        onChange={(e) => setAdjustmentExchangeRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 4, maxIntegerDigits: 6 }))}
+                        required
+                      />
+                    ) : null}
+                    <input
+                      type="text" placeholder="Motivo obrigatório"
+                      value={adjustmentReason} onChange={(e) => setAdjustmentReason(e.target.value)}
+                      minLength={3} maxLength={500} required
+                    />
+                    <button type="submit" disabled={isPendingAction("previewInvestAdjustment")}>
+                      {isPendingAction("previewInvestAdjustment") ? "Calculando..." : "Revisar ajuste"}
+                    </button>
+                  </form>
+                  {adjustmentPreview ? (
+                    <div className="notice info">
+                      <strong>Prévia de {adjustmentPreview.asset?.symbol}</strong>
+                      <p>
+                        Quantidade: {formatPortfolioQty(adjustmentPreview.before.quantity)} → {formatPortfolioQty(adjustmentPreview.after.quantity)} · Custo total: {brl.format(Number(adjustmentPreview.before.cost_basis || 0))} → {brl.format(Number(adjustmentPreview.after.cost_basis || 0))}
+                      </p>
+                      <p>Custo médio: {brl.format(Number(adjustmentPreview.before.average_cost || 0))} → {brl.format(Number(adjustmentPreview.after.average_cost || 0))}</p>
+                      <button type="button" onClick={onConfirmInvestAdjustment} disabled={isPendingAction("createInvestAdjustment")}>
+                        {isPendingAction("createInvestAdjustment") ? "Salvando..." : "Confirmar ajuste"}
+                      </button>
+                    </div>
+                  ) : null}
+                </section>
+
+                <section className="card">
                   <h3>Operações recentes</h3>
                   <div className="tx-form invest-date-filter-form">
                     <input
@@ -9035,9 +9194,17 @@ export default function App() {
                             </td>
                             <td>{formatTradeMoney(t.fees, t.currency)}</td>
                             <td>
-                              <button type="button" onClick={() => onDeleteInvestTrade(t.id)} disabled={isPendingAction(`deleteInvestTrade-${t.id}`)}>
-                                {isPendingAction(`deleteInvestTrade-${t.id}`) ? "Excluindo..." : "Excluir"}
-                              </button>
+                              {String(t.operation_type || "TRADE").toUpperCase() !== "TRADE" ? (
+                                String(t.operation_type || "").toUpperCase() === "REVERSAL" || t.reversed_trade_id || t.reversal_id ? "Registrado" : (
+                                  <button type="button" onClick={() => onReverseInvestAdjustment(t.id)} disabled={isPendingAction(`reverseInvestAdjustment-${t.id}`)}>
+                                    {isPendingAction(`reverseInvestAdjustment-${t.id}`) ? "Revertendo..." : "Reverter"}
+                                  </button>
+                                )
+                              ) : (
+                                <button type="button" onClick={() => onDeleteInvestTrade(t.id)} disabled={isPendingAction(`deleteInvestTrade-${t.id}`)}>
+                                  {isPendingAction(`deleteInvestTrade-${t.id}`) ? "Excluindo..." : "Excluir"}
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))}

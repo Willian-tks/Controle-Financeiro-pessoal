@@ -98,6 +98,7 @@ def df_trades(date_from=None, date_to=None, user_id: int | None = None):
     uid = _uid(user_id)
     q = """
         SELECT t.id, t.asset_id, t.date, t.side, t.quantity, t.price, t.exchange_rate, t.fees, t.taxes,
+               t.operation_type, t.reason, t.reversed_trade_id,
                a.symbol, a.asset_class, a.currency
         FROM trades t
         JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
@@ -188,7 +189,8 @@ def positions_avg_cost(trades_df: pd.DataFrame):
         aid = int(r["asset_id"])
         sym = r["symbol"]
         cls = r["asset_class"]
-        side = r["side"]
+        side = str(r["side"] or "").upper()
+        operation_type = str(r.get("operation_type") or "TRADE").upper()
         qty = float(r["quantity"])
         price = float(r["price"])
         fees = float(r["fees"] or 0.0)
@@ -210,19 +212,20 @@ def positions_avg_cost(trades_df: pd.DataFrame):
             s["cost_warning"] = " Conferir câmbio histórico das operações; custo pode estar estimado."
         s["last_fx"] = fx
         s["last_fx_date"] = pd.Timestamp(r["date"]).strftime("%Y-%m-%d")
-        if side == "BUY":
+        if side in {"BUY", "ADJUST_IN"}:
             s["qty"] += qty
-            buy_cost = (gross_brl + fees_brl) if is_fixed_income else (gross_brl + fees_brl + taxes_brl)
+            buy_cost = gross_brl if side == "ADJUST_IN" else ((gross_brl + fees_brl) if is_fixed_income else (gross_brl + fees_brl + taxes_brl))
             s["cost_basis"] += max(0.0, buy_cost)
-        else:
+        elif side in {"SELL", "ADJUST_OUT"}:
             if s["qty"] <= 0:
                 avg_cost = 0.0
             else:
                 avg_cost = s["cost_basis"] / s["qty"] if s["qty"] != 0 else 0.0
 
-            proceeds = gross_brl - fees_brl - taxes_brl
-            cost_removed = avg_cost * qty
-            s["realized_pnl"] += proceeds - cost_removed
+            cost_removed = gross_brl if side == "ADJUST_OUT" and operation_type == "REVERSAL" else avg_cost * qty
+            if side == "SELL":
+                proceeds = gross_brl - fees_brl - taxes_brl
+                s["realized_pnl"] += proceeds - cost_removed
             s["qty"] -= qty
             s["cost_basis"] -= cost_removed
 

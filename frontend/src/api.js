@@ -458,6 +458,24 @@ export function createInvestTrade(payload) {
   });
 }
 
+export function previewInvestAdjustment(payload) {
+  return req("/invest/adjustments/preview", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createInvestAdjustment(payload) {
+  return req("/invest/adjustments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function reverseInvestAdjustment(id) {
+  return req(`/invest/adjustments/${id}/reverse`, { method: "POST" });
+}
+
 export function deleteInvestTrade(id) {
   return req(`/invest/trades/${id}`, {
     method: "DELETE",

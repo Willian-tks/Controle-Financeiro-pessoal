@@ -77,6 +77,7 @@ from .schemas import (
     IndexRatesSyncRequest,
     IndexRatesUpsertRequest,
     PriceUpsertRequest,
+    PositionAdjustmentCreateRequest,
     QuoteUpdateAllRequest,
     RentabilityDivergenceRequest,
     RentabilityUpdateRequest,
@@ -885,6 +886,69 @@ def _get_asset_trade_position(asset_id: int, *, user_id: int) -> dict[str, float
     return {
         "qty": float(row.get("qty") or 0.0),
         "cost_basis": float(row.get("cost_basis") or 0.0),
+    }
+
+
+def _prepare_position_adjustment(body: PositionAdjustmentCreateRequest, *, user_id: int) -> dict[str, Any]:
+    asset = invest_repo.get_asset(int(body.asset_id), user_id=user_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Ativo não encontrado")
+    if _is_fixed_income_asset(asset):
+        raise HTTPException(status_code=400, detail="Ajustes explícitos ainda não se aplicam a ativos de renda fixa.")
+
+    direction = str(body.direction or "").strip().upper()
+    if direction not in {"INCREASE", "DECREASE"}:
+        raise HTTPException(status_code=400, detail="Direção do ajuste inválida.")
+    adjustment_type = str(body.adjustment_type or "").strip().upper()
+    if adjustment_type not in {"MANUAL", "TRANSFER", "BONUS"}:
+        raise HTTPException(status_code=400, detail="Motivo operacional do ajuste inválido.")
+    reason = str(body.reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="Informe o motivo do ajuste.")
+
+    qty = float(body.quantity)
+    unit_cost = None if body.unit_cost is None else float(body.unit_cost)
+    is_usd = _is_usd_asset(asset)
+    exchange_rate = float(body.exchange_rate or 0.0)
+    if is_usd and exchange_rate <= 0:
+        raise HTTPException(status_code=400, detail="Cotação USD/BRL é obrigatória para ativos em USD.")
+    fx = exchange_rate if is_usd else 1.0
+
+    before = _get_asset_trade_position(int(body.asset_id), user_id=user_id)
+    before_qty = float(before["qty"])
+    before_cost = float(before["cost_basis"])
+    before_avg = before_cost / before_qty if before_qty > 0 else 0.0
+    if direction == "INCREASE":
+        if unit_cost is None:
+            raise HTTPException(status_code=400, detail="Informe o custo unitário do ajuste.")
+        if unit_cost == 0 and adjustment_type != "BONUS":
+            raise HTTPException(status_code=400, detail="Custo zero é permitido somente para bonificação.")
+        stored_price = unit_cost
+        after_qty = before_qty + qty
+        after_cost = before_cost + (qty * unit_cost * fx)
+        side = "ADJUST_IN"
+    else:
+        if qty > before_qty + 1e-8:
+            raise HTTPException(status_code=400, detail=f"Quantidade superior à posição disponível ({before_qty:g}).")
+        stored_price = before_avg / fx if fx > 0 else before_avg
+        after_qty = max(0.0, before_qty - qty)
+        after_cost = max(0.0, before_cost - (before_avg * qty))
+        side = "ADJUST_OUT"
+
+    return {
+        "asset": asset,
+        "side": side,
+        "quantity": qty,
+        "price": stored_price,
+        "exchange_rate": fx,
+        "operation_type": adjustment_type,
+        "reason": reason,
+        "before": {"quantity": before_qty, "cost_basis": before_cost, "average_cost": before_avg},
+        "after": {
+            "quantity": after_qty,
+            "cost_basis": after_cost,
+            "average_cost": after_cost / after_qty if after_qty > 0 else 0.0,
+        },
     }
 
 
@@ -4089,6 +4153,49 @@ def invest_create_trade(
             user_id=uid,
         )
     return {"ok": True}
+
+
+@app.post("/invest/adjustments/preview")
+def invest_preview_position_adjustment(
+    body: PositionAdjustmentCreateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    prepared = _prepare_position_adjustment(body, user_id=int(user["id"]))
+    return {
+        "ok": True,
+        "asset": {"id": int(prepared["asset"]["id"]), "symbol": prepared["asset"]["symbol"]},
+        "before": prepared["before"],
+        "after": prepared["after"],
+    }
+
+
+@app.post("/invest/adjustments")
+def invest_create_position_adjustment(
+    body: PositionAdjustmentCreateRequest,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    prepared = _prepare_position_adjustment(body, user_id=uid)
+    trade_id = invest_repo.insert_trade(
+        asset_id=int(body.asset_id), date=body.date, side=prepared["side"],
+        quantity=prepared["quantity"], price=prepared["price"], exchange_rate=prepared["exchange_rate"],
+        fees=0.0, taxes=0.0, note=None, user_id=uid,
+        operation_type=prepared["operation_type"], reason=prepared["reason"],
+        actor_user_id=uid,
+    )
+    return {"ok": True, "adjustment_id": trade_id, "before": prepared["before"], "after": prepared["after"]}
+
+
+@app.post("/invest/adjustments/{trade_id}/reverse")
+def invest_reverse_position_adjustment(
+    trade_id: int,
+    user: dict = Depends(_current_user),
+) -> dict:
+    uid = int(user["id"])
+    ok, message, reversal_id = invest_repo.reverse_position_adjustment(int(trade_id), user_id=uid, actor_user_id=uid)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "message": message, "reversal_id": reversal_id}
 
 
 @app.delete("/invest/trades/{trade_id}")
