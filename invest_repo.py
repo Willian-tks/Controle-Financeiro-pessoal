@@ -239,13 +239,21 @@ def insert_trade(
     taxes: float = 0.0,
     note: str | None = None,
     user_id: int | None = None,
+    operation_type: str = "TRADE",
+    reason: str | None = None,
+    reversed_trade_id: int | None = None,
+    actor_user_id: int | None = None,
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    _exec(conn, 
+    cur = _exec(conn,
         """
-        INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, note, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO trades(
+            asset_id, date, side, quantity, price, exchange_rate, fees, taxes, note, user_id,
+            operation_type, reason, reversed_trade_id, created_by_user_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING id
         """,
         (
             int(asset_id),
@@ -258,17 +266,82 @@ def insert_trade(
             float(taxes),
             note,
             uid,
+            str(operation_type or "TRADE").upper(),
+            reason,
+            int(reversed_trade_id) if reversed_trade_id is not None else None,
+            int(actor_user_id if actor_user_id is not None else user_id) if (actor_user_id is not None or user_id is not None) else None,
         ),
     )
+    inserted = cur.fetchone()
+    trade_id = int(inserted["id"] if hasattr(inserted, "keys") else inserted[0])
     conn.commit()
     conn.close()
+    return trade_id
+
+
+def reverse_position_adjustment(trade_id: int, user_id: int | None = None, actor_user_id: int | None = None) -> tuple[bool, str, int | None]:
+    uid = _uid(user_id)
+    conn = get_conn()
+    try:
+        trade = _exec(
+            conn,
+            """
+            SELECT id, asset_id, date, side, quantity, price, exchange_rate, operation_type, reason
+            FROM trades
+            WHERE id = ? AND user_id = ?
+            """,
+            (int(trade_id), uid),
+        ).fetchone()
+        if not trade:
+            return False, "Ajuste não encontrado.", None
+        side = str(trade["side"] or "").upper()
+        operation_type = str(trade["operation_type"] or "TRADE").upper()
+        if side not in {"ADJUST_IN", "ADJUST_OUT"} or operation_type == "TRADE":
+            return False, "A operação informada não é um ajuste de posição.", None
+        if operation_type == "REVERSAL":
+            return False, "Uma reversão não pode ser revertida novamente.", None
+        prior = _exec(
+            conn,
+            "SELECT id FROM trades WHERE reversed_trade_id = ? AND user_id = ? LIMIT 1",
+            (int(trade_id), uid),
+        ).fetchone()
+        if prior:
+            return False, "Este ajuste já foi revertido.", int(prior["id"])
+
+        inverse_side = "ADJUST_OUT" if side == "ADJUST_IN" else "ADJUST_IN"
+        reason = f"Reversão do ajuste #{int(trade_id)}: {str(trade['reason'] or '').strip()}".strip()
+        cur = _exec(
+            conn,
+            """
+            INSERT INTO trades(
+                asset_id, date, side, quantity, price, exchange_rate, fees, taxes, note, user_id,
+                operation_type, reason, reversed_trade_id, created_by_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, NULL, ?, 'REVERSAL', ?, ?, ?)
+            RETURNING id
+            """,
+            (
+                int(trade["asset_id"]), str(trade["date"]), inverse_side,
+                float(trade["quantity"]), float(trade["price"]), float(trade["exchange_rate"] or 1.0),
+                uid, reason, int(trade_id), int(actor_user_id if actor_user_id is not None else user_id),
+            ),
+        )
+        inserted = cur.fetchone()
+        reversal_id = int(inserted["id"] if hasattr(inserted, "keys") else inserted[0])
+        conn.commit()
+        return True, "Ajuste revertido com evento compensatório no histórico.", reversal_id
+    except Exception as exc:
+        conn.rollback()
+        return False, f"Erro ao reverter ajuste: {exc}", None
+    finally:
+        conn.close()
 
 
 def list_trades(asset_id=None, date_from=None, date_to=None, user_id: int | None = None):
     uid = _uid(user_id)
     conn = get_conn()
     q = """
-        SELECT t.*, a.symbol, a.asset_class, a.currency
+        SELECT t.*, a.symbol, a.asset_class, a.currency,
+               (SELECT r.id FROM trades r WHERE r.reversed_trade_id = t.id AND r.user_id = t.user_id LIMIT 1) AS reversal_id
         FROM trades t
         JOIN assets a ON a.id = t.asset_id AND a.user_id = t.user_id
         WHERE t.user_id = ?

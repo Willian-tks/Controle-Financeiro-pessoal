@@ -205,6 +205,17 @@ class TradeCreateRequest(BaseModel):
     note: str | None = None
 
 
+class PositionAdjustmentCreateRequest(BaseModel):
+    asset_id: int
+    date: str
+    direction: str
+    quantity: float = Field(gt=0, allow_inf_nan=False)
+    unit_cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    exchange_rate: float | None = Field(default=None, allow_inf_nan=False)
+    adjustment_type: str
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class IncomeCreateRequest(BaseModel):
     asset_id: int
     date: str

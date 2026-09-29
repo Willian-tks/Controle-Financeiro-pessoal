@@ -73,27 +73,30 @@ Aceite: testes demonstram conversão única, consistência entre telas e histór
 
 ### DOMUS-1.5-003 — Verificações automatizadas
 
-Estado: **Em validação** — suíte SQLite e build local aprovados; novo job PostgreSQL aguarda execução no CI.
+Estado: **Concluído** — suítes SQLite/PostgreSQL e build Linux aprovados no DOMUS CI.
 
 - [x] Configurar pipeline de testes Python e build do frontend em ambiente limpo.
 - [x] Cobrir BRL/USD, ausência de cotação, câmbio, taxas e vendas parciais.
 - [x] Verificar lançamentos, cartões, datas e isolamento entre workspaces nos fluxos alterados.
-- [ ] Validar compatibilidade PostgreSQL dos caminhos modificados, além de SQLite.
+- [x] Validar compatibilidade PostgreSQL dos caminhos modificados, além de SQLite.
 - [x] Criar roteiro curto de teste funcional após deploy.
 
 Aceite: falhas relevantes impedem liberar a versão; resultados ficam associados ao commit validado.
 
 ### DOMUS-1.5-004 — Lançamento rápido
 
-Estado: **Em andamento — protótipo aprovado pelo usuário em 28/09/2026**. Proposta em `PROPOSTA_LANCAMENTO_RAPIDO.md`; integração ao sistema e validações com a API ainda pendentes.
+Estado: **Concluído — publicado e validado pelo usuário em 29/09/2026**. Proposta e decisões registradas em `PROPOSTA_LANCAMENTO_RAPIDO.md`.
 
 - [x] Criar protótipo para celular e desktop antes de implementar o layout definitivo; usuário concluiu o teste e aprovou a proposta em 28/09/2026.
-- [ ] Disponibilizar ação “Novo lançamento” a partir das telas principais.
-- [ ] Selecionar Despesa, Receita ou Transferência explicitamente.
-- [ ] Destacar valor, preencher data com hoje no fuso do usuário e oferecer contas/métodos favoritos.
-- [ ] Mostrar categorias recentes e permitir repetir lançamento com revisão.
-- [ ] Mover campos adicionais para “Mais opções”, preservando os fluxos de cartão e compromissos.
-- [ ] Preparar o fluxo comum para futura entrada por texto, voz e foto de nota/cupom fiscal, sem botão inoperante na versão publicada.
+- [x] Disponibilizar ação “Novo lançamento” a partir das telas principais.
+- [x] Selecionar Despesa, Receita ou Transferência explicitamente.
+- [x] Destacar valor, preencher data com hoje no fuso do usuário e reutilizar conta/método ao repetir um lançamento revisado.
+- [x] Mostrar categorias recentes e permitir repetir lançamento com revisão.
+- [x] Mover campos adicionais para “Mais opções”, preservando os fluxos de cartão e compromissos.
+- [x] Listar cartões de crédito individualmente, inclusive quando vários cartões usam a mesma conta vinculada, e preservar a seleção no formulário completo.
+- [x] Preparar o fluxo comum para futura entrada por texto, voz e foto de nota/cupom fiscal, sem botão inoperante na versão publicada.
+
+Favoritos configuráveis de conta e método permanecem como melhoria complementar de interface no item 1.5-006; a repetição com revisão atende ao atalho operacional desta entrega.
 
 Aceite: registrar despesa ou receita comum exige menos interações que o fluxo atual, medido com os mesmos cenários; usuário identifica conta, valor e data antes de salvar; não há regressão em transferências/cartões. Validar o protótipo com o responsável pelo produto.
 
@@ -164,17 +167,17 @@ Aceite: versão, commit e data implantados são identificáveis; pendências e i
 
 ### DOMUS-1.5-011 — Ajuste de posição de investimentos
 
-Estado: **Planejado**. Prioridade: **P1**. Esforço: **M**. Dependências: 002 e 003.
+Estado: **Pronto para publicação** — implementação, testes automatizados e conferência visual local concluídos; CI e validação no VPS pendentes. Prioridade: **P1**. Esforço: **M**. Dependências: 002 e 003.
 
 Objetivo: permitir conciliação de posições sem cadastrar uma compra fictícia a preço zero.
 
-- [ ] Criar operação explícita de ajuste, com ativo, data, quantidade, motivo obrigatório e custo informado na moeda do ativo; câmbio explícito quando aplicável.
-- [ ] Definir acréscimo/redução de posição e efeitos no custo médio, histórico e rentabilidade, sem gerar receita/despesa ou resultado realizado fictício.
-- [ ] Distinguir ajuste manual, transferência e bonificação; não presumir custo zero pela ausência de desembolso.
-- [ ] Mostrar prévia de quantidade e custo antes/depois e exigir confirmação ao salvar.
-- [ ] Registrar autor, data e motivo, respeitar workspace e permitir reversão rastreável.
-- [ ] Cobrir BRL/USD, aumento/redução, custo zero justificado e consistência entre carteira, Dashboard e relatório.
-- [ ] Revisar individualmente os lançamentos legados 85–88; nenhuma conversão ou alteração automática.
+- [x] Criar operação explícita de ajuste, com ativo, data, quantidade, motivo obrigatório e custo informado na moeda do ativo; câmbio explícito quando aplicável.
+- [x] Definir acréscimo/redução de posição e efeitos no custo médio, histórico e rentabilidade, sem gerar receita/despesa ou resultado realizado fictício.
+- [x] Distinguir ajuste manual, transferência e bonificação; não presumir custo zero pela ausência de desembolso.
+- [x] Mostrar prévia de quantidade e custo antes/depois e exigir confirmação ao salvar.
+- [x] Registrar autor, data e motivo, respeitar workspace e permitir reversão rastreável.
+- [x] Cobrir BRL/USD, aumento/redução, custo zero justificado e consistência entre carteira, Dashboard e relatório.
+- [x] Revisar individualmente os lançamentos legados 85–88; nenhuma conversão ou alteração automática foi realizada.
 
 Aceite: ajuste identificado separadamente de compra/venda, com efeitos documentados, trilha de auditoria e testes; preservar registros antigos até conferência e autorização de eventual correção.
 
@@ -215,14 +218,20 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 | Item | Estado | Evidência / commit | Validação local | Publicação / validação VPS |
 |---|---|---|---|---|
 | DOMUS-1.5-001 | Concluído | Produção f6ff746; backup /opt/apps/domus-backup.F0L2HZ | CI Linux, 64 testes isolados no VPS e 5 testes de reversão aprovados | Publicado; usuário confirmou login, Dashboard, Lançamentos e Investimentos |
-| DOMUS-1.5-003 | Em andamento | Workflow DOMUS CI criado; dependência httpx declarada para testes | 59 testes Python locais aprovados; CI Linux aprovado no commit 7d01078 | CI publicado; VPS não validado |
-| DOMUS-1.5-002 e 004 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
+| DOMUS-1.5-003 | Concluído | DOMUS CI com SQLite, PostgreSQL e build Linux; PRs 3 e 4 com 6 checks aprovados | Suítes financeiras e build executados em ambiente limpo | Pipeline publicado e usado como bloqueio operacional antes dos merges |
+| DOMUS-1.5-002 | Em validação | Correções de câmbio e regressão financeira publicadas | Suítes SQLite/PostgreSQL e conferência manual executadas | Publicado; exceções legadas permanecem registradas no item 011 |
+| DOMUS-1.5-004 | Concluído | PRs 3 e 4; commits de merge 933b0d3 e d333bb7 | 9 testes Node, build, despesa/receita/transferência, cartão, compromisso e layout móvel | Frontend publicado; usuário confirmou o fluxo e a seleção de cartão |
+| DOMUS-1.5-011 | Pronto para publicação | Ajuste explícito, prévia e reversão auditável implementados em `codex/investment-adjustments` | 87 testes Python, build Vite e validação funcional local aprovados; 5 cenários específicos BRL/USD | Não publicada; CI e validação no VPS pendentes |
+| DOMUS-1.5-005 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
 
 ## Histórico do documento
 
 | Data | Revisão | Alteração |
 |---|---|---|
 | 2026-09-21 | 1 | Criação do planejamento 1.5 e roadmap de IA, voz e consultas |
+| 2026-09-29 | 2 | Conclusão do lançamento rápido e registro da seleção de múltiplos cartões por conta |
+| 2026-09-29 | 3 | Implementação local do ajuste explícito de posição, com prévia, auditoria e reversão rastreável |
+| 2026-09-29 | 4 | Validação funcional local do ajuste de posição aprovada pelo usuário; entrega preparada para publicação |
 
 
 ### Execução inicial — 2026-09-21
@@ -399,3 +408,10 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 - Para despesas no credito, o lancamento rapido agora lista os cartoes de credito cadastrados e preenche a conta vinculada a partir do cartao escolhido.
 - A selecao do cartao e preservada ao continuar no formulario completo, junto com data, categoria, descricao e valor.
 - Validacao local com dois cartoes ficticios vinculados a mesma conta confirmou a escolha individual e o encaminhamento correto. Nove testes Node e o build de producao passaram.
+
+### 2026-09-29 - Publicacao e encerramento do item 1.5-004
+
+- PR 3 incorporado na `main` pelo commit `933b0d3`, com o lançamento rápido e seis checks aprovados.
+- PR 4 incorporado na `main` pelo commit `d333bb7`, corrigindo a seleção de cartão; seis checks aprovados.
+- Frontend publicado no VPS pelo procedimento de preparação isolada, promoção com backup e validação do Nginx/HTTPS.
+- Usuário confirmou os fluxos em celular e desktop, incluindo despesa, receita, transferência, cartão e compromisso. Item 1.5-004 concluído.
