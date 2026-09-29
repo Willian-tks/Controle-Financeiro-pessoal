@@ -392,3 +392,10 @@ Atualizar esta tabela durante o trabalho; manter os crit√©rios acima como refer√
 - Encaminhamento ao formulario de cartao preservou valor, descricao, categoria e data; compromisso preservou valor, descricao, categoria, conta e observacoes. Nao foram salvos cartao nem compromisso nesta verificacao.
 - Corrigido submit involuntario ao encaminhar para cartao e limpar o rascunho; reabertura verificada sem mensagens de erro. Oito testes Node aprovados.
 - Pendentes: gravacao completa de cartao/compromisso, validacao movel, favoritos, CI remoto e publicacao. Item 004 permanece em andamento.
+
+### 2026-09-28 - Selecao de cartao no lancamento rapido
+
+- Identificado no teste do usuario que a conta vinculada nao determina o cartao, pois uma conta pode possuir varios cartoes.
+- Para despesas no credito, o lancamento rapido agora lista os cartoes de credito cadastrados e preenche a conta vinculada a partir do cartao escolhido.
+- A selecao do cartao e preservada ao continuar no formulario completo, junto com data, categoria, descricao e valor.
+- Validacao local com dois cartoes ficticios vinculados a mesma conta confirmou a escolha individual e o encaminhamento correto. Nove testes Node e o build de producao passaram.
