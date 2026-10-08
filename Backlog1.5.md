@@ -102,6 +102,8 @@ Aceite: registrar despesa ou receita comum exige menos interações que o fluxo 
 
 ### DOMUS-1.5-005 — Dashboard
 
+Estado: **Em andamento** — reorganização visual inicial implementada localmente; validação funcional e publicação pendentes.
+
 - [ ] Separar saldo disponível, resultado do mês, compromissos e patrimônio.
 - [ ] Explicitar período e base de cálculo dos indicadores.
 - [ ] Distinguir custo investido, valor de mercado e resultado em investimentos.
@@ -167,7 +169,7 @@ Aceite: versão, commit e data implantados são identificáveis; pendências e i
 
 ### DOMUS-1.5-011 — Ajuste de posição de investimentos
 
-Estado: **Pronto para publicação** — implementação, testes automatizados e conferência visual local concluídos; CI e validação no VPS pendentes. Prioridade: **P1**. Esforço: **M**. Dependências: 002 e 003.
+Estado: **Concluído — publicado** — PR 5 concluído e publicado conforme confirmação do usuário em 08/10/2026. Prioridade: **P1**. Esforço: **M**. Dependências: 002 e 003.
 
 Objetivo: permitir conciliação de posições sem cadastrar uma compra fictícia a preço zero.
 
@@ -221,8 +223,9 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 | DOMUS-1.5-003 | Concluído | DOMUS CI com SQLite, PostgreSQL e build Linux; PRs 3 e 4 com 6 checks aprovados | Suítes financeiras e build executados em ambiente limpo | Pipeline publicado e usado como bloqueio operacional antes dos merges |
 | DOMUS-1.5-002 | Em validação | Correções de câmbio e regressão financeira publicadas | Suítes SQLite/PostgreSQL e conferência manual executadas | Publicado; exceções legadas permanecem registradas no item 011 |
 | DOMUS-1.5-004 | Concluído | PRs 3 e 4; commits de merge 933b0d3 e d333bb7 | 9 testes Node, build, despesa/receita/transferência, cartão, compromisso e layout móvel | Frontend publicado; usuário confirmou o fluxo e a seleção de cartão |
-| DOMUS-1.5-011 | Pronto para publicação | Ajuste explícito, prévia e reversão auditável implementados em `codex/investment-adjustments` | 87 testes Python, build Vite e validação funcional local aprovados; 5 cenários específicos BRL/USD | Não publicada; CI e validação no VPS pendentes |
-| DOMUS-1.5-005 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
+| DOMUS-1.5-011 | Concluído | PR 5 concluído e publicado conforme confirmação do usuário em 08/10/2026 | 87 testes Python, build Vite e validação funcional local aprovados; 5 cenários específicos BRL/USD | Publicado; confirmação recebida do usuário |
+| DOMUS-1.5-005 | Em andamento | Reorganização inicial do Dashboard em `frontend/src/App.jsx` e `frontend/src/styles.css` | Build Vite aprovado em 08/10/2026; validação visual/funcional pendente | Não publicada |
+| DOMUS-1.5-006 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
 
 ## Histórico do documento
 
@@ -232,6 +235,7 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 | 2026-09-29 | 2 | Conclusão do lançamento rápido e registro da seleção de múltiplos cartões por conta |
 | 2026-09-29 | 3 | Implementação local do ajuste explícito de posição, com prévia, auditoria e reversão rastreável |
 | 2026-09-29 | 4 | Validação funcional local do ajuste de posição aprovada pelo usuário; entrega preparada para publicação |
+| 2026-10-08 | 5 | PR 5 registrado como concluído/publicado e início do DOMUS-1.5-005 com reorganização inicial do Dashboard e build local aprovado |
 
 
 ### Execução inicial — 2026-09-21
