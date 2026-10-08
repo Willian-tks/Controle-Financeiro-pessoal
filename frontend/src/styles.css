@@ -3026,7 +3026,7 @@ body {
 
 .dash-kpis {
   display: grid;
-  grid-template-columns: repeat(3, minmax(200px, 1fr));
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
   gap: 14px;
 }
 
@@ -3040,8 +3040,7 @@ body {
 }
 
 .dash-kpi-card h3 {
-  font-size: 33px;
-  font-size: clamp(20px, 2.1vw, 33px);
+  font-size: 20px;
   margin-bottom: 12px;
 }
 
@@ -3059,17 +3058,60 @@ body {
 
 .dash-kpi-card strong {
   display: block;
-  font-size: clamp(30px, 2.7vw, 44px);
+  font-size: clamp(26px, 2.2vw, 36px);
   line-height: 1.05;
   color: #ffffff;
 }
 
-.dash-kpi-expense strong {
-  color: #ff9191;
+.dash-kpi-card p {
+  margin: 10px 0 0;
+  color: #a9bcdf;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
-.dash-kpi-income strong {
+.dash-kpi-primary strong,
+.dash-kpi-split .up {
   color: #98e8ad;
+}
+
+.dash-kpi-split .down {
+  color: #ff9b9b;
+}
+
+.dash-kpi-split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.dash-kpi-split span,
+.dash-kpi-split button {
+  border-radius: 999px;
+  border: 1px solid rgba(138, 174, 255, 0.24);
+  background: rgba(12, 27, 61, 0.62);
+  color: #dbe7ff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 6px 10px;
+}
+
+.dash-kpi-split button {
+  cursor: pointer;
+}
+
+.dash-kpi-split button:hover:not(:disabled),
+.dash-kpi-split button:focus-visible {
+  border-color: rgba(104, 211, 255, 0.72);
+  background: rgba(46, 198, 255, 0.14);
+}
+
+.dash-kpi-split button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .dash-grid {
@@ -3731,13 +3773,44 @@ body {
   align-items: center;
 }
 
-.dash-invest-total {
-  margin: 4px 0 14px;
-  color: #cfe0ff;
+.dash-invest-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
-.dash-invest-total strong {
+.dash-invest-metrics div {
+  min-width: 0;
+  border: 1px solid rgba(138, 174, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(10, 22, 50, 0.46);
+  padding: 10px 12px;
+}
+
+.dash-invest-metrics span,
+.dash-invest-metrics em {
+  display: block;
+  color: #a9bcdf;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.dash-invest-metrics strong {
+  display: block;
+  margin-top: 5px;
   color: #ffffff;
+  font-size: clamp(18px, 1.7vw, 26px);
+  line-height: 1.1;
+}
+
+.dash-invest-metrics strong.up {
+  color: #98e8ad;
+}
+
+.dash-invest-metrics strong.down {
+  color: #ff9b9b;
 }
 
 .dash-donut {

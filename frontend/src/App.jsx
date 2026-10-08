@@ -2059,6 +2059,21 @@ export default function App() {
         year: "numeric",
       })
     : "";
+  const dashboardPeriodLabel =
+    dashDateFrom && dashDateTo
+      ? `${formatIsoDatePtBr(dashDateFrom)} a ${formatIsoDatePtBr(dashDateTo)}`
+      : dashDateFrom
+        ? `desde ${formatIsoDatePtBr(dashDateFrom)}`
+        : dashDateTo
+          ? `até ${formatIsoDatePtBr(dashDateTo)}`
+          : "período atual";
+  const dashboardViewLabel =
+    dashView === "competencia"
+      ? "competência"
+      : dashView === "futuro"
+        ? "compromissos"
+        : "caixa";
+  const dashboardFilterBaseLabel = `${dashboardPeriodLabel} · visão ${dashboardViewLabel}${dashAccount ? ` · conta ${dashAccount}` : " · todas as contas"}`;
   const normalizeMoneyValue = (v) => (Math.abs(Number(v || 0)) < 0.005 ? 0 : Number(v || 0));
   const accountsTop = useMemo(() => {
     const byAccount = new Map(
@@ -2233,6 +2248,16 @@ export default function App() {
     () => investmentByClass.reduce((acc, r) => acc + Number(r.value || 0), 0),
     [investmentByClass]
   );
+  const investmentCostTotal = useMemo(
+    () =>
+      (investPortfolio?.positions || []).reduce((acc, row) => {
+        if (Number(row?.qty || 0) <= 0) return acc;
+        return acc + Number(row?.cost_basis || 0);
+      }, 0),
+    [investPortfolio]
+  );
+  const investmentResultTotal = investmentTotal - investmentCostTotal;
+  const investmentResultPct = investmentCostTotal > 0 ? (investmentResultTotal / investmentCostTotal) * 100 : 0;
   const dashInvestFocusedClass = useMemo(() => {
     if (!dashInvestFocusClass) return "";
     return investmentByClass.some((row) => row.name === dashInvestFocusClass) ? dashInvestFocusClass : "";
@@ -5432,6 +5457,18 @@ export default function App() {
     setTxRecentInvoicePeriodFilter("");
   }
 
+  function openTransactionsFromDashboard(view = dashView) {
+    if (!canViewLancamentos) return;
+    setPage("Lançamentos");
+    setTxView(view || "caixa");
+    setTxRecentDateFrom(dashDateFrom);
+    setTxRecentDateTo(dashDateTo);
+    setTxRecentCategoryFilterId("");
+    setTxRecentStatusFilter("");
+    setTxRecentCardFilterId("");
+    setTxRecentInvoicePeriodFilter("");
+  }
+
   function openTransactionsCategoryFromDashboard(categoryName = "") {
     if (!canViewLancamentos) return;
     const normalizedTarget = normalizeCategoryName(categoryName);
@@ -5921,34 +5958,63 @@ export default function App() {
               ) : null}
             </section>
 
-            <section className="dash-kpis">
-              <article className="card dash-kpi-card dash-kpi-expense">
+            <section className="dash-kpis dash-overview">
+              <article className="card dash-kpi-card dash-kpi-primary">
                 <h3 className="dash-kpi-title">
-                  <img src={icDespesa} alt="" className="dash-kpi-icon" />
-                  <span>Despesas</span>
+                  <img src={icSaldo} alt="" className="dash-kpi-icon" />
+                  <span>Saldo disponível</span>
                 </h3>
-                <strong>{brl.format(Number(currentKpi.despesas || 0))}</strong>
-              </article>
-              <article className="card dash-kpi-card dash-kpi-income">
-                <h3 className="dash-kpi-title">
-                  <img src={icReceita} alt="" className="dash-kpi-icon" />
-                  <span>Receitas</span>
-                </h3>
-                <strong>{brl.format(Number(currentKpi.receitas || 0))}</strong>
+                <strong>{brl.format(accountsTotal)}</strong>
+                <p>Contas marcadas para o Dashboard, posição atual.</p>
               </article>
               <article className="card dash-kpi-card">
                 <h3 className="dash-kpi-title">
-                  <img src={icSaldo} alt="" className="dash-kpi-icon" />
-                  <span>Resultado</span>
+                  <img src={icDashboard} alt="" className="dash-kpi-icon" />
+                  <span>Resultado do período</span>
                 </h3>
                 <strong>{brl.format(Number(currentKpi.saldo || 0))}</strong>
+                <p>{dashboardFilterBaseLabel}</p>
+                <div className="dash-kpi-split">
+                  <button type="button" onClick={() => openTransactionsFromDashboard(dashView)} disabled={!canViewLancamentos}>
+                    Ver lançamentos
+                  </button>
+                  <span>Receitas {brl.format(Number(currentKpi.receitas || 0))}</span>
+                  <span>Despesas {brl.format(Number(currentKpi.despesas || 0))}</span>
+                </div>
+              </article>
+              <article className="card dash-kpi-card">
+                <h3 className="dash-kpi-title">
+                  <img src={icDespesa} alt="" className="dash-kpi-icon" />
+                  <span>Compromissos</span>
+                </h3>
+                <strong>{brl.format(commitmentsAging.aVencer + commitmentsAging.vencidos)}</strong>
+                <p>A vencer e vencidos no período filtrado.</p>
+                <div className="dash-kpi-split">
+                  <button type="button" onClick={() => openCommitmentsFromDashboard(TX_STATUS_FILTER_OPEN)} disabled={!canViewLancamentos}>
+                    Abrir pendentes
+                  </button>
+                  <span>A vencer {brl.format(commitmentsAging.aVencer)}</span>
+                  <span>Vencidos {brl.format(commitmentsAging.vencidos)}</span>
+                </div>
+              </article>
+              <article className="card dash-kpi-card">
+                <h3 className="dash-kpi-title">
+                  <img src={icReceita} alt="" className="dash-kpi-icon" />
+                  <span>Patrimônio</span>
+                </h3>
+                <strong>{brl.format(trendEnd)}</strong>
+                <p>{trendMonthLabel ? `Fechamento de ${trendMonthLabel}.` : "Sem base mensal no período."}</p>
+                <div className="dash-kpi-split">
+                  <span className={trendDirection}>{trendDelta >= 0 ? "+" : "-"}{brl.format(Math.abs(trendDelta))}</span>
+                  <span>{trendDelta >= 0 ? "+" : "-"}{Math.abs(trendPct).toFixed(1)}% vs mês anterior</span>
+                </div>
               </article>
             </section>
 
             <section className="dash-grid">
               <article className="card dash-hero-card">
                 <div className="dash-hero-head">
-                  <h3>Patrimônio mensal</h3>
+                  <h3>Evolução do patrimônio</h3>
                   <span className={`dash-delta ${trendDirection}`}>
                     {trendDelta >= 0 ? "+" : "-"}
                     {Math.abs(trendPct).toFixed(1)}% vs mês anterior
@@ -5972,7 +6038,7 @@ export default function App() {
 
               <article className="card dash-list-card dash-saldo-card">
                 <h3>Saldo de contas</h3>
-                <p className="tx-helper">Leitura rápida das contas com maior saldo atual dentro do filtro aplicado.</p>
+                <p className="tx-helper">Base: contas marcadas para o Dashboard; posição atual independente do período.</p>
                 {accountsTop.length ? (
                   <ul className="dash-list">
                     {accountsTop.map((r) => (
@@ -6132,10 +6198,24 @@ export default function App() {
 
               <article className="card dash-invest-card">
                 <h3>Resumo de investimentos</h3>
-                <p className="dash-invest-total">
-                  Valor de mercado (BRL): <strong>{brl.format(Number(investmentTotal || 0))}</strong>
-                </p>
-                <p className="tx-helper">Distribuição pelo valor de mercado, em reais. O custo de aquisição está disponível em Investimentos.</p>
+                <div className="dash-invest-metrics">
+                  <div>
+                    <span>Custo investido</span>
+                    <strong>{brl.format(Number(investmentCostTotal || 0))}</strong>
+                  </div>
+                  <div>
+                    <span>Valor de mercado</span>
+                    <strong>{brl.format(Number(investmentTotal || 0))}</strong>
+                  </div>
+                  <div>
+                    <span>Resultado</span>
+                    <strong className={investmentResultTotal >= 0 ? "up" : "down"}>
+                      {brl.format(Number(investmentResultTotal || 0))}
+                    </strong>
+                    <em>{investmentCostTotal > 0 ? `${investmentResultPct.toFixed(1)}%` : "sem custo base"}</em>
+                  </div>
+                </div>
+                <p className="tx-helper">Base: posições abertas, custo histórico em BRL e distribuição por valor de mercado.</p>
                 {(investPortfolio?.positions || []).some((p) => Number(p.qty) > 0 && p.valuation_warning) ? (
                   <p className="tx-helper">Há valores estimados ou referências antigas. Confira as datas e os avisos na carteira de investimentos.</p>
                 ) : null}
