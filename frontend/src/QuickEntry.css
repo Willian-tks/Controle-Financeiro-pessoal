@@ -24,4 +24,12 @@
 .quick-launch:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
 @media (max-width: 540px) { .quick-launch { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { .quick-launch { transition: none; } }
-@media(max-width:540px){.quick-dialog{border-radius:0;padding:20px}}@media(max-width:360px){.quick-row{grid-template-columns:1fr}}
+.quick-dialog input,.quick-dialog select,.quick-dialog textarea{min-width:0;font-size:16px}
+.quick-row>div{min-width:0}
+.quick-dialog button{white-space:normal;overflow-wrap:anywhere}
+.quick-dialog summary:focus-visible{outline:3px solid #8de0ce;outline-offset:2px}
+.quick-saved{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:20px}
+.quick-saved p{flex:1 1 180px;margin:0;color:#aff7e5;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.quick-saved .quick-primary{width:auto}
+@media(max-width:540px){.quick-dialog{border-radius:0;padding:20px}}
+@media(max-width:400px){.quick-row{grid-template-columns:1fr}}

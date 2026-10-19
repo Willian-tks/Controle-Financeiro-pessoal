@@ -14,6 +14,34 @@ import requests
 import certifi
 
 
+class QuoteFailure(str):
+    # Preserve the legacy tuple/string contract while carrying structured diagnostics.
+    def __new__(cls, message, code="provider_error", provider=None, http_status=None, attempts=None):
+        value = super().__new__(cls, message)
+        value.code = code
+        value.provider = provider
+        value.http_status = http_status
+        value.attempts = attempts if attempts is not None else [{
+            "provider": provider, "code": code, "http_status": http_status, "message": message,
+        }]
+        return value
+
+
+def _http_quote_failure(provider, status):
+    code = "rate_limited" if status == 429 else "access_denied" if status in (401, 403) else "no_data" if status == 404 else "provider_error"
+    name = {"brapi": "BRAPI", "yahoo_chart": "Yahoo chart", "stooq": "Stooq"}.get(provider, provider)
+    return QuoteFailure(f"{name} HTTP {status}", code, provider, status)
+
+
+def _merge_quote_failures(*errors):
+    failures = [err if isinstance(err, QuoteFailure) else QuoteFailure(str(err)) for err in errors if err]
+    if not failures:
+        return QuoteFailure("Nenhuma fonte retornou cotação.", "no_data")
+    priority = ["rate_limited", "access_denied", "timeout", "provider_error", "invalid_data", "no_data", "not_configured"]
+    primary = min(failures, key=lambda err: priority.index(err.code) if err.code in priority else len(priority))
+    return QuoteFailure(" | ".join(failures), primary.code, attempts=[attempt for err in failures for attempt in err.attempts])
+
+
 def _read_token_from_env_file(path: str) -> Optional[str]:
     if not os.path.exists(path):
         return None
@@ -180,7 +208,7 @@ def fetch_last_price_brapi(symbol: str) -> Tuple[Optional[float], Optional[str],
     """
     token = _get_brapi_token()
     if not token:
-        return None, None, None, "BRAPI_TOKEN não configurado (env ou secrets.toml)."
+        return None, None, None, QuoteFailure("BRAPI não configurada.", "not_configured", "brapi")
 
     sym = _to_brapi_symbol(symbol)
     if not sym:
@@ -193,21 +221,20 @@ def fetch_last_price_brapi(symbol: str) -> Tuple[Optional[float], Optional[str],
     try:
         r = requests.get(url, params=params, headers=headers, timeout=6)
         if r.status_code != 200:
-            return None, None, None, f"BRAPI HTTP {r.status_code}: {r.text[:200]}"
+            return None, None, None, _http_quote_failure("brapi", r.status_code)
 
         data = r.json()
 
         results = data.get("results") or []
         if not results:
-            # BRAPI pode vir com "message" e "error"
-            msg = data.get("message") or data.get("error") or "Sem results."
-            return None, None, None, f"BRAPI: {msg}"
+            code = "provider_error" if data.get("error") else "no_data"
+            return None, None, None, QuoteFailure("BRAPI não retornou resultados válidos.", code, "brapi")
 
         row = results[0]
 
         price = row.get("regularMarketPrice")
         if price is None:
-            return None, None, None, "BRAPI: sem regularMarketPrice."
+            return None, None, None, QuoteFailure("BRAPI: sem regularMarketPrice.", "no_data", "brapi")
 
         # BRAPI nem sempre manda data bonitinha. Se não vier, usamos hoje.
         px_date = row.get("regularMarketTime")
@@ -223,8 +250,10 @@ def fetch_last_price_brapi(symbol: str) -> Tuple[Optional[float], Optional[str],
 
         return float(price), str(px_date), "brapi", None
 
+    except requests.Timeout:
+        return None, None, None, QuoteFailure("BRAPI: tempo de consulta excedido.", "timeout", "brapi")
     except Exception as e:
-        return None, None, None, f"BRAPI erro: {e}"
+        return None, None, None, QuoteFailure(f"BRAPI erro: {type(e).__name__}", "provider_error", "brapi")
 
 
 def fetch_last_price_yahoo_http(symbol: str) -> Tuple[Optional[float], Optional[str], Optional[str], Optional[str]]:
@@ -246,13 +275,14 @@ def fetch_last_price_yahoo_http(symbol: str) -> Tuple[Optional[float], Optional[
     try:
         r = requests.get(url, params=params, headers=headers, timeout=8, verify=certifi.where())
         if r.status_code != 200:
-            return None, None, None, f"Yahoo chart HTTP {r.status_code}"
+            return None, None, None, _http_quote_failure("yahoo_chart", r.status_code)
         chart = (r.json() or {}).get("chart") or {}
         if chart.get("error"):
-            return None, None, None, "Yahoo chart retornou erro para o ativo."
+            code = "no_data" if (chart["error"] or {}).get("code") == "Not Found" else "provider_error"
+            return None, None, None, QuoteFailure("Yahoo chart retornou erro para o ativo.", code, "yahoo_chart")
         rows = chart.get("result") or []
         if not rows:
-            return None, None, None, "Yahoo chart sem resultados."
+            return None, None, None, QuoteFailure("Yahoo chart sem resultados.", "no_data", "yahoo_chart")
         row = rows[0]
         meta = row.get("meta") or {}
         # Preço e instante devem pertencer à mesma referência, nunca à data da coleta.
@@ -274,9 +304,11 @@ def fetch_last_price_yahoo_http(symbol: str) -> Tuple[Optional[float], Optional[
                 return px, px_date, "yahoo_chart", None
             except (TypeError, ValueError, OverflowError, OSError):
                 continue
-        return None, None, None, "Yahoo chart sem preço e data válidos."
+        return None, None, None, QuoteFailure("Yahoo chart sem preço e data válidos.", "invalid_data", "yahoo_chart")
+    except requests.Timeout:
+        return None, None, None, QuoteFailure("Yahoo chart: tempo de consulta excedido.", "timeout", "yahoo_chart")
     except Exception as e:
-        return None, None, None, f"Yahoo chart erro: {type(e).__name__}"
+        return None, None, None, QuoteFailure(f"Yahoo chart erro: {type(e).__name__}", "provider_error", "yahoo_chart")
 
 
 def fetch_last_price_stooq_us(symbol: str) -> Tuple[Optional[float], Optional[str], Optional[str], Optional[str]]:
@@ -294,29 +326,31 @@ def fetch_last_price_stooq_us(symbol: str) -> Tuple[Optional[float], Optional[st
     try:
         r = requests.get(url, params=params, headers=headers, timeout=8, verify=certifi.where())
         if r.status_code != 200:
-            return None, None, None, f"Stooq HTTP {r.status_code}"
+            return None, None, None, _http_quote_failure("stooq", r.status_code)
         txt = (r.text or "").strip()
         lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
         if len(lines) < 1:
-            return None, None, None, "Stooq sem dados."
+            return None, None, None, QuoteFailure("Stooq sem dados.", "no_data", "stooq")
         cols = [c.strip().strip('"') for c in lines[0].split(",")]
         # Symbol,Date,Time,Open,High,Low,Close,Volume...
         if len(cols) < 7:
-            return None, None, None, "Stooq formato inesperado."
+            return None, None, None, QuoteFailure("Stooq formato inesperado.", "invalid_data", "stooq")
         px_date = cols[1]
         close = cols[6]
         if not close or close.upper() == "N/D" or px_date.upper() == "N/D":
-            return None, None, None, "Stooq sem fechamento."
+            return None, None, None, QuoteFailure("Stooq sem fechamento.", "no_data", "stooq")
         return float(close), px_date, "stooq", None
+    except requests.Timeout:
+        return None, None, None, QuoteFailure("Stooq: tempo de consulta excedido.", "timeout", "stooq")
     except Exception as e:
-        return None, None, None, f"Stooq erro: {e}"
+        return None, None, None, QuoteFailure(f"Stooq erro: {type(e).__name__}", "provider_error", "stooq")
 
 
 def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
     """
     Estratégia:
     - Para ativos BR (ações/FIIs), aceita ticker com ou sem ".SA"
-    - Tenta Yahoo primeiro e, se falhar em ativo BR, tenta BRAPI
+    - Prioriza BRAPI para B3 quando configurada, com alternativas Yahoo.
     Retorna (price, px_date, src, err)
     """
     cls = (asset_class or "").strip().lower()
@@ -344,7 +378,7 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
             if px is not None:
                 return px, px_date, src, None
         else:
-            err = "BRAPI_TOKEN não configurado; usando fallback Yahoo."
+            err = QuoteFailure("BRAPI não configurada; usando fallback Yahoo.", "not_configured", "brapi")
 
         # fallback para Yahoo caso BRAPI não retorne
         px, px_date, src = fetch_last_price_yf(_normalize_b3(sym))
@@ -359,7 +393,7 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
         if px is not None:
             return px, px_date, src, None
         if err_http:
-            err = err or err_http
+            err = _merge_quote_failures(err, err_http)
 
         return None, None, None, err or "Sem cotação para ativo BR (BRAPI/Yahoo)."
     else:
@@ -385,7 +419,7 @@ def fetch_last_price(symbol: str, asset_class: str = "", currency: str = "BRL"):
             if px is not None:
                 return px, px_date, src, None
             if err_stooq:
-                err = " | ".join(filter(None, (err, err_stooq)))
+                err = _merge_quote_failures(err, err_stooq)
         else:
             # Não-BR (exceto stock US): mantém tentativa padrão via yfinance + HTTP.
             px, px_date, src = fetch_last_price_yf(sym)
@@ -436,6 +470,9 @@ def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
             "src": None,
             "elapsed_s": elapsed_s,
             "error": f"{timeout_err} ao consultar {sym}",
+            "error_code": "timeout",
+            "attempts": [],
+            "currency": cur,
         }
 
     if payload is None:
@@ -448,6 +485,9 @@ def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
             "src": None,
             "elapsed_s": elapsed_s,
             "error": timeout_err or f"Falha interna ao consultar {sym}",
+            "error_code": "provider_error",
+            "attempts": [],
+            "currency": cur,
         }
 
     try:
@@ -455,6 +495,16 @@ def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
     except ValueError:
         price, px_date, src = payload
         err = None
+
+    if price is not None:
+        from math import isfinite
+        try:
+            if isinstance(price, bool) or not isfinite(float(price)) or float(price) <= 0:
+                raise ValueError("invalid price")
+            date.fromisoformat(str(px_date))
+        except (TypeError, ValueError, OverflowError):
+            price = None
+            err = QuoteFailure("Fonte retornou preço ou data inválidos.", "invalid_data", src)
 
     if price is None:
         return {
@@ -465,7 +515,10 @@ def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
             "px_date": None,
             "src": None,
             "elapsed_s": elapsed_s,
-            "error": err or "Sem cotação (fonte não retornou dados)",
+            "error": str(err) if err else "Sem cotação (fonte não retornou dados)",
+            "error_code": getattr(err, "code", "provider_error" if err else "no_data"),
+            "attempts": getattr(err, "attempts", []),
+            "currency": cur,
         }
 
     return {
@@ -477,6 +530,9 @@ def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
         "src": src,
         "elapsed_s": elapsed_s,
         "error": None,
+        "error_code": None,
+        "attempts": [],
+        "currency": cur,
     }
 
 
