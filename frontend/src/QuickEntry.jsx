@@ -3,7 +3,7 @@ import {emptyQuickDraft,localToday,quickAmount,quickCreditCard,quickPayload} fro
 import './QuickEntry.css';
 
 export default function QuickEntry({open,onClose,accounts,categories,cards,transferAccounts,transactions,onSave,onFull}) {
-  const dialog=useRef(null),lock=useRef(false),returnFocus=useRef(null);
+  const dialog=useRef(null),lock=useRef(false),returnFocus=useRef(null),focusError=useRef(false);
   const [draft,setDraft]=useState(emptyQuickDraft),[errors,setErrors]=useState({}),[message,setMessage]=useState(''),[saved,setSaved]=useState(false),[busy,setBusy]=useState(false);
   useEffect(()=>{if(open){returnFocus.current=document.activeElement;dialog.current.showModal();}else if(dialog.current.open){dialog.current.close();returnFocus.current?.focus();}},[open]);
   const set=(key,value)=>{setDraft(d=>({...d,[key]:value}));setErrors(e=>({...e,[key]:''}));setMessage('');};
@@ -15,15 +15,26 @@ export default function QuickEntry({open,onClose,accounts,categories,cards,trans
   const recentIds=[...new Set(transactions.map(t=>String(t.category_id)))];
   const recentCategories=recentIds.map(id=>filtered.find(c=>String(c.id)===id)).filter(Boolean).slice(0,3);
   const repeat=transactions.find(t=>['Despesa','Receita'].includes(t.kind)&&['PIX','Debito','TED','Dinheiro'].includes(t.method)&&Number.isFinite(Number(t.amount))&&accounts.some(a=>String(a.id)===String(t.account_id))&&categories.some(c=>String(c.id)===String(t.category_id)&&c.kind===t.kind));
+  useEffect(()=>{
+    if (!open || busy || !focusError.current) return;
+    focusError.current=false;
+    const first=Object.keys(errors).find(key=>errors[key]);
+    if(first) (first==='kind'
+      ? dialog.current.querySelector('.quick-types button')
+      : dialog.current.querySelector(`[id="quick-${first}"]`))?.focus();
+  },[errors,open,busy]);
+  useEffect(()=>{
+    if(open && saved) dialog.current.querySelector('[data-quick-next]')?.focus();
+  },[open,saved]);
   const error=key=>errors[key]?<span className="quick-error" id={`quick-${key}-error`}>{errors[key]}</span>:null;
   const attr=key=>({'aria-invalid':Boolean(errors[key]),'aria-describedby':errors[key]?`quick-${key}-error`:undefined});
-  async function submit(e){e.preventDefault();if(lock.current)return;const result=quickPayload(draft,accounts,categories,transferAccounts);setErrors(result.errors);if(Object.keys(result.errors).length)return;lock.current=true;setBusy(true);setMessage('');try{const msg=await onSave(result.payload);setSaved(true);setDraft(emptyQuickDraft());setMessage(msg||'Lançamento salvo.');}catch(err){setMessage(`Não foi possível salvar: ${err.message||err}. Confira o histórico antes de repetir se houve falha de conexão.`);}finally{lock.current=false;setBusy(false);}}
+  async function submit(e){e.preventDefault();if(lock.current)return;const result=quickPayload(draft,accounts,categories,transferAccounts);focusError.current=true;setErrors(result.errors);if(Object.keys(result.errors).length)return;lock.current=true;setBusy(true);setMessage('');try{const msg=await onSave(result.payload);setSaved(true);setDraft(emptyQuickDraft());setMessage(msg||'Lançamento salvo.');}catch(err){setMessage(`Não foi possível salvar: ${err.message||err}. Confira o histórico antes de repetir se houve falha de conexão.`);}finally{lock.current=false;setBusy(false);}}
   const amount=quickAmount(draft.amount);
   const name=id=>accounts.find(a=>String(a.id)===String(id))?.name||'Selecione a conta';
   function full(future=false){if(busy)return;if(draft.method==='Credito'&&!selectedCard){setErrors(e=>({...e,card:'Selecione o cartão que receberá esta despesa.'}));return;}onFull({...draft},future);setDraft(emptyQuickDraft());setErrors({});setMessage('');}
   return <dialog className="quick-dialog" ref={dialog} aria-labelledby="quick-title" onCancel={e=>{e.preventDefault();if(!busy)onClose();}}>
     <header><div><span className="quick-eyebrow">NO SEU DIA A DIA</span><h2 id="quick-title">Novo lançamento</h2></div><button type="button" disabled={busy} onClick={onClose} aria-label="Fechar lançamento rápido">✕</button></header>
-    {saved?<div><p role="status">{message}</p><button className="quick-primary" onClick={()=>{setSaved(false);setMessage('');setErrors({});}}>Novo lançamento</button></div>:<form onSubmit={submit} noValidate>
+    {saved?<div className="quick-saved"><p role="status">{message}</p><button type="button" data-quick-next className="quick-primary" onClick={()=>{setSaved(false);setMessage('');setErrors({});requestAnimationFrame(()=>dialog.current.querySelector('#quick-amount')?.focus());}}>Novo lançamento</button></div>:<form onSubmit={submit} noValidate aria-busy={busy}>
     <fieldset disabled={busy}><legend className="quick-sr">Dados do lançamento</legend>
     <div className="quick-types" role="group" aria-label="Tipo de lançamento">{['Despesa','Receita','Transferencia'].map(k=><button type="button" key={k} aria-pressed={draft.kind===k} onClick={()=>{setDraft(d=>({...d,kind:k,category:'',method:'PIX',card:'',account:'',destination:''}));setErrors({});setMessage('');}}>{k==='Transferencia'?'Transferência':k}</button>)}</div>{error('kind')}
     <label htmlFor="quick-amount">Valor (R$)</label><input id="quick-amount" className="quick-amount" inputMode="decimal" autoComplete="off" placeholder="0,00" value={draft.amount} onChange={e=>set('amount',e.target.value)} {...attr('amount')}/>{error('amount')}

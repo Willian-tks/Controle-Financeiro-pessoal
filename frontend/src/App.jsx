@@ -1,4 +1,7 @@
 import QuickEntry from "./QuickEntry.jsx";
+import EntryField from "./EntryField.jsx";
+import { settleDataLoads } from "./dataLoads.js";
+import { quoteFailureLabel, quoteUpdateNotice } from "./quoteUpdateNotice.js";
 import { localToday } from "./quickEntry";
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import brandLogo from "./icons/DOMUS2.png";
@@ -994,6 +997,9 @@ export default function App() {
   const [page, setPage] = useState("Dashboard");
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [coreDataErrors, setCoreDataErrors] = useState([]);
+  const [coreDataLoading, setCoreDataLoading] = useState(false);
+  const coreReloadSeqRef = useRef(0);
   const [transactions, setTransactions] = useState([]);
   const [cards, setCards] = useState([]);
   const [cardInvoices, setCardInvoices] = useState([]);
@@ -1011,6 +1017,7 @@ export default function App() {
   const [invoiceDateTo, setInvoiceDateTo] = useState(defaultMonthRange.to);
   const [dashMsg, setDashMsg] = useState("");
   const [txMsg, setTxMsg] = useState("");
+  const [txEntryErrors, setTxEntryErrors] = useState({});
   const [quickOpen, setQuickOpen] = useState(false);
   const [txDraft, setTxDraft] = useState({ date: localToday(), amount: "", description: "", notes: "" });
   useEffect(() => { setQuickOpen(false); setTxDraft({date:localToday(),amount:"",description:"",notes:""}); }, [user?.workspace_id]);
@@ -1025,6 +1032,7 @@ export default function App() {
   const [txRecentDateTo, setTxRecentDateTo] = useState(defaultMonthRange.to);
   const [txFuturePaymentMethod, setTxFuturePaymentMethod] = useState("PIX");
   const [txView, setTxView] = useState("caixa");
+  useEffect(() => setTxEntryErrors({}), [txView, user?.workspace_id]);
   const [txSourceAccountId, setTxSourceAccountId] = useState("");
   const [txCardId, setTxCardId] = useState("");
   const [commitmentEdit, setCommitmentEdit] = useState(null);
@@ -1308,13 +1316,13 @@ export default function App() {
     };
   }, []);
 
-  function showGlobalSuccess(message) {
+  function showGlobalSuccess(message, level = "success") {
     const text = String(message || "").trim();
     if (!text) return;
     if (globalActionNoticeTimeoutRef.current) {
       clearTimeout(globalActionNoticeTimeoutRef.current);
     }
-    setGlobalActionNotice({ message: text, level: "success" });
+    setGlobalActionNotice({ message: text, level });
     globalActionNoticeTimeoutRef.current = setTimeout(() => {
       setGlobalActionNotice(null);
       globalActionNoticeTimeoutRef.current = null;
@@ -3500,44 +3508,34 @@ export default function App() {
   }
 
   async function reloadAllData() {
+    const requestId = ++coreReloadSeqRef.current;
+    setCoreDataLoading(true);
     const jobs = [];
     if (canViewContas) {
-      jobs.push(
-        getAccounts()
-          .then((rows) => setAccounts(Array.isArray(rows) ? rows : []))
-          .catch(() => setAccounts([]))
-      );
-      jobs.push(
-        getCategories()
-          .then((rows) => setCategories(Array.isArray(rows) ? rows : []))
-          .catch(() => setCategories([]))
-      );
+      jobs.push({ label: "contas", load: getAccounts, apply: rows => setAccounts(Array.isArray(rows) ? rows : []), fallback: [] });
+      jobs.push({ label: "categorias", load: getCategories, apply: rows => setCategories(Array.isArray(rows) ? rows : []), fallback: [] });
     } else {
       setAccounts([]);
       setCategories([]);
     }
 
     if (canViewDashboard) {
-      jobs.push(
-        getKpis()
-          .then((dash) => setKpis(dash || null))
-          .catch(() => setKpis(null))
-      );
+      jobs.push({ label: "indicadores", load: getKpis, apply: dash => setKpis(dash || null), fallback: null });
     } else {
       setKpis(null);
     }
 
     if (canViewLancamentos) {
-      jobs.push(
-        getTransactions({ view: txView })
-          .then((tx) => setTransactions(Array.isArray(tx) ? tx : []))
-          .catch(() => setTransactions([]))
-      );
+      jobs.push({ label: "lançamentos", load: () => getTransactions({ view: txView }), apply: tx => setTransactions(Array.isArray(tx) ? tx : []), fallback: [] });
     } else {
       setTransactions([]);
       setCommitmentEdit(null);
     }
-    await Promise.all(jobs);
+    const unavailable = await settleDataLoads(jobs);
+    if (requestId === coreReloadSeqRef.current) {
+      setCoreDataErrors(unavailable);
+      setCoreDataLoading(false);
+    }
   }
 
   async function reloadCardsData() {
@@ -4115,6 +4113,12 @@ export default function App() {
       return;
     }
     const formEl = e.currentTarget;
+    setTxEntryErrors({});
+    const fieldError = (name, message) => {
+      setTxEntryErrors({ [name]: message });
+      setTxMsg(message);
+      formEl.elements.namedItem(name)?.focus();
+    };
     const form = new FormData(e.currentTarget);
     const description = String(form.get("description") || "").trim();
     const amountAbs = parseLocaleNumber(form.get("amount") || "0");
@@ -4139,11 +4143,11 @@ export default function App() {
     const repeatMonths = isFutureExpense ? repeatMonthsInput : null;
 
     if (!Number.isFinite(categoryId || NaN) || !category) {
-      setTxMsg("Selecione uma categoria para definir o tipo do lançamento.");
+      fieldError("category_id", "Selecione uma categoria para definir o tipo do lançamento.");
       return;
     }
     if (txIsFutureTab && effectiveKind !== "Despesa") {
-      setTxMsg("Na aba Compromissos, selecione uma categoria de Despesa.");
+      fieldError("category_id", "Na aba Compromissos, selecione uma categoria de Despesa.");
       return;
     }
     if (
@@ -4153,36 +4157,37 @@ export default function App() {
       !Number.isFinite(amountAbs) ||
       amountAbs <= 0
     ) {
-      setTxMsg("Preencha data, valor (> 0), categoria e conta válida.");
+      const field = !isFutureExpense && !date ? "date" : !Number.isFinite(amountAbs) || amountAbs <= 0 ? "amount" : txIsExpenseCredit ? "card_id" : "account_id";
+      fieldError(field, "Preencha data, valor (> 0), categoria e conta válida.");
       return;
     }
     if (!txMethodOptions.includes(method)) {
-      setTxMsg("Método inválido para o tipo da categoria selecionada.");
+      fieldError("method", "Método inválido para o tipo da categoria selecionada.");
       return;
     }
     if (isFutureExpense) {
       if (!Number.isInteger(repeatMonths) || repeatMonths < 1 || repeatMonths > 120) {
-        setTxMsg("Informe quantos meses replicar (1 a 120).");
+        fieldError("repeat_months", "Informe quantos meses replicar (1 a 120).");
         return;
       }
       if (futurePaymentMethod === "Credito" && (!Number.isFinite(selectedCardId) || selectedCardId <= 0)) {
-        setTxMsg("Selecione o cartão de crédito para o compromisso.");
+        fieldError("card_id", "Selecione o cartão de crédito para o compromisso.");
         return;
       }
       if (futurePaymentMethod !== "Credito") {
         if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) {
-          setTxMsg("Informe um dia de vencimento entre 1 e 31.");
+          fieldError("due_day", "Informe um dia de vencimento entre 1 e 31.");
           return;
         }
       }
     }
     if (txIsTransfer && (!Number.isFinite(sourceAccountId) || sourceAccountId <= 0)) {
-      setTxMsg("Para Transferência, selecione a conta origem.");
+      fieldError("source_account_id", "Para Transferência, selecione a conta origem.");
       return;
     }
     if (txIsExpense && !txIsTransfer) {
       if (method === "Credito" && (!Number.isFinite(selectedCardId) || selectedCardId <= 0)) {
-        setTxMsg("Para despesa no Crédito, selecione um cartão.");
+        fieldError("card_id", "Para despesa no Crédito, selecione um cartão.");
         return;
       }
     }
@@ -5023,11 +5028,11 @@ export default function App() {
         include_groups: Array.isArray(includeGroups) ? includeGroups : [],
       }, { timeoutMs: requestTimeoutMs });
       const report = Array.isArray(out.report) ? out.report : [];
-      const failed = report.filter((row) => !row?.ok).length;
+      const notice = quoteUpdateNotice(out);
       setInvestPriceUpdateReport(report);
-      setInvestMsg(`Cotações salvas: ${out.saved}/${out.total}${failed ? ` | Falhas: ${failed}` : ""}${out.fx?.ok === false ? " | PTAX indisponível; referência anterior preservada." : ""}`);
+      setInvestMsg(notice.message);
       if (!silentSuccess) {
-        showGlobalSuccess(failed || out.fx?.ok === false ? "Atualização concluída com pendências. Consulte os detalhes." : "Cotações atualizadas.");
+        showGlobalSuccess(notice.message, notice.level);
       }
       if (reloadAfter) {
         await reloadInvestData();
@@ -5679,7 +5684,7 @@ export default function App() {
     });
   }
 
-  if (loading) return <div className="center">Carregando...</div>;
+  if (loading) return <div className="center" role="status" aria-live="polite">Carregando...</div>;
 
   if (!user) {
     return (
@@ -5901,6 +5906,15 @@ export default function App() {
           accounts={accounts} categories={categories} cards={cards} transferAccounts={transferAccounts}
           transactions={transactions} onSave={saveQuickTransaction} onFull={openFullTransaction}
         /> : null}
+
+        {coreDataLoading || coreDataErrors.length ? (
+          <section className="status-banner warning data-load-notice" aria-busy={coreDataLoading}>
+            <p className="status-msg" role="status" aria-live="polite">
+              {coreDataLoading ? "Carregando dados..." : `Dados indisponíveis: ${coreDataErrors.join(", ")}. As listas e os totais podem estar incompletos.`}
+            </p>
+            {coreDataErrors.length ? <button type="button" disabled={coreDataLoading} onClick={() => reloadAllData()}>Tentar novamente</button> : null}
+          </section>
+        ) : null}
 
         {loginSyncNotice?.message ? (
           <section className={`status-banner ${loginSyncNotice.level === "warning" ? "warning" : "success"}`}>
@@ -6491,18 +6505,24 @@ export default function App() {
                   <p className="tx-helper">Cadastre contas base do workspace para uso em saldos, lançamentos e vínculos operacionais.</p>
                   {canAddContas ? (
                     <form className="tx-form" onSubmit={onCreateAccount}>
-                      <input name="name" type="text" placeholder="Digite o nome da conta" required />
-                      <select name="type" defaultValue="" required>
+<EntryField label="Nome da conta" idPrefix="onCreateAccount">
+<input name="name" type="text" placeholder="Digite o nome da conta" required />
+</EntryField>
+<EntryField label="Tipo da conta" idPrefix="onCreateAccount">
+<select name="type" defaultValue="" required>
                         <option value="" disabled>Selecione o tipo da conta</option>
                         <option value="Banco">Banco</option>
                         <option value="Dinheiro">Dinheiro</option>
                         <option value="Corretora">Corretora</option>
                       </select>
-                      <select name="currency" defaultValue="" required>
+</EntryField>
+<EntryField label="Moeda" idPrefix="onCreateAccount">
+<select name="currency" defaultValue="" required>
                         <option value="" disabled>Selecione a moeda</option>
                         <option value="BRL">BRL</option>
                         <option value="USD">USD</option>
                       </select>
+</EntryField>
                       <label className="mgr-checkline">
                         <input type="checkbox" name="show_on_dashboard" />
                         Fixar no Dashboard (saldo 0)
@@ -6523,7 +6543,8 @@ export default function App() {
                   <h3>Gerenciar contas</h3>
                   <p className="tx-helper">Selecione uma conta existente para ajustar nome, tipo, moeda ou visibilidade no dashboard.</p>
                   <div className="mgr-grid">
-                    <select
+<EntryField label="Conta para editar" idPrefix="manager-accEditId">
+<select
                       value={accEditId}
                       disabled={!canEditContas && !canDeleteContas}
                       onChange={(e) => {
@@ -6542,16 +6563,23 @@ export default function App() {
                         <option key={a.id} value={a.id}>{a.id} - {a.name} ({a.type}, {a.currency || "BRL"})</option>
                       ))}
                     </select>
-                    <input value={accEditName} onChange={(e) => setAccEditName(e.target.value)} placeholder="Nome" disabled={!canEditContas} />
-                    <select value={accEditType} onChange={(e) => setAccEditType(e.target.value)} disabled={!canEditContas}>
+</EntryField>
+<EntryField label="Nome da conta" idPrefix="manager-accEditName">
+<input value={accEditName} onChange={(e) => setAccEditName(e.target.value)} placeholder="Nome" disabled={!canEditContas} />
+</EntryField>
+<EntryField label="Tipo da conta" idPrefix="manager-accEditType">
+<select value={accEditType} onChange={(e) => setAccEditType(e.target.value)} disabled={!canEditContas}>
                       <option value="Banco">Banco</option>
                       <option value="Dinheiro">Dinheiro</option>
                       <option value="Corretora">Corretora</option>
                     </select>
-                    <select value={accEditCurrency} onChange={(e) => setAccEditCurrency(e.target.value)} disabled={!canEditContas}>
+</EntryField>
+<EntryField label="Moeda" idPrefix="manager-accEditCurrency">
+<select value={accEditCurrency} onChange={(e) => setAccEditCurrency(e.target.value)} disabled={!canEditContas}>
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
                     </select>
+</EntryField>
                     <label className="mgr-checkline">
                       <input
                         type="checkbox"
@@ -6579,13 +6607,17 @@ export default function App() {
                   <p className="tx-helper">Mantenha a classificação de receitas, despesas e transferências consistente entre os lançamentos.</p>
                   {canAddContas ? (
                     <form className="tx-form" onSubmit={onCreateCategory}>
-                      <input name="name" type="text" placeholder="Digite o nome da categoria" required />
-                      <select name="kind" defaultValue="" required>
+<EntryField label="Nome da categoria" idPrefix="onCreateCategory">
+<input name="name" type="text" placeholder="Digite o nome da categoria" required />
+</EntryField>
+<EntryField label="Tipo da categoria" idPrefix="onCreateCategory">
+<select name="kind" defaultValue="" required>
                         <option value="" disabled>Selecione o tipo da categoria</option>
                         <option value="Despesa">Despesa</option>
                         <option value="Receita">Receita</option>
                         <option value="Transferencia">Transferência</option>
                       </select>
+</EntryField>
                       <button type="submit" disabled={isPendingAction("createCategory")}>
                         {isPendingAction("createCategory") ? "Salvando..." : "Salvar categoria"}
                       </button>
@@ -6602,7 +6634,8 @@ export default function App() {
                   <h3>Gerenciar categorias</h3>
                   <p className="tx-helper">Revise categorias existentes antes de editar para evitar impacto no histórico já lançado.</p>
                   <div className="mgr-grid">
-                    <select
+<EntryField label="Categoria para editar" idPrefix="manager-catEditId">
+<select
                       value={catEditId}
                       disabled={!canEditContas && !canDeleteContas}
                       onChange={(e) => {
@@ -6619,12 +6652,17 @@ export default function App() {
                         <option key={c.id} value={c.id}>{c.id} - {c.name} ({c.kind})</option>
                       ))}
                     </select>
-                    <input value={catEditName} onChange={(e) => setCatEditName(e.target.value)} placeholder="Nome" disabled={!canEditContas} />
-                    <select value={catEditKind} onChange={(e) => setCatEditKind(e.target.value)} disabled={!canEditContas}>
+</EntryField>
+<EntryField label="Nome da categoria" idPrefix="manager-catEditName">
+<input value={catEditName} onChange={(e) => setCatEditName(e.target.value)} placeholder="Nome" disabled={!canEditContas} />
+</EntryField>
+<EntryField label="Tipo da categoria" idPrefix="manager-catEditKind">
+<select value={catEditKind} onChange={(e) => setCatEditKind(e.target.value)} disabled={!canEditContas}>
                       <option value="Despesa">Despesa</option>
                       <option value="Receita">Receita</option>
                       <option value="Transferencia">Transferência</option>
                     </select>
+</EntryField>
                     <button onClick={onUpdateCategory} disabled={!canEditContas || isPendingAction("updateCategory")}>
                       {isPendingAction("updateCategory") ? "Atualizando..." : "Atualizar categoria"}
                     </button>
@@ -6643,46 +6681,58 @@ export default function App() {
                   <p className="tx-helper">Cadastre cartões com conta vinculada, fechamento e vencimento para manter faturas e compromissos corretos.</p>
                   {canAddContas ? (
                     <div className="mgr-grid">
-                      <input
+<EntryField label="Nome do cartão" idPrefix="manager-cardCreateName">
+<input
                         type="text"
                         placeholder="Digite o nome do cartão"
                         value={cardCreateName}
                         onChange={(e) => setCardCreateName(e.target.value)}
                       />
-                      <select value={cardCreateBrand} onChange={(e) => setCardCreateBrand(e.target.value)}>
+</EntryField>
+<EntryField label="Bandeira" idPrefix="manager-cardCreateBrand">
+<select value={cardCreateBrand} onChange={(e) => setCardCreateBrand(e.target.value)}>
                         <option value="" disabled>Selecione a bandeira</option>
                         <option value="Visa">Visa</option>
                         <option value="Master">Master</option>
                       </select>
-                      <select value={cardCreateModel} onChange={(e) => setCardCreateModel(e.target.value)}>
+</EntryField>
+<EntryField label="Modelo" idPrefix="manager-cardCreateModel">
+<select value={cardCreateModel} onChange={(e) => setCardCreateModel(e.target.value)}>
                         <option value="" disabled>Selecione o modelo do cartão</option>
                         {CARD_MODELS.map((m) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>
-                      <select value={cardCreateAccountId} onChange={(e) => setCardCreateAccountId(e.target.value)}>
+</EntryField>
+<EntryField label="Conta vinculada" idPrefix="manager-cardCreateAccountId">
+<select value={cardCreateAccountId} onChange={(e) => setCardCreateAccountId(e.target.value)}>
                         <option value="" disabled>Selecione a conta banco vinculada</option>
                         {bankAccountsOnly.map((a) => (
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
                       </select>
+</EntryField>
                       {!bankAccountsOnly.length ? (
                         <input type="text" value="Sem conta Banco cadastrada." disabled />
                       ) : null}
-                      <input
+<EntryField label="Dia de fechamento (1 a 31)" idPrefix="manager-cardCreateCloseDay">
+<input
                         type="text"
                         inputMode="numeric"
                         placeholder="Dia de fechamento (1-31)"
                         value={cardCreateCloseDay}
                         onChange={(e) => setCardCreateCloseDay(sanitizeIntegerInputValue(e.target.value, 2))}
                       />
-                      <input
+</EntryField>
+<EntryField label="Dia de vencimento (1 a 31)" idPrefix="manager-cardCreateDueDay">
+<input
                         type="text"
                         inputMode="numeric"
                         placeholder="Dia do vencimento (1-31)"
                         value={cardCreateDueDay}
                         onChange={(e) => setCardCreateDueDay(sanitizeIntegerInputValue(e.target.value, 2))}
                       />
+</EntryField>
                       <small className="mgr-hint">
                         Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
                       </small>
@@ -6702,7 +6752,8 @@ export default function App() {
                   <h3>Cartões cadastrados</h3>
                   <p className="tx-helper">Atualize os dados do cartão quando houver mudança de vínculo, bandeira, modelo ou calendário da fatura.</p>
                   <div className="mgr-grid">
-                    <select value={cardEditId} onChange={(e) => onSelectCardEdit(e.target.value)} disabled={!canEditContas && !canDeleteContas}>
+<EntryField label="Cartão para editar" idPrefix="manager-cardEditId">
+<select value={cardEditId} onChange={(e) => onSelectCardEdit(e.target.value)} disabled={!canEditContas && !canDeleteContas}>
                       <option value="">Selecione um cartão</option>
                       {cards.map((c) => (
                         <option key={c.id} value={c.id}>
@@ -6710,25 +6761,35 @@ export default function App() {
                         </option>
                       ))}
                     </select>
-                    <input value={cardName} onChange={(e) => setCardName(e.target.value)} placeholder="Digite o nome do cartão" disabled={!canEditContas} />
-                    <select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)} disabled={!canEditContas}>
+</EntryField>
+<EntryField label="Nome do cartão" idPrefix="manager-cardName">
+<input value={cardName} onChange={(e) => setCardName(e.target.value)} placeholder="Digite o nome do cartão" disabled={!canEditContas} />
+</EntryField>
+<EntryField label="Bandeira" idPrefix="manager-cardBrand">
+<select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)} disabled={!canEditContas}>
                       <option value="" disabled>Selecione a bandeira</option>
                       <option value="Visa">Visa</option>
                       <option value="Master">Master</option>
                     </select>
-                    <select value={cardModel} onChange={(e) => setCardModel(e.target.value)} disabled={!canEditContas}>
+</EntryField>
+<EntryField label="Modelo" idPrefix="manager-cardModel">
+<select value={cardModel} onChange={(e) => setCardModel(e.target.value)} disabled={!canEditContas}>
                       <option value="" disabled>Selecione o modelo do cartão</option>
                       {CARD_MODELS.map((m) => (
                         <option key={m} value={m}>{m}</option>
                       ))}
                     </select>
-                    <select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)} disabled={!canEditContas}>
+</EntryField>
+<EntryField label="Conta vinculada" idPrefix="manager-cardAccountId">
+<select value={cardAccountId} onChange={(e) => setCardAccountId(e.target.value)} disabled={!canEditContas}>
                       <option value="" disabled>Selecione a conta banco vinculada</option>
                       {bankAccountsOnly.map((a) => (
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
                     </select>
-                    <input
+</EntryField>
+<EntryField label="Dia de fechamento (1 a 31)" idPrefix="manager-cardCloseDay">
+<input
                       type="text"
                       inputMode="numeric"
                       placeholder="Dia de fechamento (1-31)"
@@ -6736,7 +6797,9 @@ export default function App() {
                       disabled={!canEditContas}
                       onChange={(e) => setCardCloseDay(sanitizeIntegerInputValue(e.target.value, 2))}
                     />
-                    <input
+</EntryField>
+<EntryField label="Dia de vencimento (1 a 31)" idPrefix="manager-cardDueDay">
+<input
                       type="text"
                       inputMode="numeric"
                       placeholder="Dia do vencimento (1-31)"
@@ -6744,6 +6807,7 @@ export default function App() {
                       disabled={!canEditContas}
                       onChange={(e) => setCardDueDay(sanitizeIntegerInputValue(e.target.value, 2))}
                     />
+</EntryField>
                     <small className="mgr-hint">
                       Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
                     </small>
@@ -7078,7 +7142,9 @@ export default function App() {
               ) : null}
               {txView !== "competencia" ? (
                 canAddLancamentos ? (
-                <form className="tx-form tx-entry-form" onSubmit={onCreateTransaction}>
+                <form className="tx-form tx-entry-form" onSubmit={onCreateTransaction}
+                  aria-busy={isPendingAction("createTransaction")}
+                  onChangeCapture={() => setTxEntryErrors({})}>
                 {txIsTransfer ? (
                   <div className="transfer-hint">
                     <strong className="transfer-badge">Transferência</strong>
@@ -7097,7 +7163,8 @@ export default function App() {
                 ) : null}
                 {txIsFutureTab || (txIsExpense && !txIsTransfer && txMethodEffective === "Futuro") ? (
                   <>
-                    <select
+<EntryField label="Forma de pagamento" error={txEntryErrors.future_payment_method}>
+<select
                       name="future_payment_method"
                       value={txFuturePaymentMethod}
                       onChange={(e) => setTxFuturePaymentMethod(e.target.value)}
@@ -7107,9 +7174,11 @@ export default function App() {
                       <option value="Boleto">Boleto</option>
                       <option value="Credito">Cartão de Crédito</option>
                     </select>
+</EntryField>
                     {txFuturePaymentMethod === "Credito" ? (
                       <>
-                        <select
+<EntryField label="Cartão de crédito" error={txEntryErrors.card_id}>
+<select
                           name="card_id"
                           value={txCardId}
                           onChange={(e) => setTxCardId(e.target.value)}
@@ -7122,6 +7191,7 @@ export default function App() {
                             </option>
                           ))}
                         </select>
+</EntryField>
                         <input
                           type="text"
                           value={
@@ -7134,7 +7204,8 @@ export default function App() {
                       </>
                     ) : null}
                     {txFuturePaymentMethod !== "Credito" ? (
-                      <input
+<EntryField label="Dia de vencimento (1 a 31)" error={txEntryErrors.due_day}>
+<input
                         name="due_day"
                         type="text"
                         inputMode="numeric"
@@ -7142,8 +7213,10 @@ export default function App() {
                         onInput={(e) => applyIntegerMaskInput(e, 2)}
                         required
                       />
+</EntryField>
                     ) : null}
-                    <input
+<EntryField label="Meses / parcelas" error={txEntryErrors.repeat_months}>
+<input
                       name="repeat_months"
                       type="text"
                       inputMode="numeric"
@@ -7151,13 +7224,17 @@ export default function App() {
                       onInput={(e) => applyIntegerMaskInput(e, 3)}
                       required
                     />
+</EntryField>
                   </>
                 ) : (
-                  <input name="date" type="date" required value={txDraft.date} onChange={e => setTxDraft(d => ({...d,date:e.target.value}))} />
+<EntryField label="Data" error={txEntryErrors.date}>
+<input name="date" type="date" required value={txDraft.date} onChange={e => setTxDraft(d => ({...d,date:e.target.value}))} />
+</EntryField>
                 )}
                 {txIsCashTab ? (
                   <>
-                    <select
+<EntryField label="Categoria" error={txEntryErrors.category_id}>
+<select
                       name="category_id"
                       required
                       value={txCategoryId}
@@ -7168,7 +7245,9 @@ export default function App() {
                         <option key={c.id} value={c.id}>{c.name} ({c.kind})</option>
                       ))}
                     </select>
-                    <select
+</EntryField>
+<EntryField label="Forma de pagamento / recebimento" error={txEntryErrors.method}>
+<select
                       name="method"
                       value={txMethod}
                       onChange={(e) => setTxMethod(e.target.value)}
@@ -7182,8 +7261,10 @@ export default function App() {
                         <option key={m} value={m}>{m === "Futuro" ? "Compromissos" : m}</option>
                       ))}
                     </select>
+</EntryField>
                     {!txIsExpenseCredit ? (
-                      <select
+<EntryField label={txIsTransfer ? "Conta de destino" : "Conta"} error={txEntryErrors.account_id}>
+<select
                         name="account_id"
                         required
                         value={txAccountId}
@@ -7196,9 +7277,11 @@ export default function App() {
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
                       </select>
+</EntryField>
                     ) : null}
                     {txIsExpense && !txIsTransfer && txMethodEffective === "Credito" ? (
-                      <select
+<EntryField label="Cartão de crédito" error={txEntryErrors.card_id}>
+<select
                         name="card_id"
                         value={txCardId}
                         onChange={(e) => setTxCardId(e.target.value)}
@@ -7211,6 +7294,7 @@ export default function App() {
                           </option>
                         ))}
                       </select>
+</EntryField>
                     ) : null}
                     {txIsExpenseCredit ? (
                       <input
@@ -7220,7 +7304,8 @@ export default function App() {
                       />
                     ) : null}
                     {txIsTransfer ? (
-                      <select
+<EntryField label="Conta de origem" error={txEntryErrors.source_account_id}>
+<select
                         name="source_account_id"
                         value={txSourceAccountId}
                         onChange={(e) => setTxSourceAccountId(e.target.value)}
@@ -7233,12 +7318,18 @@ export default function App() {
                             <option key={a.id} value={a.id}>{a.name}</option>
                           ))}
                       </select>
+</EntryField>
                     ) : null}
-                    <input name="notes" type="text" placeholder="Obs (opcional)" value={txDraft.notes} onChange={e => setTxDraft(d => ({...d,notes:e.target.value}))} />
+<EntryField label="Observações (opcional)" error={txEntryErrors.notes}>
+<input name="notes" type="text" value={txDraft.notes} onChange={e => setTxDraft(d => ({...d,notes:e.target.value}))} />
+</EntryField>
                   </>
                 ) : null}
-                <input name="description" type="text" placeholder="Descrição (opcional)" value={txDraft.description} onChange={e => setTxDraft(d => ({...d,description:e.target.value}))} />
-                <input
+<EntryField label="Descrição (opcional)" error={txEntryErrors.description}>
+<input name="description" type="text" value={txDraft.description} onChange={e => setTxDraft(d => ({...d,description:e.target.value}))} />
+</EntryField>
+<EntryField label="Valor (R$)" error={txEntryErrors.amount}>
+<input
                   name="amount"
                   type="text"
                   inputMode="numeric"
@@ -7248,9 +7339,11 @@ export default function App() {
                   onInput={applyCurrencyMaskInput}
                   required
                 />
+</EntryField>
                 {!txIsCashTab ? (
                   <>
-                    <select
+<EntryField label="Categoria" error={txEntryErrors.category_id}>
+<select
                       name="category_id"
                       required
                       value={txCategoryId}
@@ -7261,10 +7354,12 @@ export default function App() {
                         <option key={c.id} value={c.id}>{c.name} ({c.kind})</option>
                       ))}
                     </select>
+</EntryField>
                     {txIsFutureTab ? (
                       <input type="text" value="Compromissos" disabled />
                     ) : (
-                      <select
+<EntryField label="Forma de pagamento / recebimento" error={txEntryErrors.method}>
+<select
                         name="method"
                         value={txMethod}
                         onChange={(e) => setTxMethod(e.target.value)}
@@ -7278,9 +7373,11 @@ export default function App() {
                           <option key={m} value={m}>{m === "Futuro" ? "Compromissos" : m}</option>
                         ))}
                       </select>
+</EntryField>
                     )}
                     {!txIsExpenseCredit ? (
-                      <select
+<EntryField label={txIsTransfer ? "Conta de destino" : "Conta"} error={txEntryErrors.account_id}>
+<select
                         name="account_id"
                         required
                         value={txAccountId}
@@ -7293,9 +7390,11 @@ export default function App() {
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
                       </select>
+</EntryField>
                     ) : null}
                     {txIsTransfer ? (
-                      <select
+<EntryField label="Conta de origem" error={txEntryErrors.source_account_id}>
+<select
                         name="source_account_id"
                         value={txSourceAccountId}
                         onChange={(e) => setTxSourceAccountId(e.target.value)}
@@ -7308,9 +7407,11 @@ export default function App() {
                             <option key={a.id} value={a.id}>{a.name}</option>
                           ))}
                       </select>
+</EntryField>
                     ) : null}
                     {txIsExpense && !txIsTransfer && txMethodEffective === "Credito" ? (
-                      <select
+<EntryField label="Cartão de crédito" error={txEntryErrors.card_id}>
+<select
                         name="card_id"
                         value={txCardId}
                         onChange={(e) => setTxCardId(e.target.value)}
@@ -7323,6 +7424,7 @@ export default function App() {
                           </option>
                         ))}
                       </select>
+</EntryField>
                     ) : null}
                     {txIsExpenseCredit ? (
                       <input
@@ -7331,7 +7433,9 @@ export default function App() {
                         disabled
                       />
                     ) : null}
-                    <input name="notes" type="text" placeholder="Obs (opcional)" value={txDraft.notes} onChange={e => setTxDraft(d => ({...d,notes:e.target.value}))} />
+<EntryField label="Observações (opcional)" error={txEntryErrors.notes}>
+<input name="notes" type="text" value={txDraft.notes} onChange={e => setTxDraft(d => ({...d,notes:e.target.value}))} />
+</EntryField>
                   </>
                 ) : null}
                 <button type="submit" disabled={isPendingAction("createTransaction")}>
@@ -7346,29 +7450,34 @@ export default function App() {
                 )
               ) : null}
               {txView !== "competencia" && txMsg ? (
-                <div className="status-banner tx-inline-banner">
+                <div className="status-banner tx-inline-banner" role="status" aria-live="polite" aria-atomic="true">
                   <p className="status-msg">{txMsg}</p>
                 </div>
               ) : null}
             </section>
 
             <section className="card tx-page-section">
-              <h3>{txListTitle}</h3>
+              <h3 id="tx-history-title">{txListTitle}</h3>
               <p className="tx-helper">Filtre por período, categoria e status para revisar o histórico operacional e agir sobre compromissos pendentes.</p>
               <div className="tx-recent-filters">
-                <input
+<label className="tx-filter-field">Data inicial
+<input
                   type="date"
                   className="invoice-filter-select"
                   value={txRecentDateFrom}
                   onChange={(e) => setTxRecentDateFrom(e.target.value)}
                 />
-                <input
+</label>
+<label className="tx-filter-field">Data final
+<input
                   type="date"
                   className="invoice-filter-select"
                   value={txRecentDateTo}
                   onChange={(e) => setTxRecentDateTo(e.target.value)}
                 />
-                <select
+</label>
+<label className="tx-filter-field">Categoria
+<select
                   className="invoice-filter-select"
                   value={txRecentCategoryFilterId}
                   onChange={(e) => setTxRecentCategoryFilterId(e.target.value)}
@@ -7380,7 +7489,9 @@ export default function App() {
                     </option>
                   ))}
                 </select>
-                <select
+</label>
+<label className="tx-filter-field">Cartão
+<select
                   className="invoice-filter-select"
                   value={txRecentCardFilterId}
                   onChange={(e) => {
@@ -7395,7 +7506,9 @@ export default function App() {
                     </option>
                   ))}
                 </select>
-                <select
+</label>
+<label className="tx-filter-field">Status
+<select
                   className="invoice-filter-select"
                   value={txRecentStatusFilter}
                   onChange={(e) => setTxRecentStatusFilter(e.target.value)}
@@ -7407,6 +7520,7 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+</label>
               </div>
               {txRecentInvoicePeriodFilter ? (
                 <div className="tx-filter-chip-row">
@@ -7419,7 +7533,7 @@ export default function App() {
               <p className="tx-helper">
                 Valor total da lista: <strong>{formatBrl(txVisibleTotal)}</strong>
               </p>
-              <div className="tx-table-wrap">
+              <div className="tx-table-wrap tx-history-region" role="region" aria-labelledby="tx-history-title" tabIndex={0}>
                 <table className="tx-table tx-history-table">
                   <thead>
                         <tr>
@@ -7553,7 +7667,7 @@ export default function App() {
                     ))}
                     {!transactionsVisibleOrdered.length ? (
                       <tr className="tx-empty-row">
-                        <td colSpan={8}>Nenhum lançamento para a categoria selecionada.</td>
+                        <td colSpan={9}>{coreDataLoading ? "Carregando lançamentos..." : coreDataErrors.includes("lançamentos") ? "Lançamentos indisponíveis. Tente carregar os dados novamente." : "Nenhum lançamento encontrado com os filtros atuais."}</td>
                       </tr>
                     ) : null}
                   </tbody>
@@ -7595,33 +7709,41 @@ export default function App() {
                 </div>
               ) : null}
               <form className="tx-form" onSubmit={onSubmitListForm}>
-                <input
+<EntryField label="Nome da lista" idPrefix="onSubmitListForm">
+<input
                   type="text"
                   placeholder="Nome da lista"
                   value={listFormName}
                   onChange={(e) => setListFormName(e.target.value)}
                   required
                 />
-                <select value={listFormType} onChange={(e) => setListFormType(e.target.value)}>
+</EntryField>
+<EntryField label="Tipo da lista" idPrefix="onSubmitListForm">
+<select value={listFormType} onChange={(e) => setListFormType(e.target.value)}>
                   {LIST_TYPES.map((option) => (
                     <option key={option} value={option}>
                       {option}
                     </option>
                   ))}
                 </select>
-                <select value={listFormStatus} onChange={(e) => setListFormStatus(e.target.value)}>
+</EntryField>
+<EntryField label="Status" idPrefix="onSubmitListForm">
+<select value={listFormStatus} onChange={(e) => setListFormStatus(e.target.value)}>
                   {LIST_STATUS_OPTIONS.map((option) => (
                     <option key={option} value={option}>
                       {option === "ativa" ? "Ativa" : "Arquivada"}
                     </option>
                   ))}
                 </select>
-                <input
+</EntryField>
+<EntryField label="Descrição opcional" idPrefix="onSubmitListForm">
+<input
                   type="text"
                   placeholder="Descrição opcional"
                   value={listFormDescription}
                   onChange={(e) => setListFormDescription(e.target.value)}
                 />
+</EntryField>
                 <button type="submit" disabled={(listFormId ? !canEditContas : !canAddContas) || isPendingAction(listFormId ? "updateList" : "createList")}>
                   {isPendingAction(listFormId ? "updateList" : "createList")
                     ? (listFormId ? "Salvando..." : "Criando...")
@@ -7641,13 +7763,16 @@ export default function App() {
                 </div>
               </div>
               <form className="tx-form" onSubmit={onApplyListFilters}>
-                <input
+<EntryField label="Buscar por nome" idPrefix="onApplyListFilters">
+<input
                   type="text"
                   placeholder="Buscar por nome"
                   value={listsSearch}
                   onChange={(e) => setListsSearch(e.target.value)}
                 />
-                <select value={listsTypeFilter} onChange={(e) => setListsTypeFilter(e.target.value)}>
+</EntryField>
+<EntryField label="Tipo da lista" idPrefix="onApplyListFilters">
+<select value={listsTypeFilter} onChange={(e) => setListsTypeFilter(e.target.value)}>
                   <option value="">Todos os tipos</option>
                   {LIST_TYPES.map((option) => (
                     <option key={option} value={option}>
@@ -7655,7 +7780,9 @@ export default function App() {
                     </option>
                   ))}
                 </select>
-                <select value={listsStatusFilter} onChange={(e) => setListsStatusFilter(e.target.value)}>
+</EntryField>
+<EntryField label="Status" idPrefix="onApplyListFilters">
+<select value={listsStatusFilter} onChange={(e) => setListsStatusFilter(e.target.value)}>
                   <option value="">Todos os status</option>
                   {LIST_STATUS_OPTIONS.map((option) => (
                     <option key={option} value={option}>
@@ -7663,6 +7790,7 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+</EntryField>
                 <button type="submit" disabled={isPendingAction("loadLists")}>
                   {isPendingAction("loadLists") ? "Carregando..." : "Aplicar filtros"}
                 </button>
@@ -7780,14 +7908,17 @@ export default function App() {
                   </p>
                 </div>
                 <form className="tx-form" onSubmit={onSubmitListItemForm}>
-                  <input
+<EntryField label="Nome do item" idPrefix="onSubmitListItemForm">
+<input
                     type="text"
                     placeholder="Nome do item"
                     value={listItemName}
                     onChange={(e) => setListItemName(e.target.value)}
                     required
                   />
-                  <input
+</EntryField>
+<EntryField label="Quantidade" idPrefix="onSubmitListItemForm">
+<input
                     type="text"
                     inputMode="decimal"
                     placeholder="Quantidade"
@@ -7795,26 +7926,33 @@ export default function App() {
                     onChange={(e) => setListItemQuantity(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 4, maxIntegerDigits: 8 }))}
                     required
                   />
-                  <select value={listItemUnit} onChange={(e) => setListItemUnit(e.target.value)}>
+</EntryField>
+<EntryField label="Unidade" idPrefix="onSubmitListItemForm">
+<select value={listItemUnit} onChange={(e) => setListItemUnit(e.target.value)}>
                     {LIST_ITEM_UNIT_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
                       </option>
                     ))}
                   </select>
-                  <input
+</EntryField>
+<EntryField label="Valor sugerido" idPrefix="onSubmitListItemForm">
+<input
                     type="text"
                     inputMode="numeric"
                     placeholder="Valor sugerido"
                     value={listItemSuggestedValue}
                     onChange={(e) => setListItemSuggestedValue(formatCurrencyInputValue(e.target.value))}
                   />
-                  <input
+</EntryField>
+<EntryField label="Observação" idPrefix="onSubmitListItemForm">
+<input
                     type="text"
                     placeholder="Observação"
                     value={listItemNotes}
                     onChange={(e) => setListItemNotes(e.target.value)}
                   />
+</EntryField>
                   <button type="submit" disabled={(listItemFormId ? !canEditContas : !canAddContas) || isPendingAction(listItemFormId ? "updateListItem" : "createListItem")}>
                     {isPendingAction(listItemFormId ? "updateListItem" : "createListItem")
                       ? (listItemFormId ? "Salvando..." : "Adicionando...")
@@ -8764,9 +8902,14 @@ export default function App() {
                 <section className="card">
                   <h3>Novo ativo</h3>
                   <form className="tx-form" onSubmit={onCreateInvestAsset}>
-                    <input name="symbol" type="text" placeholder="Símbolo" required />
-                    <input name="name" type="text" placeholder="Nome" required />
-                    <select
+<EntryField label="Símbolo" idPrefix="onCreateInvestAsset">
+<input name="symbol" type="text" placeholder="Símbolo" required />
+</EntryField>
+<EntryField label="Nome" idPrefix="onCreateInvestAsset">
+<input name="name" type="text" placeholder="Nome" required />
+</EntryField>
+<EntryField label="Classe do ativo" idPrefix="onCreateInvestAsset">
+<select
                       name="asset_class"
                       value={assetCreateClass}
                       onChange={(e) => setAssetCreateClass(e.target.value)}
@@ -8776,8 +8919,10 @@ export default function App() {
                         <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
+</EntryField>
                     {assetCreateIsFixedIncome ? (
-                      <select
+<EntryField label="Tipo de rentabilidade" idPrefix="onCreateInvestAsset">
+<select
                         value={assetCreateRentabilityType}
                         onChange={(e) => setAssetCreateRentabilityType(e.target.value)}
                       >
@@ -8786,46 +8931,58 @@ export default function App() {
                           <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
+</EntryField>
                     ) : null}
                     {assetCreateIsFixedIncome && assetCreateRentabilityType === "PREFIXADO" ? (
-                      <input
+<EntryField label="Taxa anual (%)" idPrefix="onCreateInvestAsset">
+<input
                         type="text"
                         inputMode="decimal"
                         value={assetCreateFixedRate}
                         onChange={(e) => setAssetCreateFixedRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Taxa anual (%)"
                       />
+</EntryField>
                     ) : null}
                     {assetCreateIsFixedIncome &&
                     (assetCreateRentabilityType === "PCT_CDI" || assetCreateRentabilityType === "PCT_SELIC") ? (
-                      <input
+<EntryField label="Percentual do índice (%)" idPrefix="onCreateInvestAsset">
+<input
                         type="text"
                         inputMode="decimal"
                         value={assetCreateIndexPct}
                         onChange={(e) => setAssetCreateIndexPct(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Percentual do índice (%)"
                       />
+</EntryField>
                     ) : null}
                     {assetCreateIsFixedIncome &&
                     ["CDI_SPREAD", "SELIC_SPREAD", "IPCA_SPREAD"].includes(assetCreateRentabilityType) ? (
-                      <input
+<EntryField label="Spread anual (%)" idPrefix="onCreateInvestAsset">
+<input
                         type="text"
                         inputMode="decimal"
                         value={assetCreateSpreadRate}
                         onChange={(e) => setAssetCreateSpreadRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 3 }))}
                         placeholder="Spread anual (%)"
                       />
+</EntryField>
                     ) : null}
-                    <select name="sector" defaultValue="Não definido">
+<EntryField label="Setor" idPrefix="onCreateInvestAsset">
+<select name="sector" defaultValue="Não definido">
                       {investMeta.asset_sectors.map((s) => (
                         <option key={s} value={s}>{s}</option>
                       ))}
                     </select>
-                    <select name="currency" defaultValue="BRL">
+</EntryField>
+<EntryField label="Moeda" idPrefix="onCreateInvestAsset">
+<select name="currency" defaultValue="BRL">
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
                     </select>
-                    <select name="broker_account_id" defaultValue="">
+</EntryField>
+<EntryField label="Corretora vinculada" idPrefix="onCreateInvestAsset">
+<select name="broker_account_id" defaultValue="">
                       <option value="">(sem corretora)</option>
                       {accounts
                         .filter((a) => a.type === "Corretora")
@@ -8833,6 +8990,7 @@ export default function App() {
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
                     </select>
+</EntryField>
                     <button type="submit" disabled={isPendingAction("createInvestAsset")}>
                       {isPendingAction("createInvestAsset") ? "Salvando..." : "Salvar ativo"}
                     </button>
@@ -9001,7 +9159,8 @@ export default function App() {
                 <section className="card">
                   <h3>Nova operação</h3>
                   <form className="tx-form" onSubmit={onCreateInvestTrade}>
-                    <select
+<EntryField label="Classe do ativo" idPrefix="onCreateInvestTrade">
+<select
                       name="asset_class_filter"
                       value={tradeAssetClassFilter}
                       onChange={(e) => {
@@ -9015,7 +9174,9 @@ export default function App() {
                         <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
-                    <select
+</EntryField>
+<EntryField label="Ativo" idPrefix="onCreateInvestTrade">
+<select
                       name="asset_id"
                       value={tradeAssetId}
                       onChange={(e) => {
@@ -9031,8 +9192,12 @@ export default function App() {
                         <option key={a.id} value={a.id}>{a.symbol}</option>
                       ))}
                     </select>
-                    <input name="date" type="date" required />
-                    <select
+</EntryField>
+<EntryField label="Data" idPrefix="onCreateInvestTrade">
+<input name="date" type="date" required />
+</EntryField>
+<EntryField label="Operação" idPrefix="onCreateInvestTrade">
+<select
                       name="side"
                       value={tradeSide}
                       onChange={(e) => {
@@ -9044,10 +9209,12 @@ export default function App() {
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </select>
+</EntryField>
                     {tradeShowQuantityPrice ? (
                       <>
                         <div className="trade-quantity-field">
-                          <input
+<EntryField label={tradeQuantityPlaceholder} idPrefix="onCreateInvestTrade">
+<input
                             name="quantity"
                             type="text"
                             inputMode="decimal"
@@ -9060,6 +9227,7 @@ export default function App() {
                             }
                             required
                           />
+</EntryField>
                           {tradeSide === "SELL" ? (
                             <button
                               type="button"
@@ -9076,7 +9244,8 @@ export default function App() {
                             </button>
                           ) : null}
                         </div>
-                        <input
+<EntryField label={tradeAssetIsUsd ? "Preço (USD)" : "Preço"} idPrefix="onCreateInvestTrade">
+<input
                           name="price"
                           type="text"
                           inputMode="numeric"
@@ -9084,11 +9253,13 @@ export default function App() {
                           onInput={applyCurrencyMaskInput}
                           required
                         />
+</EntryField>
                       </>
                     ) : null}
                     {tradeShowAppliedValue ? (
                       <>
-                        <input
+<EntryField label={tradeFixedIncomeIsSell ? "Valor bruto do resgate" : "Valor da aplicação"} idPrefix="onCreateInvestTrade">
+<input
                           name="applied_value"
                           type="text"
                           inputMode="numeric"
@@ -9096,19 +9267,23 @@ export default function App() {
                           onInput={applyCurrencyMaskInput}
                           required
                         />
+</EntryField>
                       </>
                     ) : null}
                     {tradeShowIrIof ? (
-                      <input
+<EntryField label="IR/IOF do resgate (%)" idPrefix="onCreateInvestTrade">
+<input
                         name="ir_iof"
                         type="text"
                         inputMode="decimal"
                         placeholder="IR/IOF do resgate (%)"
                         onInput={(e) => applyDecimalMaskInput(e, { maxDecimals: 4, maxIntegerDigits: 3 })}
                       />
+</EntryField>
                     ) : null}
                     {tradeAssetIsUsd ? (
-                      <input
+<EntryField label="Cotação USD/BRL" idPrefix="onCreateInvestTrade">
+<input
                         name="exchange_rate"
                         type="text"
                         inputMode="decimal"
@@ -9117,8 +9292,14 @@ export default function App() {
                         onChange={(e) => setTradeExchangeRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 4, maxIntegerDigits: 6 }))}
                         required
                       />
+</EntryField>
                     ) : null}
-                    <input
+<EntryField label={tradeAssetIsFixedIncome
+                          ? tradeFixedIncomeIsSell
+                            ? "Taxas do resgate (opcional)"
+                            : "Taxas da aplicação (opcional)"
+                          : "Taxas (opcional, padrão 0)"} idPrefix="onCreateInvestTrade">
+<input
                       name="fees"
                       type="text"
                       inputMode="numeric"
@@ -9132,8 +9313,12 @@ export default function App() {
                       aria-label="Taxas"
                       onInput={applyCurrencyMaskInput}
                     />
+</EntryField>
                     {tradeShowGenericTaxes ? (
-                      <input
+<EntryField label={tradeAssetIsFixedIncome
+                            ? "Impostos do resgate (opcional)"
+                            : "Impostos (opcional, padrão 0)"} idPrefix="onCreateInvestTrade">
+<input
                         name="taxes"
                         type="text"
                         inputMode="numeric"
@@ -9145,8 +9330,11 @@ export default function App() {
                         aria-label="Impostos"
                         onInput={applyCurrencyMaskInput}
                       />
+</EntryField>
                     ) : null}
-                    <input name="note" type="text" placeholder="Obs (opcional)" />
+<EntryField label="Obs (opcional)" idPrefix="onCreateInvestTrade">
+<input name="note" type="text" placeholder="Obs (opcional)" />
+</EntryField>
                     <button type="submit" disabled={isPendingAction("createInvestTrade")}>
                       {isPendingAction("createInvestTrade") ? "Salvando..." : "Salvar operação"}
                     </button>
@@ -9166,30 +9354,41 @@ export default function App() {
                     Concilie quantidade e custo sem criar compra, venda ou movimentação de caixa. O motivo fica registrado no histórico.
                   </p>
                   <form className="tx-form" onSubmit={onPreviewInvestAdjustment}>
-                    <select value={adjustmentAssetId} onChange={(e) => setAdjustmentAssetId(e.target.value)} required>
+<EntryField label="Ativo" idPrefix="invest-field">
+<select value={adjustmentAssetId} onChange={(e) => setAdjustmentAssetId(e.target.value)} required>
                       <option value="" disabled>Ativo</option>
                       {adjustmentAssets.map((asset) => (
                         <option key={asset.id} value={asset.id}>{asset.symbol} · {asset.asset_class}</option>
                       ))}
                     </select>
-                    <input type="date" value={adjustmentDate} onChange={(e) => setAdjustmentDate(e.target.value)} required />
-                    <select value={adjustmentDirection} onChange={(e) => setAdjustmentDirection(e.target.value)}>
+</EntryField>
+<EntryField label="Data do ajuste" idPrefix="invest-field">
+<input type="date" value={adjustmentDate} onChange={(e) => setAdjustmentDate(e.target.value)} required />
+</EntryField>
+<EntryField label="Direção do ajuste" idPrefix="invest-field">
+<select value={adjustmentDirection} onChange={(e) => setAdjustmentDirection(e.target.value)}>
                       <option value="INCREASE">Aumentar posição</option>
                       <option value="DECREASE">Reduzir posição</option>
                     </select>
-                    <select value={adjustmentType} onChange={(e) => setAdjustmentType(e.target.value)}>
+</EntryField>
+<EntryField label="Tipo de ajuste" idPrefix="invest-field">
+<select value={adjustmentType} onChange={(e) => setAdjustmentType(e.target.value)}>
                       <option value="MANUAL">Conciliação manual</option>
                       <option value="TRANSFER">Transferência de custódia</option>
                       <option value="BONUS">Bonificação</option>
                     </select>
-                    <input
+</EntryField>
+<EntryField label="Quantidade" idPrefix="invest-field">
+<input
                       type="text" inputMode="decimal" placeholder="Quantidade"
                       value={adjustmentQuantity}
                       onChange={(e) => setAdjustmentQuantity(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 8, maxIntegerDigits: 12 }))}
                       required
                     />
+</EntryField>
                     {adjustmentDirection === "INCREASE" ? (
-                      <input
+<EntryField label={`Custo unitário (${adjustmentAssetIsUsd ? "USD" : "BRL"})`} idPrefix="invest-field">
+<input
                         type="text" inputMode="numeric"
                         placeholder={`Custo unitário (${adjustmentAssetIsUsd ? "USD" : "BRL"})`}
                         value={adjustmentUnitCost}
@@ -9197,20 +9396,25 @@ export default function App() {
                         onInput={applyCurrencyMaskInput}
                         required
                       />
+</EntryField>
                     ) : null}
                     {adjustmentAssetIsUsd ? (
-                      <input
+<EntryField label="Cotação USD/BRL" idPrefix="invest-field">
+<input
                         type="text" inputMode="decimal" placeholder="Cotação USD/BRL"
                         value={adjustmentExchangeRate}
                         onChange={(e) => setAdjustmentExchangeRate(sanitizeDecimalInputValue(e.target.value, { maxDecimals: 4, maxIntegerDigits: 6 }))}
                         required
                       />
+</EntryField>
                     ) : null}
-                    <input
+<EntryField label="Motivo obrigatório" idPrefix="invest-field">
+<input
                       type="text" placeholder="Motivo obrigatório"
                       value={adjustmentReason} onChange={(e) => setAdjustmentReason(e.target.value)}
                       minLength={3} maxLength={500} required
                     />
+</EntryField>
                     <button type="submit" disabled={isPendingAction("previewInvestAdjustment")}>
                       {isPendingAction("previewInvestAdjustment") ? "Calculando..." : "Revisar ajuste"}
                     </button>
@@ -9232,16 +9436,20 @@ export default function App() {
                 <section className="card">
                   <h3>Operações recentes</h3>
                   <div className="tx-form invest-date-filter-form">
-                    <input
+<EntryField label="Data inicial das operações" idPrefix="invest-field">
+<input
                       type="date"
                       value={investTradeDateFrom}
                       onChange={(e) => setInvestTradeDateFrom(e.target.value)}
                     />
-                    <input
+</EntryField>
+<EntryField label="Data final das operações" idPrefix="invest-field">
+<input
                       type="date"
                       value={investTradeDateTo}
                       onChange={(e) => setInvestTradeDateTo(e.target.value)}
                     />
+</EntryField>
                   </div>
                   <div className="tx-table-wrap">
                     <table className="tx-table">
@@ -9300,7 +9508,8 @@ export default function App() {
                 <section className="card">
                   <h3>Novo provento</h3>
                   <form className="tx-form" onSubmit={onCreateInvestIncome}>
-                    <select
+<EntryField label="Classe do ativo" idPrefix="onCreateInvestIncome">
+<select
                       value={incomeAssetClassFilter}
                       onChange={(e) => {
                         setIncomeAssetClassFilter(e.target.value);
@@ -9312,7 +9521,9 @@ export default function App() {
                         <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
-                    <select
+</EntryField>
+<EntryField label="Ativo" idPrefix="onCreateInvestIncome">
+<select
                       name="asset_id"
                       value={incomeAssetId}
                       onChange={(e) => setIncomeAssetId(e.target.value)}
@@ -9323,14 +9534,20 @@ export default function App() {
                         <option key={a.id} value={a.id}>{a.symbol}</option>
                       ))}
                     </select>
-                    <input name="date" type="date" required />
-                    <select name="type" defaultValue="">
+</EntryField>
+<EntryField label="Data" idPrefix="onCreateInvestIncome">
+<input name="date" type="date" required />
+</EntryField>
+<EntryField label="Tipo de provento" idPrefix="onCreateInvestIncome">
+<select name="type" defaultValue="">
                       <option value="" disabled>Tipo</option>
                       {(investMeta.income_types || []).map((t) => (
                         <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
-                    <input
+</EntryField>
+<EntryField label="Valor" idPrefix="onCreateInvestIncome">
+<input
                       name="amount"
                       type="text"
                       inputMode="numeric"
@@ -9338,7 +9555,9 @@ export default function App() {
                       onInput={applyCurrencyMaskInput}
                       required
                     />
-                    <select name="credit_account_id" defaultValue="">
+</EntryField>
+<EntryField label="Conta de crédito" idPrefix="onCreateInvestIncome">
+<select name="credit_account_id" defaultValue="">
                       <option value="">Conta de crédito (padrão: corretora do ativo)</option>
                       {accounts.map((a) => (
                         <option key={a.id} value={a.id}>
@@ -9346,7 +9565,10 @@ export default function App() {
                         </option>
                       ))}
                     </select>
-                    <input name="note" type="text" placeholder="Obs (opcional)" />
+</EntryField>
+<EntryField label="Obs (opcional)" idPrefix="onCreateInvestIncome">
+<input name="note" type="text" placeholder="Obs (opcional)" />
+</EntryField>
                     <button type="submit" disabled={isPendingAction("createInvestIncome")}>
                       {isPendingAction("createInvestIncome") ? "Salvando..." : "Salvar provento"}
                     </button>
@@ -9436,16 +9658,20 @@ export default function App() {
                 <section className="card">
                   <h3>Proventos recentes</h3>
                   <div className="tx-form invest-date-filter-form">
-                    <input
+<EntryField label="Data inicial dos proventos" idPrefix="invest-field">
+<input
                       type="date"
                       value={investIncomeDateFrom}
                       onChange={(e) => setInvestIncomeDateFrom(e.target.value)}
                     />
-                    <input
+</EntryField>
+<EntryField label="Data final dos proventos" idPrefix="invest-field">
+<input
                       type="date"
                       value={investIncomeDateTo}
                       onChange={(e) => setInvestIncomeDateTo(e.target.value)}
                     />
+</EntryField>
                   </div>
                   <div className="tx-table-wrap">
                     <table className="tx-table">
@@ -9682,7 +9908,9 @@ export default function App() {
                         <tr>
                           <th>Ativo</th>
                           <th>Status</th>
-                          <th>Preço</th>
+                          <th>Preço unitário</th>
+                          <th>Moeda</th>
+                          <th>Data da referência</th>
                           <th>Fonte</th>
                           <th>Tempo (s)</th>
                           <th>Detalhe</th>
@@ -9692,9 +9920,11 @@ export default function App() {
                         {investPriceUpdateReport.map((row, idx) => (
                           <tr key={`${row?.symbol || "sem-symbol"}-${idx}`}>
                             <td>{row?.symbol || "-"}</td>
-                            <td>{row?.ok ? "OK" : "Erro"}</td>
+                            <td>{quoteFailureLabel(row)}</td>
                             <td>{Number(row?.price || 0) > 0 ? formatLocalizedNumber(row.price, 4) : "-"}</td>
-                            <td>{row?.src || "-"}</td>
+                            <td>{row.currency || investAssets.find(asset => String(asset.id) === String(row.asset_id))?.currency || "-"}</td>
+                            <td>{row?.px_date ? formatIsoDatePtBr(row.px_date) : "-"}</td>
+                            <td>{row?.src || (row.attempts || []).map(attempt => attempt.provider).filter(Boolean).join(" / ") || "-"}</td>
                             <td>{Number.isFinite(Number(row?.elapsed_s)) ? formatLocalizedNumber(row.elapsed_s, 2) : "-"}</td>
                             <td>{row?.error || "-"}</td>
                           </tr>
@@ -9721,20 +9951,27 @@ export default function App() {
                     </div>
                   </div>
                   <form className="tx-form" onSubmit={onUpsertInvestPrice}>
-                    <select value={manualPriceClassFilter} onChange={(e) => setManualPriceClassFilter(e.target.value)}>
+<EntryField label="Classe do ativo" idPrefix="onUpsertInvestPrice">
+<select value={manualPriceClassFilter} onChange={(e) => setManualPriceClassFilter(e.target.value)}>
                       <option value="" disabled>Selecione a classe</option>
                       {MANUAL_PRICE_CLASS_OPTIONS.map((item) => (
                         <option key={item} value={item}>{item}</option>
                       ))}
                     </select>
-                    <select name="asset_id" defaultValue="">
+</EntryField>
+<EntryField label="Ativo" idPrefix="onUpsertInvestPrice">
+<select name="asset_id" defaultValue="">
                       <option value="" disabled>Ativo</option>
                       {manualPriceAssets.map((a) => (
                         <option key={a.id} value={a.id}>{a.symbol}</option>
                       ))}
                     </select>
-                    <input name="date" type="date" required />
-                    <input
+</EntryField>
+<EntryField label="Data" idPrefix="onUpsertInvestPrice">
+<input name="date" type="date" required />
+</EntryField>
+<EntryField label="Preço unitário" idPrefix="onUpsertInvestPrice">
+<input
                       name="price"
                       type="text"
                       inputMode="numeric"
@@ -9743,7 +9980,10 @@ export default function App() {
                       onInput={applyCurrencyMaskInput}
                       required
                     />
-                    <input name="source" type="text" placeholder="Fonte" defaultValue="manual" />
+</EntryField>
+<EntryField label="Fonte" idPrefix="onUpsertInvestPrice">
+<input name="source" type="text" placeholder="Fonte" defaultValue="manual" />
+</EntryField>
                     <button type="submit" disabled={isPendingAction("upsertInvestPrice")}>
                       {isPendingAction("upsertInvestPrice") ? "Salvando..." : "Salvar cotação manual"}
                     </button>
@@ -9752,7 +9992,8 @@ export default function App() {
                 <section className="card quote-section-card quote-block-card quote-manual-fixed-card">
                   <h3>Atualização manual de renda fixa e fundos</h3>
                   <form className="tx-form" onSubmit={onUpdateInvestManualQuote}>
-                    <select value={manualQuoteAssetId} onChange={(e) => setManualQuoteAssetId(e.target.value)}>
+<EntryField label="Ativo" idPrefix="onUpdateInvestManualQuote">
+<select value={manualQuoteAssetId} onChange={(e) => setManualQuoteAssetId(e.target.value)}>
                       <option value="" disabled>Selecione o ativo</option>
                       {investManualQuoteAssets.map((a) => (
                         <option key={a.id} value={a.id}>
@@ -9760,18 +10001,26 @@ export default function App() {
                         </option>
                       ))}
                     </select>
-                    <select value={manualQuoteMode} onChange={(e) => setManualQuoteMode(e.target.value)}>
+</EntryField>
+<EntryField label="Modo de atualização" idPrefix="onUpdateInvestManualQuote">
+<select value={manualQuoteMode} onChange={(e) => setManualQuoteMode(e.target.value)}>
                       {selectedManualQuoteIsManual ? (
                         <option value="rentability">Atualizar por rentabilidade (%)</option>
                       ) : null}
                       <option value="current_value">Atualizar por valor atual</option>
                     </select>
-                    <input
+</EntryField>
+<EntryField label="Data" idPrefix="onUpdateInvestManualQuote">
+<input
                       type="date"
                       value={manualQuoteDate}
                       onChange={(e) => setManualQuoteDate(e.target.value)}
                     />
-                    <input
+</EntryField>
+<EntryField label={manualQuoteMode === "rentability"
+                          ? "Rentabilidade atual (%)"
+                          : "Valor atual"} idPrefix="onUpdateInvestManualQuote">
+<input
                       type="text"
                       inputMode={manualQuoteMode === "rentability" ? "decimal" : "numeric"}
                       value={manualQuoteValue}
@@ -9788,6 +10037,7 @@ export default function App() {
                           : "Valor atual"
                       }
                     />
+</EntryField>
                     <button type="submit" disabled={isPendingAction("updateInvestManualQuote")}>
                       {isPendingAction("updateInvestManualQuote") ? "Salvando..." : "Salvar atualização manual"}
                     </button>

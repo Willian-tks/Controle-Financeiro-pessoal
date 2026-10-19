@@ -102,32 +102,36 @@ Aceite: registrar despesa ou receita comum exige menos interações que o fluxo 
 
 ### DOMUS-1.5-005 — Dashboard
 
-Estado: **Em andamento** — reorganização visual inicial implementada localmente; validação funcional e publicação pendentes.
+Estado: **Concluído — publicado e validado pelo usuário no VPS**, conforme confirmação recebida em 16/10/2026. Implementação no commit `c7dba8d`; commit de merge e data exata do deploy não informados.
 
-- [ ] Separar saldo disponível, resultado do mês, compromissos e patrimônio.
-- [ ] Explicitar período e base de cálculo dos indicadores.
-- [ ] Distinguir custo investido, valor de mercado e resultado em investimentos.
-- [ ] Simplificar hierarquia visual, reduzindo blocos com o mesmo destaque.
-- [ ] Permitir acessar os lançamentos que compõem os principais totais.
+- [x] Separar saldo disponível, resultado do mês, compromissos e patrimônio.
+- [x] Explicitar período e base de cálculo dos indicadores.
+- [x] Distinguir custo investido, valor de mercado e resultado em investimentos.
+- [x] Simplificar hierarquia visual, reduzindo blocos com o mesmo destaque.
+- [x] Permitir acessar os lançamentos que compõem os principais totais.
 
 Aceite: totais conferem com os dados detalhados sob os mesmos filtros; informações prioritárias são legíveis no celular e não dependem exclusivamente de cor.
 
 ### DOMUS-1.5-006 — Interface consistente
 
-- [ ] Manter identidade azul com espaçamento, tipografia e contraste padronizados.
-- [ ] Usar rótulos permanentes e mensagens de erro junto dos campos.
-- [ ] Reduzir a área ocupada por confirmações de sucesso.
-- [ ] Melhorar navegação por teclado, foco e nomes acessíveis dos controles.
-- [ ] Adaptar tabelas/listas e ações às larguras móveis, sem perder informações financeiras relevantes.
-- [ ] Validar estados vazio, carregando, erro e indisponibilidade.
+Estado: **Concluído — implementação local aprovada pelo usuário em 19/10/2026; publicação adiada**. Inclui os principais formulários de Lançamentos, Gerenciador, Listas e Investimentos, foco, mensagens e ajustes móveis. Evidências: aprovação do usuário, conferência de controles e largura de 390 px, build local e 12 testes Node. O teste de falha/recuperação usa fontes simuladas; a API real não foi interrompida pelo agente. Favoritos de conta/método permanecem como melhoria complementar.
+
+- [x] Manter identidade azul com espaçamento, tipografia e contraste padronizados.
+- [x] Usar rótulos permanentes e mensagens de erro junto dos campos.
+- [x] Reduzir a área ocupada por confirmações de sucesso.
+- [x] Melhorar navegação por teclado, foco e nomes acessíveis dos controles.
+- [x] Adaptar tabelas/listas e ações às larguras móveis, sem perder informações financeiras relevantes.
+- [x] Validar estados vazio, carregando, erro e indisponibilidade.
 
 Aceite: fluxos principais funcionam em celular e desktop, com teclado e sem campos/ações ocultos por problemas de layout.
 
 ### DOMUS-1.5-007 — Cotações e BRAPI
 
-- [ ] Mapear os provedores atuais por classe e moeda; BRAPI já existe no projeto.
+Estado: **Em andamento** — mapeamento em `QUOTE_PROVIDERS.md`; relatório com moeda, data e estados estruturados de falha por provedor; confirmação sem sucesso falso e rejeição de preço/data inválidos. Plano gratuito de 15 mil requisições/mês informado pelo usuário; limites públicos conferidos, sem consultar consumo ou credenciais. 94 testes Python, 18 Node e build aprovados. Backend local recarregado. Sem ampliação de chamadas. Pendentes: datas estimadas da BRAPI, política de cache, cobertura dos ativos/limites de curto prazo e validação funcional/publicação da etapa.
+
+- [x] Mapear os provedores atuais por classe e moeda; BRAPI já existe no projeto.
 - [ ] Exibir fonte, data, moeda e estado da cotação, incluindo “Custo médio” quando usado como referência.
-- [ ] Diferenciar consulta sem dados, falha de provedor e limite de consumo.
+- [x] Diferenciar consulta sem dados, falha de provedor e limite de consumo.
 - [ ] Revisar cache, política de atualização e alternativas por provedor.
 - [ ] Confirmar cobertura e condições do plano BRAPI utilizado antes de ampliar chamadas.
 
@@ -196,6 +200,14 @@ Aceite: ajuste identificado separadamente de compra/venda, com efeitos documenta
 
 Prioridade é relativa a cada etapa: voz é prioridade alta de produto, mas depende de um fluxo de gravação confiável. A sequência pode ser revista sem mudar silenciosamente o escopo de uma versão publicada.
 
+## Lote de publicacao autorizado - 2026-10-19
+
+- Escopo: implementacao local do 006 e melhorias parciais do 007, em `codex/interface-consistency`.
+- Validacao local: 94 testes Python, 18 testes Node e build Vite aprovados. Conferencias de interface aprovadas pelo usuario. CI remoto e teste pos-deploy ainda pendentes.
+- Sem novas dependencias, migracao de schema ou aumento de frequencia das consultas. Gerar frontend no Linux e reiniciar `domus-api.service` por alteracao em `invest_quotes.py`.
+- Publicar o lote nao encerra o 007 nem a versao 1.5. Continuam pendentes: excecoes legadas do 002; datas estimadas, cache e cobertura do 007; consolidacao do 008; contrato de IA do 009; documentacao/release do 010.
+- Publicacao deste lote autorizada pelo usuario em 19/10/2026, superando o adiamento registrado no 006. Registrar commit de merge e confirmacao do VPS quando houver evidencia; nao presumir producao atualizada pelo push.
+
 ## Fora do escopo da 1.5
 
 - Lançar automaticamente sem revisão ou confirmação.
@@ -224,8 +236,10 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 | DOMUS-1.5-002 | Em validação | Correções de câmbio e regressão financeira publicadas | Suítes SQLite/PostgreSQL e conferência manual executadas | Publicado; exceções legadas permanecem registradas no item 011 |
 | DOMUS-1.5-004 | Concluído | PRs 3 e 4; commits de merge 933b0d3 e d333bb7 | 9 testes Node, build, despesa/receita/transferência, cartão, compromisso e layout móvel | Frontend publicado; usuário confirmou o fluxo e a seleção de cartão |
 | DOMUS-1.5-011 | Concluído | PR 5 concluído e publicado conforme confirmação do usuário em 08/10/2026 | 87 testes Python, build Vite e validação funcional local aprovados; 5 cenários específicos BRL/USD | Publicado; confirmação recebida do usuário |
-| DOMUS-1.5-005 | Em andamento | Reorganização inicial do Dashboard em `frontend/src/App.jsx` e `frontend/src/styles.css` | Build Vite aprovado em 08/10/2026; validação visual/funcional pendente | Não publicada |
-| DOMUS-1.5-006 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
+| DOMUS-1.5-005 | Concluído | Implementação `c7dba8d` em `codex/dashboard-reorg`; commit de merge não informado | Build Vite aprovado em 08/10/2026 | Usuário confirmou publicação e conferência do Dashboard no VPS em 16/10/2026 |
+| DOMUS-1.5-006 | Concluído (local) | Implementação em codex/interface-consistency; aprovação do usuário em 19/10/2026 | 12 testes Node, build e conferências de interface aprovados; falha/recuperação com fontes simuladas | Publicação adiada pelo usuário para acumular alterações |
+| DOMUS-1.5-007 | Em andamento | QUOTE_PROVIDERS.md, diagnóstico estruturado, relatório e confirmações; plano gratuito informado pelo usuário | 94 testes Python, 18 Node e build aprovados; backend local recarregado | Não publicada; datas estimadas/cache e cobertura ainda em revisão; frequência preservada |
+| DOMUS-1.5-008 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
 
 ## Histórico do documento
 
@@ -236,6 +250,13 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 | 2026-09-29 | 3 | Implementação local do ajuste explícito de posição, com prévia, auditoria e reversão rastreável |
 | 2026-09-29 | 4 | Validação funcional local do ajuste de posição aprovada pelo usuário; entrega preparada para publicação |
 | 2026-10-08 | 5 | PR 5 registrado como concluído/publicado e início do DOMUS-1.5-005 com reorganização inicial do Dashboard e build local aprovado |
+| 2026-10-16 | 6 | Encerramento do DOMUS-1.5-005 conforme confirmação do usuário no VPS; DOMUS-1.5-006 identificado como próxima entrega |
+| 2026-10-16 | 7 | Início do DOMUS-1.5-006: rótulos, foco, mensagens acessíveis e ajustes móveis; validação visual e restante do escopo pendentes |
+| 2026-10-19 | 8 | Usuário aprovou primeira etapa local; rótulos e erros estendidos aos seletores, filtros identificados e tabela acessível; publicação adiada pelo usuário |
+| 2026-10-19 | 9 | Usuário aprovou ajustes adicionais de Lançamentos; padrão estendido a contas/categorias/cartões e aviso de falha com nova tentativa na carga dos dados principais; teste de indisponibilidade ainda pendente |
+| 2026-10-19 | 10 | Aprovação dos cadastros recebida; rótulos estendidos a Listas/Investimentos/ajustes; 3 testes de falha/recuperação incluídos no CI; item 006 em validação local, sem publicação |
+| 2026-10-19 | 11 | Usuário aprovou últimos ajustes do 006; implementação local encerrada com publicação adiada. Início do 007 com mapeamento, data/moeda no relatório e confirmações sem sucesso falso |
+| 2026-10-19 | 12 | Estados de falha por provedor e validação de referências implementados; 94 testes Python e 18 Node aprovados; usuário informou plano BRAPI gratuito de 15 mil/mês, limites públicos conferidos; sem publicação |
 
 
 ### Execução inicial — 2026-09-21

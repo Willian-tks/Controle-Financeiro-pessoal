@@ -1,5 +1,17 @@
 # Deploy no VPS LocalWeb
 
+## Lote 2026-10-19 - Interface e diagnosticos de cotacoes
+
+Inclui DOMUS-1.5-006 e melhorias parciais do 007. Nao e o fechamento da versao 1.5.
+
+- Aguardar aprovacao do DOMUS CI (SQLite, PostgreSQL e frontend) no commit do PR antes do merge/deploy.
+- Sem novas dependencias ou migracao de schema; configuracoes e frequencia dos provedores permanecem inalteradas.
+- Atualizar a main somente apos o merge. Inspecionar `git status --short` e preservar alteracoes locais conforme a secao 8, inclusive `frontend/dist` modificado por builds anteriores.
+- Preparar o build Linux em `frontend/dist-next` e promove-lo com backup conforme as secoes 8 e 12; o dist versionado anterior nao substitui esse build.
+- Reiniciar `domus-api.service`, pois `invest_quotes.py` mudou, e conferir `/health`. Nginx e timers nao precisam de alteracao neste lote.
+- Conferir login, rotulos/validacao nos formularios, lancamento rapido, Listas e carteira. Em Cotacoes, verificar moeda/data e estados de falha.
+- Datas estimadas da BRAPI, cache e cobertura por ativo continuam no backlog 007. Registrar commit implantado e resultado do teste no VPS antes de marcar este lote como publicado.
+
 Este projeto hoje roda com:
 
 - backend FastAPI em `api.main:app`
