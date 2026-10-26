@@ -42,7 +42,7 @@ class QuoteFailureTests(unittest.TestCase):
     def test_report_preserves_structured_failure_and_currency(self):
         error = quotes.QuoteFailure("limited", "rate_limited", "brapi", 429)
         with patch.object(quotes, "_call_with_timeout", return_value=(True, (None, None, None, error), None)):
-            row = quotes._fetch_one_asset({"id": 1, "symbol": "PETR4", "currency": "BRL"}, 3)
+            row = quotes._fetch_one_asset_uncached({"id": 1, "symbol": "PETR4", "currency": "BRL"}, 3)
         self.assertFalse(row["ok"])
         self.assertEqual(row["error_code"], "rate_limited")
         self.assertEqual(row["currency"], "BRL")
@@ -51,7 +51,7 @@ class QuoteFailureTests(unittest.TestCase):
     def test_invalid_values_are_never_successful(self):
         for price, day in ((0, "2024-01-02"), (-1, "2024-01-02"), (float("nan"), "2024-01-02"), (float("inf"), "2024-01-02"), (True, "2024-01-02"), (10, "not-a-date"), (10, "2024-02-30")):
             with self.subTest(price=price, day=day), patch.object(quotes, "_call_with_timeout", return_value=(True, (price, day, "test", None), None)):
-                row = quotes._fetch_one_asset({"id": 1, "symbol": "TEST", "currency": "USD"}, 3)
+                row = quotes._fetch_one_asset_uncached({"id": 1, "symbol": "TEST", "currency": "USD"}, 3)
                 self.assertFalse(row["ok"])
                 self.assertEqual(row["error_code"], "invalid_data")
 

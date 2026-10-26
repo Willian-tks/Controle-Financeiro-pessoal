@@ -31,4 +31,10 @@ test("status uses structured codes and remains compatible with older reports", (
   assert.equal(quoteFailureLabel({ ok: false, error_code: "access_denied" }), "Acesso ao provedor negado");
   assert.equal(quoteFailureLabel({ ok: false }), "Erro");
   assert.equal(quoteFailureLabel({ ok: true }), "Atualizada");
+  assert.equal(quoteFailureLabel({ ok: true, cache_hit: true }), "Em cache");
+});
+
+test("cached references are disclosed without claiming a new provider response", () => {
+  const notice = quoteUpdateNotice({ saved: 1, total: 1, report: [{ ok: true, cache_hit: true }] });
+  assert.match(notice.message, /Referências em cache: 1/);
 });

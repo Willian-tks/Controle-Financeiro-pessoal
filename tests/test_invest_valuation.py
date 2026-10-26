@@ -54,6 +54,7 @@ class ValuationContract:
         self.assertAlmostEqual(1440, usd.market_value)
         self.assertEqual("2026-01-09", usd.fx_ref_date)
         self.assertEqual(invest_fx.SOURCE, usd.fx_source)
+        self.assertEqual("test", usd.price_source)
         self.assertAlmostEqual(203, brl.cost_basis)
         self.assertAlmostEqual(240, brl.market_value)
         self.assertEqual({8001, 8002}, set(pos.asset_id))
@@ -71,6 +72,7 @@ class ValuationContract:
         row = pos[pos.asset_id == 8001].iloc[0]
         self.assertAlmostEqual(1015, row.market_value)
         self.assertEqual("custo_medio", row.value_origin)
+        self.assertEqual("custo_medio", row.price_source)
         self.assertIn("estimado", row.valuation_warning)
 
     def test_missing_and_stale_fx_are_explicit(self):

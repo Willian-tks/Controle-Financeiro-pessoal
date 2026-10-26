@@ -89,7 +89,7 @@
   - V1 sem integração automática com financeiro
   - V1 sem recorrência, modelos, valor real pago ou metas complexas
   - item com `sort_order` e `completion_date` já previstos desde a primeira versão
-- Ao retomar esse tema em nova sessão, começar pela `Fase 1 - Modelo de dados` do backlog e manter o escopo da V1 enxuto.
+- Ao retomar Listas, consultar o status executivo de `BACKLOG_MODULO_LISTAS_DOMUS.md`: o MVP já está implementado; priorizar validação e rollout pendentes, sem reiniciar a Fase 1.
 
 ## Planejamento versionado — 2026-09-21
 
@@ -97,3 +97,11 @@
 - Consultar esse documento antes de iniciar melhorias gerais; ele não implica que a versão 1.5 esteja implementada ou publicada.
 - Para Listas, consultar o status do `BACKLOG_MODULO_LISTAS_DOMUS.md`: a orientação antiga de começar pela Fase 1 está superada pelo backlog revisado. Validar pendências antes de iniciar nova implementação.
 - Atualizar o estado e as evidências dos itens durante a execução e registrar a versão/commit efetivamente publicados.
+
+## Preparação de release — 2026-10-26
+
+- Versão candidata local: `1.5.0-rc.1`. Não equivale à publicação da versão final 1.5.0.
+- Fonte da identidade do produto: `frontend/src/productVersion.json`, consumida pelo frontend e por `product_version.py` na API; manter package.json e lockfile alinhados.
+- Status atual e bloqueios em `Backlog1.5.md`; resumo da entrega em `CHANGELOG.md` e checklist em `RELEASE_1.5.md`.
+- 007 continua em validação; 008 aprovado localmente; 009 é especificação em `AI_DRAFT_CONTRACT.md`, não integração ativa.
+- Não encerrar 002 sem decisão explícita sobre os registros legados; não declarar 010 concluído antes de CI, publicação e conferência no VPS.

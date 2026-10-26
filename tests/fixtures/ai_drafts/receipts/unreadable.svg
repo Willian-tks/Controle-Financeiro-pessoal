@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="560" viewBox="0 0 640 560">
+  <rect width="640" height="560" fill="white"/>
+  <g fill="black" font-family="monospace" font-size="22">
+    <text x="28" y="45">CUPOM SINTETICO - SEM VALOR FISCAL</text>
+    <text x="28" y="83">LOJA TESTE C</text>
+    <text x="28" y="121">DATA ??/??/2026</text>
+    <text x="28" y="159">TOTAL PAGO               ??,??</text>
+    <text x="28" y="197">SIMULACAO DE CAMPOS ILEGIVEIS</text>
+  </g>
+</svg>

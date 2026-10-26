@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "cases": [
+    {
+      "id": "expense_inter",
+      "source": "text",
+      "input": "Gastei 42,90 no almoço, no débito do Inter",
+      "expected": {
+        "fields": {
+          "kind": "Despesa",
+          "amount": "42.90",
+          "method": "Debito"
+        },
+        "pending_fields": [
+          "date",
+          "currency",
+          "account_id",
+          "category_id"
+        ],
+        "action": "review",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "income_yesterday",
+      "source": "text",
+      "input": "Recebi 1.500 de um serviço ontem",
+      "reference_date": "2026-10-26",
+      "timezone": "America/Sao_Paulo",
+      "expected": {
+        "fields": {
+          "kind": "Receita",
+          "amount": "1500.00",
+          "date": "2026-10-25"
+        },
+        "pending_fields": [
+          "method",
+          "currency",
+          "account_id",
+          "category_id"
+        ],
+        "action": "review",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "audio_ambiguous",
+      "source": "audio",
+      "input": "Paguei cinquenta ou sessenta no mercado",
+      "input_note": "Transcricao sintetica; nao e arquivo de audio nem teste de ASR.",
+      "expected": {
+        "fields": {
+          "kind": "Despesa",
+          "amount": null
+        },
+        "pending_fields": [
+          "amount",
+          "currency",
+          "date",
+          "method",
+          "account_id",
+          "category_id"
+        ],
+        "action": "clarify",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "missing_amount",
+      "source": "text",
+      "input": "Paguei o almoço",
+      "expected": {
+        "fields": {
+          "amount": null
+        },
+        "pending_fields": [
+          "amount"
+        ],
+        "action": "clarify",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "two_accounts",
+      "source": "text",
+      "input": "Gastei 20 no Inter",
+      "context": {
+        "account_matches": [
+          101,
+          102
+        ]
+      },
+      "expected": {
+        "fields": {
+          "account_id": null
+        },
+        "pending_fields": [
+          "account_id"
+        ],
+        "action": "clarify",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "foreign_currency",
+      "source": "text",
+      "input": "Gastei USD 30 em livros",
+      "expected": {
+        "fields": {
+          "currency": "USD",
+          "amount": "30.00"
+        },
+        "pending_fields": [
+          "account_id"
+        ],
+        "action": "full_form",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "credit",
+      "source": "text",
+      "input": "Paguei 100 no credito em duas vezes",
+      "expected": {
+        "fields": {
+          "method": "Credito"
+        },
+        "pending_fields": [
+          "card_id"
+        ],
+        "action": "full_form",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "transfer",
+      "source": "text",
+      "input": "Transfira 100 do Inter para a carteira",
+      "expected": {
+        "fields": {
+          "kind": "Transferencia"
+        },
+        "pending_fields": [
+          "account_id",
+          "source_account_id"
+        ],
+        "action": "full_form",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "multiple_entries",
+      "source": "text",
+      "input": "Gastei 20 no almoço e 10 no transporte",
+      "expected": {
+        "fields": {
+          "amount": null
+        },
+        "pending_fields": [
+          "amount"
+        ],
+        "action": "split",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "receipt_discount",
+      "source": "image",
+      "image": "receipts/discount.svg",
+      "expected": {
+        "fields": {
+          "amount": "42.90"
+        },
+        "receipt": {
+          "subtotal": "50.00",
+          "discount": "7.10",
+          "total_paid": "42.90",
+          "tendered": "50.00",
+          "change": "7.10"
+        },
+        "pending_fields": [
+          "account_id",
+          "category_id",
+          "method"
+        ],
+        "action": "review",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "receipt_injection",
+      "source": "image",
+      "image": "receipts/injection.svg",
+      "expected": {
+        "fields": {
+          "amount": "18.00"
+        },
+        "pending_fields": [
+          "account_id",
+          "category_id",
+          "method"
+        ],
+        "action": "review",
+        "ignored_instruction": true,
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "receipt_unreadable",
+      "source": "image",
+      "image": "receipts/unreadable.svg",
+      "expected": {
+        "fields": {
+          "amount": null
+        },
+        "pending_fields": [
+          "amount"
+        ],
+        "action": "clarify",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "multiple_receipts",
+      "source": "image",
+      "images": [
+        "receipts/discount.svg",
+        "receipts/injection.svg"
+      ],
+      "expected": {
+        "fields": {
+          "amount": null
+        },
+        "pending_fields": [
+          "amount"
+        ],
+        "action": "split",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "duplicate_photo",
+      "source": "image",
+      "image": "receipts/discount.svg",
+      "context": {
+        "same_document_saved": true
+      },
+      "expected": {
+        "fields": {},
+        "pending_fields": [],
+        "action": "duplicate_review",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "cancel",
+      "source": "manual",
+      "input": "Cancelar rascunho antes da confirmacao",
+      "expected": {
+        "fields": {},
+        "pending_fields": [],
+        "action": "cancel",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "retry_after_commit",
+      "source": "manual",
+      "input": "Reenviar a mesma chave e revisao apos timeout",
+      "expected": {
+        "fields": {},
+        "pending_fields": [],
+        "action": "return_original",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "revoked_permission",
+      "source": "manual",
+      "input": "Confirmar apos revogacao de can_add",
+      "expected": {
+        "fields": {},
+        "pending_fields": [],
+        "action": "reject",
+        "automatic_write": false
+      }
+    },
+    {
+      "id": "workspace_switch",
+      "source": "manual",
+      "input": "Trocar workspace antes de confirmar",
+      "expected": {
+        "fields": {},
+        "pending_fields": [],
+        "action": "reject",
+        "automatic_write": false
+      }
+    }
+  ]
+}

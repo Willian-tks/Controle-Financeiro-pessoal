@@ -145,7 +145,7 @@ def df_latest_prices(user_id: int | None = None):
     uid = _uid(user_id)
     return _query_df(
         """
-        SELECT p.asset_id, p.date AS price_date, p.price
+        SELECT p.asset_id, p.date AS price_date, p.price, p.source AS price_source
         FROM prices p
         JOIN (
             SELECT asset_id, MAX(date) AS max_date
@@ -256,10 +256,14 @@ def _value_positions(pos, assets, prices, snapshots, date_to, fx_rates):
     """All position values are BRL; quoted prices are in the asset currency."""
     pos = pos.copy()
     if not prices.empty and not pos.empty:
-        pos = pos.merge(prices[["asset_id", "price", "price_date"]], on="asset_id", how="left")
+        quoted = prices.copy()
+        if "price_source" not in quoted.columns:
+            quoted["price_source"] = None
+        pos = pos.merge(quoted[["asset_id", "price", "price_date", "price_source"]], on="asset_id", how="left")
     else:
         pos["price"] = 0.0
         pos["price_date"] = None
+        pos["price_source"] = None
     if not snapshots.empty and not pos.empty:
         pos = pos.merge(
             snapshots[["asset_id", "snapshot_price", "snapshot_date", "snapshot_source"]],
@@ -329,6 +333,7 @@ def _value_positions(pos, assets, prices, snapshots, date_to, fx_rates):
     open_position_mask = pd.to_numeric(pos.get("qty", 0.0), errors="coerce").fillna(0.0) > 0
     pos["value_origin"] = "cotacao"
     pos.loc[missing_price_mask, "value_origin"] = "custo_medio"
+    pos.loc[missing_price_mask, "price_source"] = "custo_medio"
     pos["value_ref_date"] = pos.get("price_date")
     # Para renda fixa, prioriza ajuste manual histórico apenas enquanto ele não ficou
     # mais antigo que o current_value gravado no ativo por uma operação posterior.
@@ -340,6 +345,7 @@ def _value_positions(pos, assets, prices, snapshots, date_to, fx_rates):
     snapshot_override_mask = fixed_income_mask & open_position_mask & (snapshot_price > 0) & snapshot_current
     pos.loc[snapshot_override_mask, "market_value"] = snapshot_price[snapshot_override_mask]
     pos.loc[snapshot_override_mask, "value_origin"] = "ajuste_manual"
+    pos.loc[snapshot_override_mask, "price_source"] = pos.loc[snapshot_override_mask, "snapshot_source"].fillna("manual")
     pos.loc[snapshot_override_mask, "value_ref_date"] = pos.loc[snapshot_override_mask, "snapshot_date"]
     cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
     rf_mask = pos.get("asset_class", "").astype(str).map(_norm_asset_class).isin(_FIXED_INCOME_CLASSES)
@@ -347,6 +353,9 @@ def _value_positions(pos, assets, prices, snapshots, date_to, fx_rates):
     auto_mask = rf_mask & open_position_mask & stale_snapshot_mask & current_in_period & (cv > 0)
     pos.loc[auto_mask, "market_value"] = cv[auto_mask]
     pos.loc[auto_mask, "value_origin"] = "motor"
+    pos.loc[auto_mask, "price_source"] = "motor"
+    manual_current = auto_mask & pos["rentability_type"].fillna("").astype(str).str.upper().eq("MANUAL")
+    pos.loc[manual_current, "price_source"] = "manual_current_value"
     pos.loc[auto_mask, "value_ref_date"] = pos.loc[auto_mask, "last_update"]
     fixed_override = snapshot_override_mask | auto_mask
     pos.loc[fixed_override, "valuation_warning"] = ""
@@ -391,7 +400,7 @@ def df_prices_upto(up_to_date: str, user_id: int | None = None) -> pd.DataFrame:
     uid = _uid(user_id)
     return _query_df(
         """
-        SELECT p.asset_id, p.date AS price_date, p.price
+        SELECT p.asset_id, p.date AS price_date, p.price, p.source AS price_source
         FROM prices p
         JOIN (
             SELECT asset_id, MAX(date) AS max_date

@@ -17,6 +17,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.middleware.cors import CORSMiddleware
 
 import auth
+from product_version import VERSION
 import api.importers as importers
 import invest_index_rates
 import invest_rentability
@@ -88,7 +89,7 @@ from .schemas import (
 from .security import create_token, verify_token
 
 
-app = FastAPI(title="Controle Financeiro API", version="0.1.0")
+app = FastAPI(title="Controle Financeiro API", version=VERSION)
 VALID_VIEWS = {"caixa", "competencia", "futuro"}
 logger = logging.getLogger(__name__)
 QUOTE_JOB_TIMEZONE = "America/Sao_Paulo"
