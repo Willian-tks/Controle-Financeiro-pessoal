@@ -107,7 +107,7 @@ jobs:
       - name: Install dependencies from lockfile
         run: npm ci --include=dev --include=optional
       - name: Test frontend validation and data loading
-        run: node --test tests/quickEntry.test.js tests/dataLoads.test.js tests/quoteUpdateNotice.test.js
+        run: node --test tests/quickEntry.test.js tests/dataLoads.test.js tests/quoteUpdateNotice.test.js tests/moduleContracts.test.js
       - name: Build frontend from source
         run: npm run build -- --outDir dist-next
       - name: Check generated entry point

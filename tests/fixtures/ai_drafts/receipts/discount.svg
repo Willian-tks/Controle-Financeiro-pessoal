@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="560" viewBox="0 0 640 560">
+  <rect width="640" height="560" fill="white"/>
+  <g fill="black" font-family="monospace" font-size="22">
+    <text x="28" y="45">CUPOM SINTETICO - SEM VALOR FISCAL</text>
+    <text x="28" y="83">LOJA TESTE A</text>
+    <text x="28" y="121">DATA 26/10/2026 - BRL</text>
+    <text x="28" y="159">ITEM REFEICAO        1 x 50,00</text>
+    <text x="28" y="197">SUBTOTAL                 50,00</text>
+    <text x="28" y="235">DESCONTO                  7,10</text>
+    <text x="28" y="273">TOTAL PAGO               42,90</text>
+    <text x="28" y="311">VALOR ENTREGUE           50,00</text>
+    <text x="28" y="349">TROCO                     7,10</text>
+  </g>
+</svg>

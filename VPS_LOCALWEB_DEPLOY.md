@@ -1,5 +1,13 @@
 # Deploy no VPS LocalWeb
 
+## Fechamento local DOMUS-1.5-007
+
+O fechamento em `codex/quote-transparency` altera backend e frontend, sem migracao de banco ou novas dependencias. Aguardar CI antes do deploy e reiniciar `domus-api.service` apos atualizar e promover o build Linux.
+
+O cache de precos validos dura 30 minutos e o de falhas dura 60 segundos, por processo. Os parametros opcionais `QUOTE_CACHE_TTL_S` e `QUOTE_ERROR_CACHE_TTL_S` permitem 0 a 3600 segundos; nao e necessario alterar o `.env` para usar os padroes. Reinicio descarta o cache. Jobs e workers nao compartilham memoria nem um contador global de franquia.
+
+Conferir fonte/moeda na carteira, data do provedor no relatorio e identificacao de referencias em cache. Cotacao BRAPI sem data valida agora usa as alternativas existentes ou retorna referencia invalida, sem inventar a data atual. Historico anterior e preservado.
+
 ## Lote 2026-10-19 - Interface e diagnosticos de cotacoes
 
 Inclui DOMUS-1.5-006 e melhorias parciais do 007. Nao e o fechamento da versao 1.5.
@@ -399,6 +407,12 @@ No Windows, preferir cache uv em caminho temporário curto se surgir WinError 20
 
 
 ## Validação de valores e câmbio (DOMUS-1.5-002 / 003)
+
+Preparação local da candidata 1.5.0-rc.1 em 26/10/2026: consultar RELEASE_1.5.md
+antes de publicar o lote acumulado. O documento registra bloqueios, identidade,
+backup, smoke e reversão. A candidata não está publicada; não há tag final 1.5.0.
+Copiar também product_version.py e frontend/src/productVersion.json junto ao
+backend: a identificação da API depende da mesma fonte utilizada pelo frontend.
 
 Antes de publicar esta etapa, exigir aprovação dos jobs SQLite, PostgreSQL e frontend do DOMUS CI no mesmo commit. A política, diagnóstico de legado somente leitura e checklist de publicação estão em [INVESTMENT_VALUATION.md](INVESTMENT_VALUATION.md).
 

@@ -1,5 +1,5 @@
 export function quoteFailureLabel(row) {
-  if (row.ok) return "Atualizada";
+  if (row.ok) return row.cache_hit ? "Em cache" : "Atualizada";
   return ({
     no_data: "Sem dados",
     rate_limited: "Limite de consumo",
@@ -16,6 +16,7 @@ export function quoteUpdateNotice(result) {
   const total = Number(result.total || 0);
   const failed = (result.report || []).filter(row => !row?.ok).length;
   const fxUnavailable = result.fx?.ok === false;
+  const cached = (result.report || []).filter(row => row.cache_hit).length;
   if (!total) return { level: "warning", message: "Nenhum ativo elegível para atualizar nesta seleção." };
   const complete = saved === total && !failed && !fxUnavailable && result.ok !== false;
   const message = saved === 0
@@ -23,6 +24,6 @@ export function quoteUpdateNotice(result) {
     : `Cotações salvas: ${saved}/${total}.`;
   return {
     level: complete ? "success" : "warning",
-    message: `${message}${failed ? ` Falhas: ${failed}.` : ""}${fxUnavailable ? " PTAX indisponível; referência anterior preservada." : ""}`,
+    message: `${message}${cached ? ` Referências em cache: ${cached}.` : ""}${failed ? ` Falhas: ${failed}.` : ""}${fxUnavailable ? " PTAX indisponível; referência anterior preservada." : ""}`,
   };
 }

@@ -332,6 +332,7 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
         row = pos.iloc[0]
         self.assertAlmostEqual(56115.98, float(row["market_value"]), places=2)
         self.assertEqual("motor", row["value_origin"])
+        self.assertEqual("manual_current_value", row["price_source"])
 
 
     def test_usd_etf_valuation_with_and_without_quote(self):

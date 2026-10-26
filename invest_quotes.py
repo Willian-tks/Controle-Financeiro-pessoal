@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
+from collections import OrderedDict
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import sqlite3
@@ -12,6 +14,12 @@ import yfinance as yf
 import pandas as pd
 import requests
 import certifi
+
+
+_QUOTE_CACHE = OrderedDict()
+_QUOTE_INFLIGHT = {}
+_QUOTE_CACHE_LOCK = threading.Lock()
+_QUOTE_CACHE_MAX_ITEMS = 512
 
 
 class QuoteFailure(str):
@@ -235,20 +243,40 @@ def fetch_last_price_brapi(symbol: str) -> Tuple[Optional[float], Optional[str],
         price = row.get("regularMarketPrice")
         if price is None:
             return None, None, None, QuoteFailure("BRAPI: sem regularMarketPrice.", "no_data", "brapi")
+        try:
+            from math import isfinite
+            if isinstance(price, bool) or not isfinite(float(price)) or float(price) <= 0:
+                raise ValueError("invalid price")
+        except (TypeError, ValueError, OverflowError):
+            return None, None, None, QuoteFailure("BRAPI: preço inválido.", "invalid_data", "brapi")
 
-        # BRAPI nem sempre manda data bonitinha. Se não vier, usamos hoje.
-        px_date = row.get("regularMarketTime")
-        if px_date:
-            # se vier epoch seconds, converte; se vier string, deixa
-            try:
-                import datetime as _dt
-                px_date = _dt.datetime.fromtimestamp(int(px_date)).date().isoformat()
-            except Exception:
-                px_date = today_str()
-        else:
-            px_date = today_str()
+        # A missing provider date must never become a quote dated at collection time.
+        try:
+            from zoneinfo import ZoneInfo
+            market_tz = ZoneInfo("America/Sao_Paulo")
+            raw_time = row.get("regularMarketTime")
+            if raw_time is None or isinstance(raw_time, bool):
+                raise ValueError("missing market date")
+            if isinstance(raw_time, (int, float)) or str(raw_time).isdigit():
+                if float(raw_time) <= 0:
+                    raise ValueError("invalid market timestamp")
+                instant = datetime.fromtimestamp(float(raw_time), timezone.utc)
+                if instant > datetime.now(timezone.utc):
+                    raise ValueError("future market date")
+                px_date = instant.astimezone(market_tz).date()
+            elif len(str(raw_time)) == 10:
+                px_date = date.fromisoformat(str(raw_time))
+            else:
+                instant = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
+                if instant.tzinfo is None or instant > datetime.now(timezone.utc):
+                    raise ValueError("invalid market timestamp")
+                px_date = instant.astimezone(market_tz).date()
+            if px_date > datetime.now(market_tz).date():
+                raise ValueError("future market date")
+        except (TypeError, ValueError, OverflowError, OSError):
+            return None, None, None, QuoteFailure("BRAPI: data de mercado ausente ou inválida.", "invalid_data", "brapi")
 
-        return float(price), str(px_date), "brapi", None
+        return float(price), px_date.isoformat(), "brapi", None
 
     except requests.Timeout:
         return None, None, None, QuoteFailure("BRAPI: tempo de consulta excedido.", "timeout", "brapi")
@@ -451,7 +479,7 @@ def _resolve_quote_limits(
     return max_workers, timeout_s
 
 
-def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+def _fetch_one_asset_uncached(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
     sym = (a.get("symbol") or "").strip()
     cls = (a.get("asset_class") or "").strip()
     cur = (a.get("currency") or "BRL").strip()
@@ -534,6 +562,56 @@ def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
         "attempts": [],
         "currency": cur,
     }
+
+
+def _quote_cache_ttl(row):
+    try:
+        name = "QUOTE_CACHE_TTL_S" if row.get("ok") else "QUOTE_ERROR_CACHE_TTL_S"
+        default = 1800 if row.get("ok") else 60
+        return max(0, min(3600, float(os.getenv(name, str(default)))))
+    except (TypeError, ValueError):
+        return 1800 if row.get("ok") else 60
+
+
+def _fetch_one_asset(a: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+    key = (str(a.get("symbol") or "").strip().upper(),
+           str(a.get("asset_class") or "").strip().casefold(),
+           str(a.get("currency") or "BRL").strip().upper())
+    while True:
+        with _QUOTE_CACHE_LOCK:
+            cached = _QUOTE_CACHE.get(key)
+            if cached:
+                stamp, row = cached
+                age = time.monotonic() - stamp
+                if age < _quote_cache_ttl(row):
+                    _QUOTE_CACHE.move_to_end(key)
+                    result = deepcopy(row)
+                    result.update(asset_id=a.get("id"), cache_hit=True, cache_age_s=round(age, 2))
+                    return result
+                del _QUOTE_CACHE[key]
+            pending = _QUOTE_INFLIGHT.get(key)
+            if pending is None:
+                pending = threading.Event()
+                _QUOTE_INFLIGHT[key] = pending
+                break
+        if not pending.wait(timeout_s + 1):
+            return {"asset_id": a.get("id"), "symbol": key[0], "currency": key[2],
+                    "ok": False, "price": None, "px_date": None, "src": None,
+                    "error": "Consulta deste ativo ainda em andamento.", "error_code": "timeout",
+                    "attempts": [], "elapsed_s": timeout_s, "cache_hit": False}
+    try:
+        row = _fetch_one_asset_uncached(a, timeout_s)
+        row.update(cache_hit=False, cache_age_s=0, fetched_at=datetime.now(timezone.utc).isoformat())
+        with _QUOTE_CACHE_LOCK:
+            _QUOTE_CACHE[key] = (time.monotonic(), deepcopy(row))
+            _QUOTE_CACHE.move_to_end(key)
+            while len(_QUOTE_CACHE) > _QUOTE_CACHE_MAX_ITEMS:
+                _QUOTE_CACHE.popitem(last=False)
+        return row
+    finally:
+        with _QUOTE_CACHE_LOCK:
+            _QUOTE_INFLIGHT.pop(key, None)
+            pending.set()
 
 
 def update_all_prices(

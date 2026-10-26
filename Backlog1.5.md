@@ -2,7 +2,7 @@
 
 Versão-alvo do sistema: **1.5.0**
 Criado em: **2026-09-21**
-Estado: **Em andamento — revisão de valores e câmbio**
+Estado: **Em andamento — preparação da candidata 1.5.0-rc.1**
 Objetivo: aumentar a confiabilidade dos números e simplificar o uso diário, preparando a base para lançamentos por IA e voz.
 
 ## Convenção de versionamento
@@ -10,7 +10,7 @@ Objetivo: aumentar a confiabilidade dos números e simplificar o uso diário, pr
 - Cada versão planejada terá um documento `BacklogX.Y.md`, com itens identificados por `DOMUS-X.Y-NNN`.
 - `X.Y.0`: entrega funcional da versão. `X.Y.Z`: correções compatíveis após a entrega. Mudanças incompatíveis exigem revisão da versão principal.
 - Ao publicar, registrar versão, data, commit e tag Git `vX.Y.Z`, mudanças, validações e procedimento de reversão.
-- Este documento define a versão-alvo; não afirma que a versão 1.5 já está publicada. O frontend ainda declara `0.1.0`; a identificação da versão será alinhada na preparação da entrega.
+- Este documento define a versão-alvo; não afirma que a versão 1.5 já está publicada. A candidata local declara `1.5.0-rc.1`, alinhada na interface, nos manifestos e nos metadados da API; não é a versão final nem evidência de implantação.
 - Não alterar versões de dependências para acompanhar a versão do produto.
 - Estados permitidos: Planejado, Em andamento, Bloqueado, Em validação e Concluído.
 - Um item só será Concluído com seus critérios de aceite atendidos e evidências registradas. Código implementado e publicação em produção devem ser registrados separadamente.
@@ -127,45 +127,51 @@ Aceite: fluxos principais funcionam em celular e desktop, com teclado e sem camp
 
 ### DOMUS-1.5-007 — Cotações e BRAPI
 
-Estado: **Em andamento** — mapeamento em `QUOTE_PROVIDERS.md`; relatório com moeda, data e estados estruturados de falha por provedor; confirmação sem sucesso falso e rejeição de preço/data inválidos. Plano gratuito de 15 mil requisições/mês informado pelo usuário; limites públicos conferidos, sem consultar consumo ou credenciais. 94 testes Python, 18 Node e build aprovados. Backend local recarregado. Sem ampliação de chamadas. Pendentes: datas estimadas da BRAPI, política de cache, cobertura dos ativos/limites de curto prazo e validação funcional/publicação da etapa.
+Estado: **Em validação — implementação local finalizada** em `codex/quote-transparency`. BRAPI sem data válida é rejeitada, preservando as alternativas existentes. Cache de resultados públicos por símbolo/classe/moeda com TTL de 30 minutos para sucesso e 60 segundos para falha, sem simular nova consulta nem mudar a data de mercado. Carteira exibe moeda e fonte, incluindo custo médio, valor manual e motor. Plano gratuito e limites documentados; nenhuma ampliação de frequência ou cobertura. 103 testes Python e 19 testes Node aprovados, com build local. Pendentes apenas a aprovação funcional dos novos ajustes, CI e publicação/validação no VPS. Não houve migração de dados antigos nem consulta ao consumo real da conta BRAPI.
 
 - [x] Mapear os provedores atuais por classe e moeda; BRAPI já existe no projeto.
-- [ ] Exibir fonte, data, moeda e estado da cotação, incluindo “Custo médio” quando usado como referência.
+- [x] Exibir fonte, data, moeda e estado da cotação, incluindo “Custo médio” quando usado como referência.
 - [x] Diferenciar consulta sem dados, falha de provedor e limite de consumo.
-- [ ] Revisar cache, política de atualização e alternativas por provedor.
-- [ ] Confirmar cobertura e condições do plano BRAPI utilizado antes de ampliar chamadas.
+- [x] Revisar cache, política de atualização e alternativas por provedor.
+- [x] Confirmar cobertura e condições do plano BRAPI utilizado antes de ampliar chamadas.
 
 Aceite: falha de cotação não aparece como atualização bem-sucedida; valor estimado é identificável; API indisponível não impede abrir a carteira.
 
 ### DOMUS-1.5-008 — Organização do código
 
-- [ ] Extrair componentes e lógica de Lançamentos durante a alteração desse fluxo.
-- [ ] Separar módulos de Dashboard/Investimentos à medida que forem modificados.
-- [ ] Centralizar formatação de moeda e componentes comuns relevantes.
-- [ ] Separar regras de negócio de apresentação sem reescrever o sistema inteiro.
+- [x] Extrair componentes e lógica de Lançamentos durante a alteração desse fluxo.
+- [x] Separar módulos de Dashboard/Investimentos à medida que forem modificados.
+- [x] Centralizar formatação de moeda e componentes comuns relevantes.
+- [x] Separar regras de negócio de apresentação sem reescrever o sistema inteiro.
+
+Implementado e aprovado localmente em 26/10/2026, conforme autorização do usuário para seguir: QuickEntry/quickEntry e EntryField já extraídos nas entregas anteriores; DashboardOverview e QuoteUpdateReport separados nesta etapa. Formatação compartilhada em formatters.js, sem alteração dos cálculos, permissões ou requisições. O App continua responsável pela orquestração; não há refatoração geral. Publicação pendente.
 
 Aceite: módulos extraídos mantêm contratos e comportamento, com testes proporcionais às mudanças. Não transformar a entrega em refatoração geral.
 
 ### DOMUS-1.5-009 — Preparação para IA
 
-- [ ] Definir contrato de rascunho: tipo, valor, moeda, data, conta, categoria, método, descrição e campos pendentes.
-- [ ] Definir interpretação → validação → revisão → confirmação → gravação.
-- [ ] Reutilizar regras e permissões do backend; a IA não recebe acesso direto ao banco.
-- [ ] Definir comportamento para ambiguidades, cancelamento e reenvio sem duplicação.
-- [ ] Planejar limites de uso, custos, segredos no backend e tratamento de áudio, texto e imagem, incluindo retenção e exclusão dos arquivos.
-- [ ] Montar conjunto de frases e imagens de teste anonimizadas para avaliação futura.
-- [ ] Imagem: extrair estabelecimento, data, moeda, total e itens quando legíveis; separar total pago de subtotal, desconto e troco. Campos incertos exigem revisão.
-- [ ] Não inferir conta/cartão pelo cupom; usuário confirma forma de pagamento e categoria.
-- [ ] Tratar fotos repetidas, documentos já lançados, imagens ilegíveis e múltiplos cupons; conteúdo do documento é dado, nunca instrução para a IA.
-- [ ] Reutilizar o mesmo rascunho revisável para manual, texto, voz e imagem, sem gravar automaticamente.
+- [x] Definir contrato de rascunho: tipo, valor, moeda, data, conta, categoria, método, descrição e campos pendentes.
+- [x] Definir interpretação → validação → revisão → confirmação → gravação.
+- [x] Reutilizar regras e permissões do backend; a IA não recebe acesso direto ao banco.
+- [x] Definir comportamento para ambiguidades, cancelamento e reenvio sem duplicação.
+- [x] Planejar limites de uso, custos, segredos no backend e tratamento de áudio, texto e imagem, incluindo retenção e exclusão dos arquivos.
+- [x] Montar conjunto de frases e imagens de teste anonimizadas para avaliação futura.
+- [x] Imagem: extrair estabelecimento, data, moeda, total e itens quando legíveis; separar total pago de subtotal, desconto e troco. Campos incertos exigem revisão.
+- [x] Não inferir conta/cartão pelo cupom; usuário confirma forma de pagamento e categoria.
+- [x] Tratar fotos repetidas, documentos já lançados, imagens ilegíveis e múltiplos cupons; conteúdo do documento é dado, nunca instrução para a IA.
+- [x] Reutilizar o mesmo rascunho revisável para manual, texto, voz e imagem, sem gravar automaticamente.
+
+Preparação documentada em AI_DRAFT_CONTRACT.md em 26/10/2026; aguardando revisão do contrato. Os marcadores representam especificação, não funcionalidades ativas. Corpus sintético: 18 cenários em tests/fixtures/ai_drafts/cases.json e 3 imagens SVG de cupons, com 5 testes de integridade aprovados. Nenhuma execução de IA, OCR ou transcrição foi realizada. Idempotência transacional, integração revisável, orçamento, provedor e política operacional de retenção continuam bloqueios explícitos da implementação futura.
 
 Aceite: contrato e cenários documentados, inclusive “Gastei 42,90 no almoço, no débito do Inter” e “Recebi 1.500 de um serviço ontem”. Esta entrega é preparação; não inclui ativação de IA paga.
 
 ### DOMUS-1.5-010 — Documentação e release
 
-- [ ] Conciliar AGENTS.md com os backlogs anteriores, sem marcar como concluído o que não foi verificado.
-- [ ] Registrar a versão do produto de forma consistente e visível na aplicação.
-- [ ] Produzir changelog, instruções de atualização e reversão.
+Estado: **Em andamento — preparação local**, sem publicação. Documentos: CHANGELOG.md e RELEASE_1.5.md. O 009 segue em revisão documental; 002 e 007 preservam suas pendências.
+
+- [x] Conciliar AGENTS.md com os backlogs anteriores, sem marcar como concluído o que não foi verificado.
+- [x] Registrar a versão do produto de forma consistente e visível na aplicação.
+- [x] Produzir changelog, instruções de atualização e reversão.
 - [ ] Registrar evidências de testes e validação de uso.
 - [ ] Publicar de forma controlada e validar Dashboard, Lançamentos, Investimentos e permissões.
 
@@ -238,10 +244,24 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 | DOMUS-1.5-011 | Concluído | PR 5 concluído e publicado conforme confirmação do usuário em 08/10/2026 | 87 testes Python, build Vite e validação funcional local aprovados; 5 cenários específicos BRL/USD | Publicado; confirmação recebida do usuário |
 | DOMUS-1.5-005 | Concluído | Implementação `c7dba8d` em `codex/dashboard-reorg`; commit de merge não informado | Build Vite aprovado em 08/10/2026 | Usuário confirmou publicação e conferência do Dashboard no VPS em 16/10/2026 |
 | DOMUS-1.5-006 | Concluído (local) | Implementação em codex/interface-consistency; aprovação do usuário em 19/10/2026 | 12 testes Node, build e conferências de interface aprovados; falha/recuperação com fontes simuladas | Publicação adiada pelo usuário para acumular alterações |
-| DOMUS-1.5-007 | Em andamento | QUOTE_PROVIDERS.md, diagnóstico estruturado, relatório e confirmações; plano gratuito informado pelo usuário | 94 testes Python, 18 Node e build aprovados; backend local recarregado | Não publicada; datas estimadas/cache e cobertura ainda em revisão; frequência preservada |
-| DOMUS-1.5-008 a 010 | Planejado | Backlog criado em 2026-09-21 | Não iniciada | Não publicada |
+| DOMUS-1.5-007 | Em validação | Fechamento local em codex/quote-transparency; etapa anterior mesclada na main pelo PR 7, commit 26b748a | 103 testes Python, 19 Node e build aprovados; cache, datas, moeda/fonte e valores manuais conferidos automaticamente | Publicação do fechamento ainda pendente; implantação do lote anterior no VPS não confirmada nesta conversa |
+| DOMUS-1.5-008 | Concluído (local) | DashboardOverview, QuoteUpdateReport e formatters extraídos; contratos de Lançamentos preservados | 22 testes Node e build Vite aprovados; usuário autorizou avançar em 26/10/2026 | Não publicada |
+| DOMUS-1.5-009 | Em revisão documental | AI_DRAFT_CONTRACT.md; 18 cenários e 3 cupons sintéticos | 5 testes de integridade das fixtures aprovados; sem avaliação de modelo/OCR | Sem integração ativa ou publicação |
+| DOMUS-1.5-010 | Em andamento | Candidata 1.5.0-rc.1; identidade compartilhada, AGENTS conciliado, CHANGELOG.md e RELEASE_1.5.md preparados | 109 testes Python, 22 Node e build aprovados; selo de candidata conferido no navegador; validação integral de uso pendente | Não publicada; CI e smoke VPS pendentes |
 
 ## Histórico do documento
+
+Autorização de publicação em 26/10/2026: usuário solicitou validação/publicação
+da candidata 1.5.0-rc.1 e aceitou explicitamente adiar a conciliação dos registros
+85–88, preservando-os. O 002 continua em validação dessa exceção; não há reparo.
+Contrato 009 revisado para esta entrega documental, sem ativação de IA.
+007/010 seguem dependentes de CI e conferência da candidata publicada no VPS.
+
+Preparação do 010 em 26/10/2026: candidata identificada como 1.5.0-rc.1, changelog e checklist de atualização/reversão criados. Nenhum commit, tag ou deploy realizado; 002/007 e revisão do 009 continuam pendentes.
+
+Evidências da candidata: 109 testes Python aprovados fora do sandbox (a primeira execução foi interrompida após erros de acesso a temporários), 22 testes Node aprovados e build Vite em dist-next aprovado, com aviso existente de bundle grande. Identificação de versão conferida na interface autenticada local; API em execução precisa ser reiniciada para carregar os novos metadados. Nenhuma dependência atualizada.
+
+Atualização de 26/10/2026: item 008 aprovado localmente; publicação pendente. Item 009 preparado para revisão documental com contrato e corpus sintético, sem ativação de IA. Item 007 permanece em validação.
 
 | Data | Revisão | Alteração |
 |---|---|---|
@@ -257,6 +277,7 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 | 2026-10-19 | 10 | Aprovação dos cadastros recebida; rótulos estendidos a Listas/Investimentos/ajustes; 3 testes de falha/recuperação incluídos no CI; item 006 em validação local, sem publicação |
 | 2026-10-19 | 11 | Usuário aprovou últimos ajustes do 006; implementação local encerrada com publicação adiada. Início do 007 com mapeamento, data/moeda no relatório e confirmações sem sucesso falso |
 | 2026-10-19 | 12 | Estados de falha por provedor e validação de referências implementados; 94 testes Python e 18 Node aprovados; usuário informou plano BRAPI gratuito de 15 mil/mês, limites públicos conferidos; sem publicação |
+| 2026-10-19 | 13 | Fechamento local do 007: datas BRAPI sem substituição por hoje, cache com TTL/proveniência e fonte/moeda na carteira; 103 testes Python e 19 Node aprovados; aguardando validação funcional e publicação |
 
 
 ### Execução inicial — 2026-09-21

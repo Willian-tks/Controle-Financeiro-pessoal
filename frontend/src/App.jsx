@@ -1,7 +1,11 @@
 import QuickEntry from "./QuickEntry.jsx";
+import productVersion from "./productVersion.json";
 import EntryField from "./EntryField.jsx";
 import { settleDataLoads } from "./dataLoads.js";
-import { quoteFailureLabel, quoteUpdateNotice } from "./quoteUpdateNotice.js";
+import { quoteUpdateNotice } from "./quoteUpdateNotice.js";
+import DashboardOverview from "./DashboardOverview.jsx";
+import QuoteUpdateReport from "./QuoteUpdateReport.jsx";
+import { brl, formatBrl, formatLocalizedNumber, formatIsoDatePtBr, formatIsoDateTimePtBr } from "./formatters.js";
 import { localToday } from "./quickEntry";
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import brandLogo from "./icons/DOMUS2.png";
@@ -332,15 +336,6 @@ function invoicePeriodToDateRange(period) {
   };
 }
 
-function formatIsoDateTimePtBr(value) {
-  if (!value) return "";
-  const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return "";
-  return dt.toLocaleString("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
-}
 
 function formatBenchmarkLatestValue(value, indexName) {
   const num = Number(value);
@@ -422,14 +417,6 @@ function formatCurrencyInputValue(value) {
   return `${addThousandsSeparator(integerDigits)},${cents}`;
 }
 
-function formatLocalizedNumber(value, fractionDigits = 2) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return "";
-  return num.toLocaleString("pt-BR", {
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  });
-}
 
 function formatQuantityInputValue(value, integerOnly = false) {
   const num = Number(value);
@@ -450,16 +437,6 @@ function formatTradeMoney(value, currency) {
   });
 }
 
-function formatBrl(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return "R$ 0,00";
-  return num.toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
 
 function parseLocaleNumber(value) {
   const raw = String(value || "").trim();
@@ -920,18 +897,6 @@ function buildAssetRentabilityPayload({
   return { ok: false, error: "Tipo de rentabilidade invalido." };
 }
 
-function formatIsoDatePtBr(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "-";
-  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
-  if (compact) {
-    return `${compact[3]}/${compact[2]}/${compact[1]}`;
-  }
-  const iso = raw.slice(0, 10);
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return raw;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-}
 
 function formatWeekCommitmentLabel(value) {
   const raw = String(value || "").trim();
@@ -2042,14 +2007,6 @@ export default function App() {
       setTxAccountId(String(selectedTxCard.card_account_id || ""));
     }
   }, [txIsExpenseCredit, selectedTxCard, txAccountId]);
-  const brl = useMemo(
-    () =>
-      new Intl.NumberFormat("pt-BR", {
-        style: "currency",
-        currency: "BRL",
-      }),
-    []
-  );
   const currentKpi = dashKpis || kpis || {};
   const currentMonthEntry = dashWealthMonthly.length ? dashWealthMonthly[dashWealthMonthly.length - 1] : null;
   const previousMonthEntry = dashWealthMonthly.length > 1 ? dashWealthMonthly[dashWealthMonthly.length - 2] : null;
@@ -5792,6 +5749,9 @@ export default function App() {
           <img src={brandLogo} alt="Domu logo" />
           <span className="brand-name">DOMUS</span>
         </div>
+        <small style={{ padding: "0 16px 8px", display: "block", overflowWrap: "anywhere" }}>
+          v{productVersion.version} · candidata
+        </small>
         <nav>
           {visiblePages.map((p) => (
             <button
@@ -5972,58 +5932,11 @@ export default function App() {
               ) : null}
             </section>
 
-            <section className="dash-kpis dash-overview">
-              <article className="card dash-kpi-card dash-kpi-primary">
-                <h3 className="dash-kpi-title">
-                  <img src={icSaldo} alt="" className="dash-kpi-icon" />
-                  <span>Saldo disponível</span>
-                </h3>
-                <strong>{brl.format(accountsTotal)}</strong>
-                <p>Contas marcadas para o Dashboard, posição atual.</p>
-              </article>
-              <article className="card dash-kpi-card">
-                <h3 className="dash-kpi-title">
-                  <img src={icDashboard} alt="" className="dash-kpi-icon" />
-                  <span>Resultado do período</span>
-                </h3>
-                <strong>{brl.format(Number(currentKpi.saldo || 0))}</strong>
-                <p>{dashboardFilterBaseLabel}</p>
-                <div className="dash-kpi-split">
-                  <button type="button" onClick={() => openTransactionsFromDashboard(dashView)} disabled={!canViewLancamentos}>
-                    Ver lançamentos
-                  </button>
-                  <span>Receitas {brl.format(Number(currentKpi.receitas || 0))}</span>
-                  <span>Despesas {brl.format(Number(currentKpi.despesas || 0))}</span>
-                </div>
-              </article>
-              <article className="card dash-kpi-card">
-                <h3 className="dash-kpi-title">
-                  <img src={icDespesa} alt="" className="dash-kpi-icon" />
-                  <span>Compromissos</span>
-                </h3>
-                <strong>{brl.format(commitmentsAging.aVencer + commitmentsAging.vencidos)}</strong>
-                <p>A vencer e vencidos no período filtrado.</p>
-                <div className="dash-kpi-split">
-                  <button type="button" onClick={() => openCommitmentsFromDashboard(TX_STATUS_FILTER_OPEN)} disabled={!canViewLancamentos}>
-                    Abrir pendentes
-                  </button>
-                  <span>A vencer {brl.format(commitmentsAging.aVencer)}</span>
-                  <span>Vencidos {brl.format(commitmentsAging.vencidos)}</span>
-                </div>
-              </article>
-              <article className="card dash-kpi-card">
-                <h3 className="dash-kpi-title">
-                  <img src={icReceita} alt="" className="dash-kpi-icon" />
-                  <span>Patrimônio</span>
-                </h3>
-                <strong>{brl.format(trendEnd)}</strong>
-                <p>{trendMonthLabel ? `Fechamento de ${trendMonthLabel}.` : "Sem base mensal no período."}</p>
-                <div className="dash-kpi-split">
-                  <span className={trendDirection}>{trendDelta >= 0 ? "+" : "-"}{brl.format(Math.abs(trendDelta))}</span>
-                  <span>{trendDelta >= 0 ? "+" : "-"}{Math.abs(trendPct).toFixed(1)}% vs mês anterior</span>
-                </div>
-              </article>
-            </section>
+            <DashboardOverview
+              {...{ accountsTotal, currentKpi, dashboardFilterBaseLabel, commitmentsAging, trendEnd, trendMonthLabel, trendDirection, trendDelta, trendPct, canViewLancamentos, icSaldo, icDashboard, icDespesa, icReceita }}
+              onOpenTransactions={() => openTransactionsFromDashboard(dashView)}
+              onOpenCommitments={() => openCommitmentsFromDashboard(TX_STATUS_FILTER_OPEN)}
+            />
 
             <section className="dash-grid">
               <article className="card dash-hero-card">
@@ -8484,6 +8397,8 @@ export default function App() {
                           <th>Mercado</th>
                           <th>Líquido</th>
                           <th>Origem</th>
+                          <th>Moeda do ativo</th>
+                          <th>Fonte do valor</th>
                           <th>Data</th>
                           <th>P&amp;L</th>
                         </tr>
@@ -8499,6 +8414,8 @@ export default function App() {
                             <td>{brl.format(Number((p.market_value_gross ?? p.market_value) || 0))}</td>
                             <td>{brl.format(Number((p.estimated_net_value ?? p.market_value) || 0))}</td>
                             <td>{formatValueOriginLabel(p.value_origin)}{p.valuation_warning ? <small className="tx-helper" style={{ display: "block" }}>{p.valuation_warning}</small> : null}</td>
+                            <td>{p.currency || "-"}</td>
+                            <td>{p.price_source === "custo_medio" ? "Custo médio" : p.price_source === "motor" ? "Motor de rentabilidade" : p.price_source === "manual_current_value" ? "Valor cadastrado" : p.price_source || "Não informada"}</td>
                             <td>{formatIsoDatePtBr(p.value_ref_date)}{p.currency === "USD" ? <small className="tx-helper" style={{ display: "block" }}>
                               {p.fx_source}{p.fx_ref_date ? `: ${Number(p.valuation_fx).toLocaleString("pt-BR", { minimumFractionDigits: 4 })} em ${formatIsoDatePtBr(p.fx_ref_date)}` : ""}
                             </small> : null}</td>
@@ -9894,51 +9811,7 @@ export default function App() {
                     </button>
                   </div>
                 </section>
-                <section className="card quote-section-card quote-block-card">
-                  <div className="quote-section-head">
-                    <div>
-                      <h4>Relatório da última execução</h4>
-                      <p className="tx-helper">Resultado da coleta automática exibido por ativo nesta sessão.</p>
-                    </div>
-                  </div>
-                {investPriceUpdateReport.length ? (
-                  <div className="tx-table-wrap">
-                    <table className="tx-table">
-                      <thead>
-                        <tr>
-                          <th>Ativo</th>
-                          <th>Status</th>
-                          <th>Preço unitário</th>
-                          <th>Moeda</th>
-                          <th>Data da referência</th>
-                          <th>Fonte</th>
-                          <th>Tempo (s)</th>
-                          <th>Detalhe</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {investPriceUpdateReport.map((row, idx) => (
-                          <tr key={`${row?.symbol || "sem-symbol"}-${idx}`}>
-                            <td>{row?.symbol || "-"}</td>
-                            <td>{quoteFailureLabel(row)}</td>
-                            <td>{Number(row?.price || 0) > 0 ? formatLocalizedNumber(row.price, 4) : "-"}</td>
-                            <td>{row.currency || investAssets.find(asset => String(asset.id) === String(row.asset_id))?.currency || "-"}</td>
-                            <td>{row?.px_date ? formatIsoDatePtBr(row.px_date) : "-"}</td>
-                            <td>{row?.src || (row.attempts || []).map(attempt => attempt.provider).filter(Boolean).join(" / ") || "-"}</td>
-                            <td>{Number.isFinite(Number(row?.elapsed_s)) ? formatLocalizedNumber(row.elapsed_s, 2) : "-"}</td>
-                            <td>{row?.error || "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="invest-empty-state">
-                    <h4>Sem execução nesta sessão</h4>
-                    <p>Nenhuma atualização automática de cotações foi rodada nesta sessão até o momento.</p>
-                  </div>
-                )}
-                </section>
+                <QuoteUpdateReport investPriceUpdateReport={investPriceUpdateReport} investAssets={investAssets} />
                   </>
                 ) : null}
                 {investQuotesTab === "Manual" ? (
