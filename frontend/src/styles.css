@@ -1798,7 +1798,7 @@ body {
 
 .portfolio-table {
   min-width: 0;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .portfolio-table th,
@@ -1809,17 +1809,22 @@ body {
 
 .portfolio-table th:nth-child(1),
 .portfolio-table td:nth-child(1) {
-  width: 8%;
+  width: 280px;
+  min-width: 260px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .portfolio-table th:nth-child(2),
 .portfolio-table td:nth-child(2) {
-  width: 13%;
+  width: auto;
+  min-width: 120px;
 }
 
 .portfolio-table th:nth-child(3),
 .portfolio-table td:nth-child(3) {
-  width: 10%;
+  width: auto;
+  min-width: 64px;
 }
 
 .portfolio-table th:nth-child(4),
@@ -1830,23 +1835,45 @@ body {
 .portfolio-table td:nth-child(6),
 .portfolio-table th:nth-child(9),
 .portfolio-table td:nth-child(9) {
-  width: 12%;
+  width: auto;
+  min-width: 120px;
 }
 
 .portfolio-table th:nth-child(7),
 .portfolio-table td:nth-child(7) {
-  width: 10%;
+  width: auto;
+  min-width: 120px;
 }
 
 .portfolio-table th:nth-child(8),
 .portfolio-table td:nth-child(8) {
-  width: 11%;
+  width: auto;
+  min-width: 160px;
 }
 
 .portfolio-table td,
 .portfolio-table th {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.fair-value-summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.fair-value-summary h3 {
+  display: inline;
+  margin: 0;
+}
+
+.fair-value-summary:focus-visible {
+  outline: 2px solid var(--accent, #438ee8);
+  outline-offset: 4px;
+}
+
+.fair-value-disclosure[open] > .fair-value-summary {
+  margin-bottom: 14px;
 }
 
 .invest-kpi-grid {

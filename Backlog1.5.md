@@ -251,6 +251,12 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 
 ## Histórico do documento
 
+Ajuste local em 27/10/2026, solicitado após a candidata: carteira com coluna de
+ativo ampliada e nome completo sem reticências; quadro Preço justo e viés
+recolhível, inicialmente fechado, com navegação nativa por teclado e conteúdo
+preservado ao recolher. 22 testes Node e build Vite aprovados. Validação visual
+do usuário e publicação deste ajuste pendentes; nenhuma regra financeira alterada.
+
 Autorização de publicação em 26/10/2026: usuário solicitou validação/publicação
 da candidata 1.5.0-rc.1 e aceitou explicitamente adiar a conciliação dos registros
 85–88, preservando-os. O 002 continua em validação dessa exceção; não há reparo.
