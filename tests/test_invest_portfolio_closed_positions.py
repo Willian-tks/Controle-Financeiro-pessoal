@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from api.main import _prepare_fixed_income_trade
@@ -334,6 +335,71 @@ class ClosedFixedIncomePositionsTests(unittest.TestCase):
         self.assertEqual("motor", row["value_origin"])
         self.assertEqual("manual_current_value", row["price_source"])
 
+
+    def test_same_day_snapshot_does_not_hide_new_fixed_income_buy(self):
+        with db_module.get_conn() as conn:
+            aid = conn.execute(
+                "INSERT INTO assets(symbol, name, asset_class, currency, rentability_type, principal_amount, current_value, last_update, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("CDB_TEST", "CDB Test", "Renda Fixa", "BRL", "MANUAL",
+                 52000, 52992.35, "2026-10-26", self.uid),
+            ).lastrowid
+            for day, amount in [("2026-10-01", 42000), ("2026-10-26", 10000)]:
+                conn.execute(
+                    "INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, user_id) VALUES (?, ?, 'BUY', 1, ?, 1, 0, 0, ?)",
+                    (aid, day, amount, self.uid),
+                )
+            conn.execute(
+                "INSERT INTO asset_prices(asset_id, px_date, price, source, user_id) VALUES (?, ?, ?, ?, ?)",
+                (aid, "2026-10-26", 42992.35, "manual_current_value", self.uid),
+            )
+            conn.execute(
+                "INSERT INTO asset_prices(asset_id, px_date, price, source, user_id) VALUES (?, ?, ?, ?, ?)",
+                (aid, "2026-10-25", 42992.35, "manual_current_value", self.uid),
+            )
+        with patch.object(invest_reports.invest_fx, "today", return_value="2026-10-27"):
+            pos, _, _ = invest_reports.portfolio_view(date_to="2026-10-27", user_id=self.uid)
+        self.assertAlmostEqual(52992.35, float(pos.iloc[0]["market_value"]), places=2)
+        historical, _, _ = invest_reports.portfolio_view(date_to="2026-10-25", user_id=self.uid)
+        self.assertAlmostEqual(42992.35, float(historical.iloc[0]["market_value"]), places=2)
+        self.assertAlmostEqual(42000, float(historical.iloc[0]["cost_basis"]), places=2)
+
+    def test_live_balance_includes_backdated_buy_despite_later_snapshot(self):
+        with db_module.get_conn() as conn:
+            aid = conn.execute(
+                "INSERT INTO assets(symbol, name, asset_class, currency, rentability_type, principal_amount, current_value, last_update, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("CDB_TEST", "CDB Test", "Renda Fixa", "BRL", "MANUAL",
+                 48000, 49181.03, "2026-10-26", self.uid),
+            ).lastrowid
+            for day, amount in [("2026-10-01", 38000), ("2026-10-26", 10000)]:
+                conn.execute(
+                    "INSERT INTO trades(asset_id, date, side, quantity, price, exchange_rate, fees, taxes, user_id) VALUES (?, ?, 'BUY', 1, ?, 1, 0, 0, ?)",
+                    (aid, day, amount, self.uid),
+                )
+            for day in ("2026-10-25", "2026-10-27"):
+                conn.execute(
+                    "INSERT INTO asset_prices(asset_id, px_date, price, source, user_id) VALUES (?, ?, ?, ?, ?)",
+                    (aid, day, 39181.03, "manual_current_value", self.uid),
+                )
+        with patch.object(invest_reports.invest_fx, "today", return_value="2026-10-27"):
+            pos, _, _ = invest_reports.portfolio_view(user_id=self.uid)
+            self.assertAlmostEqual(49181.03, float(pos.iloc[0]["market_value"]), places=2)
+            self.assertAlmostEqual(52992.35, float(pos.iloc[0]["market_value"]) + 3811.32, places=2)
+            historical, _, _ = invest_reports.portfolio_view(date_to="2026-10-25", user_id=self.uid)
+            self.assertAlmostEqual(39181.03, float(historical.iloc[0]["market_value"]), places=2)
+        # A closed historical date still uses its recorded snapshot, not today's balance.
+        with patch.object(invest_reports.invest_fx, "today", return_value="2026-10-28"):
+            historical, _, _ = invest_reports.portfolio_view(date_to="2026-10-27", user_id=self.uid)
+            self.assertAlmostEqual(39181.03, float(historical.iloc[0]["market_value"]), places=2)
+
+    def test_backdated_buy_preserves_later_balance_reference(self):
+        prepared = _prepare_fixed_income_trade(
+            asset={"id": 1, "principal_amount": 42000, "current_value": 42992.35,
+                   "last_update": "2026-10-27"},
+            side="BUY", quantity=1, price=10000,
+            trade_date="2026-10-26", user_id=self.uid,
+        )
+        self.assertAlmostEqual(52992.35, prepared["current_value"], places=2)
+        self.assertEqual("2026-10-27", prepared["last_update"])
 
     def test_usd_etf_valuation_with_and_without_quote(self):
         with db_module.get_conn() as conn:

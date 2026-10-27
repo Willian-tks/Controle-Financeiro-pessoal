@@ -251,6 +251,38 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 
 ## Histórico do documento
 
+Revisão por classe em 27/10/2026, antes do commit: matriz cobrindo as 13 classes
+de ASSET_CLASSES. Mesmo risco de snapshot nas quatro classes de saldo (Renda
+Fixa, Tesouro Direto, COE e Fundos), cobertas pela correção compartilhada.
+Nas nove restantes, confirmada avaliação por quantidade/cotação ou custo sem
+cotação; saldo cadastrado e snapshots de saldo não substituem essa avaliação.
+Ampliados testes de modos manual/automático, BRL/USD, aporte, resgate parcial,
+encerramento, datas futuras, snapshots independentes e consistência entre
+carteira, resumo, histórico e relatório. Ajustada a proposta anterior para
+preservar também snapshots de mesma data em consultas históricas encerradas.
+118 testes Python locais aprovados. Novos testes pertencem ao contrato comum
+SQLite/PostgreSQL; PostgreSQL foi pulado localmente por ausência de banco
+descartável e depende do CI. Nenhum dado de produção alterado; sem commit/deploy.
+
+Confirmação posterior em 27/10/2026: imagem de edição do CDB INTER mostra saldo
+cadastrado de R$ 49.181,03 em 26/10, versus R$ 39.181,03 em 27/10 na carteira.
+Reproduzido esse recorte em teste: na visão atual, o saldo cadastrado elegível
+prevalece sobre seu snapshot espelhado manual_current_value, mesmo quando o
+snapshot tem data posterior por causa de operação retroativa. Consultas de datas
+históricas encerradas mantêm os registros existentes; nenhum saldo ou snapshot
+antigo foi reescrito. 112 testes Python aprovados. Correção local, sem commit,
+CI remoto ou implantação no VPS; conferir o total de renda fixa após publicação.
+
+Investigação local em 27/10/2026: aplicação de R$ 10.000 em renda fixa não
+refletida no Dashboard. Reproduzida em teste a preferência indevida por snapshot
+na mesma data do saldo atualizado; corrigida a prioridade e preservada a data
+mais recente do saldo em operações retroativas. 111 testes Python aprovados,
+incluindo dois novos cenários e preservação do histórico anterior à aplicação.
+Usuário informou CDB INTER com R$ 39.181,03, fonte Valor cadastrado e data
+27/10/2026, enquanto a operação foi em 26/10. Falta conferir current_value,
+principal_amount e snapshots do ativo real antes de afirmar resolução do caso.
+Sem alteração de dados, commit ou publicação desta correção.
+
 Ajuste local em 27/10/2026, solicitado após a candidata: carteira com coluna de
 ativo ampliada e nome completo sem reticências; quadro Preço justo e viés
 recolhível, inicialmente fechado, com navegação nativa por teclado e conteúdo

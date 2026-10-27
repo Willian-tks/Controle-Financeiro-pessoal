@@ -971,6 +971,14 @@ def _prepare_fixed_income_trade(
     current_value = float(asset.get("current_value") or 0.0)
     current_base = current_value if current_value > 0 else principal_amount
 
+    # Backdated cash flows must not roll back the reference of an existing balance.
+    balance_date = trade_date
+    try:
+        previous_date = _date.fromisoformat(str(asset.get("last_update") or "")[:10])
+        balance_date = max(previous_date, _date.fromisoformat(trade_date)).isoformat()
+    except (TypeError, ValueError):
+        pass
+
     if side == "BUY":
         new_principal = max(0.0, principal_amount) + gross
         new_current = max(0.0, current_base) + gross
@@ -979,7 +987,7 @@ def _prepare_fixed_income_trade(
             "price": gross,
             "principal_amount": new_principal,
             "current_value": new_current,
-            "last_update": trade_date,
+            "last_update": balance_date,
         }
 
     if current_base <= 0:
@@ -1010,7 +1018,7 @@ def _prepare_fixed_income_trade(
         "price": adjusted_price,
         "principal_amount": new_principal,
         "current_value": new_current,
-        "last_update": trade_date,
+        "last_update": balance_date,
     }
 
 

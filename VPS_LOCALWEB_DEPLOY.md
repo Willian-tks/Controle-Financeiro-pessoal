@@ -1,5 +1,15 @@
 # Deploy no VPS LocalWeb
 
+## Correção local de saldo de investimentos — 27/10/2026
+
+Correção em preparação: leitura do saldo atual de Renda Fixa, Tesouro Direto,
+COE e Fundos quando um snapshot espelhado antigo encobre aporte/resgate.
+Operações retroativas deixam de reduzir a data de referência do saldo.
+Sem migração, reparo de dados, novas dependências ou alteração de frontend.
+Após commit/CI/aprovação, atualizar backend e reiniciar domus-api.service;
+não refazer a operação existente para validar. Comparar carteira e Dashboard
+com o saldo cadastrado e conferir consultas históricas separadamente.
+
 ## Fechamento local DOMUS-1.5-007
 
 O fechamento em `codex/quote-transparency` altera backend e frontend, sem migracao de banco ou novas dependencias. Aguardar CI antes do deploy e reiniciar `domus-api.service` apos atualizar e promover o build Linux.
