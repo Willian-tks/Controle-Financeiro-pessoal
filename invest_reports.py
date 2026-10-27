@@ -341,13 +341,19 @@ def _value_positions(pos, assets, prices, snapshots, date_to, fx_rates):
     snapshot_dt = pd.to_datetime(pos.get("snapshot_date"), errors="coerce")
     current_dt = pd.to_datetime(pos.get("last_update"), errors="coerce")
     current_in_period = current_dt.notna() & (current_dt <= pd.Timestamp(date_to)) if date_to else pd.Series(True, index=pos.index)
+    cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
+    # Preserve recorded snapshots on closed historical dates, including same-day ones.
     snapshot_current = ~current_in_period | current_dt.isna() | snapshot_dt.isna() | (snapshot_dt >= current_dt)
+    # Live balances already contain cash flows, including backdated trades. A mirrored
+    # snapshot can have a later date but an older amount; keep it for historical queries.
+    if date_to and str(date_to)[:10] >= str(invest_fx.today()):
+        mirrored_snapshot = pos["snapshot_source"].eq("manual_current_value")
+        snapshot_current &= ~(mirrored_snapshot & current_in_period & (cv > 0))
     snapshot_override_mask = fixed_income_mask & open_position_mask & (snapshot_price > 0) & snapshot_current
     pos.loc[snapshot_override_mask, "market_value"] = snapshot_price[snapshot_override_mask]
     pos.loc[snapshot_override_mask, "value_origin"] = "ajuste_manual"
     pos.loc[snapshot_override_mask, "price_source"] = pos.loc[snapshot_override_mask, "snapshot_source"].fillna("manual")
     pos.loc[snapshot_override_mask, "value_ref_date"] = pos.loc[snapshot_override_mask, "snapshot_date"]
-    cv = pd.to_numeric(pos.get("current_value", 0.0), errors="coerce").fillna(0.0)
     rf_mask = pos.get("asset_class", "").astype(str).map(_norm_asset_class).isin(_FIXED_INCOME_CLASSES)
     stale_snapshot_mask = (snapshot_price <= 0) | ~snapshot_current
     auto_mask = rf_mask & open_position_mask & stale_snapshot_mask & current_in_period & (cv > 0)
