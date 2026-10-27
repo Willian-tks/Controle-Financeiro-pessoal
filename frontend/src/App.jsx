@@ -8133,10 +8133,12 @@ export default function App() {
                     <strong>{brl.format(normalizeSignedZero(investSummaryViewData.total_unrealized))}</strong>
                   </article>
                 </section>
-                <section className="card invest-summary-section">
+                <details className="card invest-summary-section fair-value-disclosure">
+                  <summary className="fair-value-summary">
+                    <h3>Preço justo e viés</h3>
+                  </summary>
                   <div className="fair-value-head">
                     <div>
-                      <h3>Preço justo e viés</h3>
                       <p className="tx-helper">
                         Regra aplicada: cotação atual menor ou igual ao preço de entrada = Comprar; maior ou igual ao preço teto = Vender; entre os dois = Aguardar. O sinal técnico é automático; o objetivo do usuário é manual.
                       </p>
@@ -8369,7 +8371,7 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
-                </section>
+                </details>
                 <section className="card invest-summary-section">
                   <h3>Carteira (consolidado)</h3>
                   <p className="tx-helper">Visão consolidada da posição atual por ativo, com custo médio, referência de preço e resultado em aberto.</p>
@@ -8406,7 +8408,7 @@ export default function App() {
                       <tbody>
                         {investPortfolioPositionsVisible.map((p) => (
                           <tr key={`${p.asset_id}-${p.symbol}`}>
-                            <td>{p.symbol}</td>
+                            <td title={p.symbol}>{p.symbol}</td>
                             <td>{p.asset_class}</td>
                             <td>{formatPortfolioQty(p.qty)}</td>
                             <td>{brl.format(Number(p.avg_cost || 0))}</td>
