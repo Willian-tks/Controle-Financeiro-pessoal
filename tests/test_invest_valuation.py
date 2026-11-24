@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch, Mock
@@ -8,7 +9,9 @@ import db
 import invest_fx
 import invest_reports
 import invest_repo
+import repo
 from api.main import invest_portfolio, invest_summary, _build_investments_report_html, _prepare_fixed_income_trade, _is_fixed_income_asset
+from api.main import invest_download_analysis
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 from tenant import clear_tenant_context, set_current_workspace_id
@@ -19,8 +22,9 @@ class ValuationContract:
     def setUp(self):
         clear_tenant_context()
         with db.get_conn() as conn:
-            for table in ("investment_fx_rates", "prices", "asset_prices", "trades", "income_events",
-                          "assets", "workspace_users", "workspaces", "users"):
+            for table in ("credit_card_charges", "credit_card_invoices", "credit_cards", "transactions",
+                          "investment_fx_rates", "prices", "asset_prices", "trades", "income_events",
+                          "assets", "accounts", "categories", "workspace_users", "workspaces", "users"):
                 conn.execute(f"DELETE FROM {table}")
             conn.execute(
                 "INSERT INTO users(id, email, password_hash, display_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)",
@@ -45,6 +49,54 @@ class ValuationContract:
     def seed_fx(self):
         with patch("invest_fx.fetch_ptax", return_value={"2026-01-09": 6.0, "2026-01-12": 7.0}):
             invest_fx.refresh_rates("2026-01-01", "2026-01-12")
+
+    def test_analysis_export_matches_portfolio_and_never_leaks_other_workspace(self):
+        self.seed_fx()
+        with patch("invest_fx.today", return_value=date(2026, 1, 10)):
+            response = invest_download_analysis(
+                date_from=date(2026, 1, 1), date_to=date(2026, 1, 31),
+                asset_class="ETFs US", user={"id": 9001},
+            )
+            text = response.body.decode("utf-8")
+            payload = json.loads(text.rsplit("\nBEGIN_DOMUS_DATA_JSON\n", 1)[1].split("\nEND_DOMUS_DATA_JSON", 1)[0])
+            self.assertEqual(["A8001"], [row["ativo"] for row in payload["ativos"]])
+            self.assertEqual(1680, payload["total_investimentos_carteira_brl"])
+            self.assertEqual(1440, payload["total_recorte_exportado_brl"])
+            self.assertAlmostEqual(1440 / 1680 * 100, payload["ativos"][0]["peso_na_carteira_total_pct"])
+            self.assertEqual(100, payload["ativos"][0]["peso_na_classe_exportada_pct"])
+            self.assertEqual(120, payload["ativos"][0]["cotacao_unitaria_moeda_ativo"])
+            self.assertEqual(507.5, payload["ativos"][0]["custo_medio_brl"])
+            self.assertEqual("2026-01-10", payload["data_corte"])
+            self.assertEqual("no-store", response.headers["Cache-Control"])
+            self.assertIn(".txt", response.headers["Content-Disposition"])
+            self.assertTrue(response.headers["Content-Type"].startswith("text/plain"))
+            set_current_workspace_id(7002)
+            response = invest_download_analysis(asset_class="ETFs US", user={"id": 9001})
+            text = response.body.decode("utf-8")
+            payload = json.loads(text.rsplit("\nBEGIN_DOMUS_DATA_JSON\n", 1)[1].split("\nEND_DOMUS_DATA_JSON", 1)[0])
+            self.assertEqual(["A8003"], [row["ativo"] for row in payload["ativos"]])
+            self.assertEqual(1440, payload["total_investimentos_carteira_brl"])
+
+    def test_card_cancellation_preserves_history_on_both_databases(self):
+        with db.get_conn() as conn:
+            conn.execute("INSERT INTO accounts(id, name, type, currency, show_on_dashboard, user_id, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (9601, "Card bank", "Banco", "BRL", False, 9001, 7001))
+        repo.create_credit_card("Lifecycle", "Visa", "Black", "Credito", 9601, 9601, 20, 15, user_id=9001)
+        card_id = int(repo.list_credit_cards(user_id=9001)[0]["id"])
+        repo.register_credit_charge(card_id, "2026-11-10", 25, description="Synthetic purchase", user_id=9001)
+        set_current_workspace_id(7002)
+        self.assertFalse(repo.cancel_credit_card(card_id, user_id=9001))
+        set_current_workspace_id(7001)
+        self.assertTrue(repo.cancel_credit_card(card_id, user_id=9001))
+        self.assertEqual([], repo.list_credit_cards(user_id=9001))
+        self.assertEqual(1, len(repo.list_credit_cards(user_id=9001, include_cancelled=True)))
+        self.assertEqual(1, len(repo.fetch_credit_charges_competencia(user_id=9001)))
+        invoice = repo.list_credit_card_invoices(user_id=9001)[0]
+        self.assertEqual(0, repo.delete_credit_card(card_id, user_id=9001))
+        with self.assertRaises(ValueError):
+            repo.register_credit_charge(card_id, "2026-11-11", 10, user_id=9001)
+        repo.pay_credit_card_invoice(int(invoice["id"]), "2026-11-20", user_id=9001)
+        self.assertEqual("PAID", repo.list_credit_card_invoices(user_id=9001)[0]["status"])
 
     def _seed_review_asset(self, aid, asset_class, currency="BRL", mode="MANUAL"):
         with db.get_conn() as conn:

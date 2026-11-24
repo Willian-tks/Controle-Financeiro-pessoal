@@ -198,6 +198,10 @@ export function deleteCard(id) {
   });
 }
 
+export function cancelCard(id) {
+  return req(`/cards/${id}/cancel`, { method: "PATCH" });
+}
+
 export function getCardInvoices(params = {}) {
   return req(`/card-invoices${qs(params)}`);
 }
@@ -490,10 +494,10 @@ export function getInvestSummary() {
   return req("/invest/summary");
 }
 
-export async function downloadInvestReport(params = {}) {
+async function downloadInvestmentFile(path, params, fallbackName) {
   const token = getToken();
   const suffix = qs(params);
-  const res = await fetch(`${API_BASE}/invest/report${suffix}`, {
+  const res = await fetch(`${API_BASE}${path}${suffix}`, {
     method: "GET",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -505,8 +509,16 @@ export async function downloadInvestReport(params = {}) {
   const match = disposition.match(/filename="?([^"]+)"?/i);
   return {
     blob: await res.blob(),
-    fileName: match?.[1] || "relatorio-investimentos.html",
+    fileName: match?.[1] || fallbackName,
   };
+}
+
+export function downloadInvestReport(params = {}) {
+  return downloadInvestmentFile("/invest/report", params, "relatorio-investimentos.html");
+}
+
+export function downloadInvestAnalysis(params = {}) {
+  return downloadInvestmentFile("/invest/analysis-export", params, "analise-investimentos.txt");
 }
 
 export function getInvestIncomes() {

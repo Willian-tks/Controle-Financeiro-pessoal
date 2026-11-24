@@ -11,6 +11,41 @@ from api.security import create_token
 
 
 class MultiWorkspacePermissionsTests(unittest.TestCase):
+    def test_analysis_export_requires_view_permission_and_valid_dates(self):
+        with db_module.get_conn() as conn:
+            conn.execute("INSERT INTO workspace_users(workspace_id, user_id, role, created_by) VALUES (101, 2, 'GUEST', 1)")
+        guest = self._headers(2, "guest@example.com", 101)
+        self.assertEqual(403, self.client.get("/invest/analysis-export", headers=guest).status_code)
+        self.assertIn(self.client.get("/invest/analysis-export").status_code, (401, 403))
+        owner = self._headers(1, "owner@example.com", 101, workspace_role="OWNER")
+        self.assertEqual(422, self.client.get("/invest/analysis-export?date_from=invalid", headers=owner).status_code)
+        self.assertEqual(400, self.client.get("/invest/analysis-export?asset_class=unknown", headers=owner).status_code)
+        self.assertEqual(400, self.client.get("/invest/analysis-export", headers=owner).status_code)
+
+    def test_card_cancel_requires_edit_permission_and_preserves_workspace_scope(self):
+        owner = self._headers(1, "owner@example.com", 101, workspace_role="OWNER")
+        other = self._headers(3, "other@example.com", 102, workspace_role="OWNER")
+        created = self.client.post("/accounts", json={"name": "Card bank", "type": "Banco"}, headers=owner)
+        self.assertEqual(200, created.status_code, created.text)
+        account = self.client.get("/accounts", headers=owner).json()[0]
+        created = self.client.post("/cards", json={
+            "name": "Lifecycle", "brand": "Visa", "model": "Black", "card_type": "Credito",
+            "card_account_id": account["id"], "due_day": 20, "close_day": 15,
+        }, headers=owner)
+        self.assertEqual(200, created.status_code, created.text)
+        card_id = self.client.get("/cards", headers=owner).json()[0]["id"]
+        self.assertEqual(404, self.client.patch(f"/cards/{card_id}/cancel", headers=other).status_code)
+        with db_module.get_conn() as conn:
+            conn.execute("INSERT INTO workspace_users(workspace_id, user_id, role, created_by) VALUES (101, 2, 'GUEST', 1)")
+        wsu_id = self._workspace_user_id(101, 2)
+        with db_module.get_conn() as conn:
+            conn.execute("INSERT INTO permissions(workspace_user_id, module, can_view, can_add, can_edit, can_delete) VALUES (?, 'contas', 1, 0, 0, 0)", (wsu_id,))
+        guest = self._headers(2, "guest@example.com", 101)
+        self.assertEqual(403, self.client.patch(f"/cards/{card_id}/cancel", headers=guest).status_code)
+        self.assertEqual(200, self.client.patch(f"/cards/{card_id}/cancel", headers=owner).status_code)
+        self.assertEqual([], self.client.get("/cards", headers=owner).json())
+        self.assertEqual(200, self.client.patch(f"/cards/{card_id}/cancel", headers=owner).status_code)
+
     @classmethod
     def setUpClass(cls):
         cls._tmpdir = tempfile.TemporaryDirectory()

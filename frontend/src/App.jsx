@@ -50,6 +50,7 @@ import {
   createList,
   cloneList,
   deleteCard,
+  cancelCard,
   deleteAccount,
   deleteCategory,
   deleteCreditCommitment,
@@ -60,6 +61,7 @@ import {
   deleteListItem,
   deleteList,
   downloadInvestReport,
+  downloadInvestAnalysis,
   deleteTransaction,
   getAccounts,
   getCardInvoices,
@@ -3883,11 +3885,13 @@ export default function App() {
     }
   }
 
-  async function onDownloadInvestReport() {
-    const actionKey = "downloadInvestReport";
+  async function onDownloadInvestReport(forAnalysis = false) {
+    if (forAnalysis && !window.confirm("O arquivo contém posições e valores financeiros, incluindo o total da carteira. Ele será baixado neste dispositivo; nenhum dado será enviado a uma IA. Deseja gerar o arquivo?")) return;
+    const actionKey = forAnalysis ? "downloadInvestAnalysis" : "downloadInvestReport";
+    const download = forAnalysis ? downloadInvestAnalysis : downloadInvestReport;
     try {
       const out = await withPendingAction(actionKey, async () =>
-        downloadInvestReport({
+        download({
           asset_class: investSummaryClassFilter,
           date_from: investReportDateFrom,
           date_to: investReportDateTo,
@@ -3896,12 +3900,12 @@ export default function App() {
       const url = window.URL.createObjectURL(out.blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = out.fileName || "relatorio-investimentos.html";
+      link.download = out.fileName || (forAnalysis ? "analise-investimentos.txt" : "relatorio-investimentos.html");
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-      showGlobalSuccess("Relatório de investimentos gerado.");
+      showGlobalSuccess(forAnalysis ? "Relatório e prompt para IA gerados." : "Relatório de investimentos gerado.");
     } catch (err) {
       setInvestMsg(`Erro ao gerar relatório: ${String(err.message || err)}`);
     }
@@ -5270,6 +5274,30 @@ export default function App() {
     });
   }
 
+  async function onCancelCard() {
+    setCardMsg("");
+    if (!canEditContas) {
+      setCardMsg("Sem permissão para cancelar cartões.");
+      return;
+    }
+    const card = cards.find((item) => String(item.id) === String(cardEditId));
+    if (!card) return;
+    if (!window.confirm(`Cancelar o cartão "${card.name}"? Faturas, pagamentos e valores pendentes serão preservados. Novas compras neste cartão serão bloqueadas.`)) return;
+    await withPendingAction("cancelCard", async () => {
+      try {
+        await cancelCard(card.id);
+        onSelectCardEdit("");
+        setCardMsg("Cartão cancelado. Histórico e faturas preservados.");
+        showGlobalSuccess("Cartão cancelado.");
+        await reloadCardsData();
+        await reloadAllData();
+        await reloadDashboard();
+      } catch (err) {
+        setCardMsg(String(err.message || err));
+      }
+    });
+  }
+
   async function onDeleteCard() {
     setCardMsg("");
     if (!canDeleteContas) {
@@ -5277,10 +5305,17 @@ export default function App() {
       return;
     }
     const id = Number(cardEditId);
-    if (!Number.isFinite(id)) return;
+    if (!Number.isFinite(id) || id <= 0) return;
+    const card = cards.find((item) => Number(item.id) === id);
+    if (!card?.can_delete) {
+      setCardMsg("Este cartão possui histórico financeiro. Use Cancelar cartão.");
+      return;
+    }
+    if (!window.confirm(`Excluir definitivamente o cartão "${card.name}"?`)) return;
     await withPendingAction("deleteCard", async () => {
       try {
       await deleteCard(id);
+      onSelectCardEdit("");
       setCardMsg("Cartão excluído.");
       showGlobalSuccess("Cartão excluído.");
       await reloadCardsData();
@@ -6724,10 +6759,13 @@ export default function App() {
                     <small className="mgr-hint">
                       Dica: informe o fechamento no máximo 5 dias antes do vencimento da fatura.
                     </small>
-                    <button type="button" onClick={onUpdateCard} disabled={!canEditContas || isPendingAction("updateCard")}>
+                    <button type="button" onClick={onUpdateCard} disabled={!canEditContas || !cardEditId || isPendingAction("updateCard") || isPendingAction("cancelCard") || isPendingAction("deleteCard")}>
                       {isPendingAction("updateCard") ? "Atualizando..." : "Atualizar cartão"}
                     </button>
-                    <button type="button" className="danger" onClick={onDeleteCard} disabled={!canDeleteContas || isPendingAction("deleteCard")}>
+                    <button type="button" onClick={onCancelCard} disabled={!canEditContas || !cardEditId || isPendingAction("cancelCard") || isPendingAction("updateCard") || isPendingAction("deleteCard")}>
+                      {isPendingAction("cancelCard") ? "Cancelando..." : "Cancelar cartão"}
+                    </button>
+                    <button type="button" className="danger" title={cards.find((c) => String(c.id) === String(cardEditId))?.can_delete ? "Excluir cartão sem histórico financeiro" : "Cartões com histórico financeiro devem ser cancelados"} onClick={onDeleteCard} disabled={!canDeleteContas || !cards.find((c) => String(c.id) === String(cardEditId))?.can_delete || isPendingAction("deleteCard") || isPendingAction("cancelCard") || isPendingAction("updateCard")}>
                       {isPendingAction("deleteCard") ? "Excluindo..." : "Excluir cartão"}
                     </button>
                   </div>
@@ -8090,14 +8128,25 @@ export default function App() {
                         <option key={cls} value={cls}>{cls}</option>
                       ))}
                     </select>
+                    <div className="invest-export-actions">
                     <button
                       type="button"
                       className="mini-tab"
-                      onClick={onDownloadInvestReport}
+                      onClick={() => onDownloadInvestReport(false)}
                       disabled={isPendingAction("downloadInvestReport")}
                     >
                       {isPendingAction("downloadInvestReport") ? "Gerando relatório..." : "Baixar relatório"}
                     </button>
+                    <button
+                      type="button"
+                      className="mini-tab"
+                      onClick={() => onDownloadInvestReport(true)}
+                      disabled={isPendingAction("downloadInvestAnalysis")}
+                    >
+                      <img src={downloadIcon} alt="" aria-hidden="true" width="16" height="16" />
+                      {isPendingAction("downloadInvestAnalysis") ? "Gerando TXT..." : "Exportar para IA (.txt)"}
+                    </button>
+                    </div>
                   </div>
                 </section>
                 <section className="cards invest-kpi-grid">

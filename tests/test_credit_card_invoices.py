@@ -5,9 +5,86 @@ from pathlib import Path
 import db as db_module
 import repo
 import reports
+from tenant import clear_tenant_context
 
 
 class CreditCardInvoiceTests(unittest.TestCase):
+    def _new_card(self, card_type="Credito"):
+        repo.create_credit_card("Lifecycle", "Visa", "Black", card_type, 11, 11, 20, 15, user_id=1)
+        return int(repo.list_credit_cards(user_id=1)[0]["id"])
+
+    def test_cancel_preserves_charges_invoices_and_payment(self):
+        card_id = self._new_card()
+        repo.register_credit_charge(card_id, "2026-11-10", 100, 20, "Purchase", user_id=1)
+        invoice = repo.list_credit_card_invoices(user_id=1)[0]
+        self.assertTrue(repo.cancel_credit_card(card_id, user_id=1))
+        self.assertEqual([], repo.list_credit_cards(user_id=1))
+        self.assertIsNone(repo.get_credit_card_by_id_and_type(card_id, "Credito", user_id=1))
+        self.assertEqual(1, len(repo.list_credit_card_invoices(user_id=1)))
+        with db_module.get_conn() as conn:
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) AS n FROM credit_card_charges").fetchone()["n"])
+        self.assertEqual(0, repo.delete_credit_card(card_id, user_id=1))
+        repo.pay_credit_card_invoice(int(invoice["id"]), "2026-11-20", user_id=1)
+        self.assertEqual("PAID", repo.list_credit_card_invoices(user_id=1)[0]["status"])
+
+    def test_cancel_is_idempotent_and_blocks_new_charges(self):
+        card_id = self._new_card()
+        self.assertTrue(repo.cancel_credit_card(card_id, user_id=1))
+        first = dict(repo.list_credit_cards(user_id=1, include_cancelled=True)[0])
+        self.assertTrue(repo.cancel_credit_card(card_id, user_id=1))
+        self.assertEqual(first, dict(repo.list_credit_cards(user_id=1, include_cancelled=True)[0]))
+        with self.assertRaisesRegex(ValueError, "cancelado"):
+            repo.register_credit_charge(card_id, "2026-11-20", 10, user_id=1)
+        with db_module.get_conn() as conn:
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) AS n FROM credit_card_charges").fetchone()["n"])
+
+    def test_unused_card_can_be_deleted(self):
+        card_id = self._new_card()
+        self.assertTrue(repo.list_credit_cards(user_id=1)[0]["can_delete"])
+        self.assertEqual(1, repo.delete_credit_card(card_id, user_id=1))
+
+    def test_invoice_without_charges_still_prevents_deletion(self):
+        card_id = self._new_card()
+        with db_module.get_conn() as conn:
+            conn.execute("INSERT INTO credit_card_invoices(card_id, invoice_period, due_date, total_amount, user_id) VALUES (?, ?, ?, ?, ?)",
+                         (card_id, "2026-11", "2026-11-20", 0, 1))
+        self.assertFalse(repo.list_credit_cards(user_id=1)[0]["can_delete"])
+        self.assertEqual(0, repo.delete_credit_card(card_id, user_id=1))
+
+    def test_lifetime_use_survives_deleted_financial_rows(self):
+        card_id = self._new_card()
+        repo.register_credit_charge(card_id, "2026-11-10", 10, user_id=1)
+        with db_module.get_conn() as conn:
+            conn.execute("DELETE FROM credit_card_charges")
+            conn.execute("DELETE FROM credit_card_invoices")
+        self.assertFalse(repo.list_credit_cards(user_id=1)[0]["can_delete"])
+        self.assertEqual(0, repo.delete_credit_card(card_id, user_id=1))
+
+    def test_debit_use_survives_deleted_transaction_and_cancel_blocks_write(self):
+        card_id = self._new_card("Debito")
+        payload = dict(date="2026-11-10", description="Debit", amount=-10, account_id=11,
+                       category_id=20, method="Debito", notes=None, user_id=1, card_id=card_id)
+        repo.insert_transaction(**payload)
+        with db_module.get_conn() as conn:
+            conn.execute("DELETE FROM transactions")
+        self.assertEqual(0, repo.delete_credit_card(card_id, user_id=1))
+        repo.cancel_credit_card(card_id, user_id=1)
+        with self.assertRaisesRegex(ValueError, "cancelado"):
+            repo.insert_transaction(**payload)
+
+    def test_migration_backfills_known_use_and_preserves_cancellation(self):
+        card_id = self._new_card()
+        with db_module.get_conn() as conn:
+            conn.execute("INSERT INTO credit_card_invoices(card_id, invoice_period, due_date, total_amount, user_id) VALUES (?, ?, ?, ?, ?)",
+                         (card_id, "2026-11", "2026-11-20", 10, 1))
+        repo.cancel_credit_card(card_id, user_id=1)
+        stamp = repo.list_credit_cards(user_id=1, include_cancelled=True)[0]["cancelled_at"]
+        db_module.init_db()
+        with db_module.get_conn() as conn:
+            conn.execute("DELETE FROM credit_card_invoices")
+        self.assertEqual(0, repo.delete_credit_card(card_id, user_id=1))
+        self.assertEqual(stamp, repo.list_credit_cards(user_id=1, include_cancelled=True)[0]["cancelled_at"])
+
     @classmethod
     def setUpClass(cls):
         cls._db_path = Path(__file__).resolve().parent.parent / "finance_test_cards.db"
@@ -32,6 +109,7 @@ class CreditCardInvoiceTests(unittest.TestCase):
         cls._db_path.unlink(missing_ok=True)
 
     def setUp(self):
+        clear_tenant_context()
         with db_module.get_conn() as conn:
             for table in [
                 "credit_card_charges",
@@ -41,6 +119,9 @@ class CreditCardInvoiceTests(unittest.TestCase):
                 "categories",
                 "accounts",
                 "invites",
+                "permissions",
+                "workspace_users",
+                "workspaces",
                 "users",
             ]:
                 conn.execute(f"DELETE FROM {table}")
