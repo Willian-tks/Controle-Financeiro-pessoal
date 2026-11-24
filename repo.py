@@ -1,6 +1,6 @@
 ﻿from db import get_conn
 from tenant import get_current_user_id, get_current_workspace_id
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import calendar
 import re
 from contextvars import ContextVar
@@ -151,9 +151,16 @@ def insert_transaction(
     notes: str | None,
     user_id: int | None = None,
     recurrence_id: str | None = None,
+    card_id: int | None = None,
 ):
     uid = _uid(user_id)
     conn = get_conn()
+    if card_id is not None:
+        try:
+            _mark_card_activity(conn, int(card_id), uid)
+        except ValueError:
+            conn.close()
+            raise
     _exec(conn, 
         """
         INSERT INTO transactions(date, description, amount_brl, account_id, category_id, recurrence_id, method, notes, user_id)
@@ -231,7 +238,7 @@ def delete_transaction_with_scope(tx_id: int, scope: str = "single", user_id: in
         return int(deleted)
 
     # Fallback para séries antigas sem recurrence_id: remove "este e próximos" por assinatura.
-    cur = _exec(conn, 
+    cur = _exec(conn,
         """
         DELETE FROM transactions
         WHERE user_id = ?
@@ -696,7 +703,7 @@ def account_balance_value(account_id: int, user_id: int | None = None) -> float:
     return float(row["bal"] if row else 0.0)
 
 
-def list_credit_cards(user_id: int | None = None):
+def list_credit_cards(user_id: int | None = None, include_cancelled: bool = False):
     uid = _uid(user_id)
     conn = get_conn()
     rows = _exec(conn, 
@@ -704,14 +711,21 @@ def list_credit_cards(user_id: int | None = None):
         SELECT
             cc.id, cc.name, cc.card_account_id, ca.name AS linked_account, ca.type AS linked_account_type,
             cc.source_account_id, sa.name AS source_account, sa.type AS source_account_type,
-            cc.due_day, cc.close_day, COALESCE(cc.brand, 'Visa') AS brand, COALESCE(cc.model, 'Black') AS model, COALESCE(cc.card_type, 'Credito') AS card_type
+            cc.due_day, cc.close_day, COALESCE(cc.brand, 'Visa') AS brand, COALESCE(cc.model, 'Black') AS model, COALESCE(cc.card_type, 'Credito') AS card_type,
+            cc.cancelled_at,
+            (cc.has_activity = 0
+             AND NOT EXISTS (SELECT 1 FROM credit_card_charges ch WHERE ch.card_id = cc.id)
+             AND NOT EXISTS (SELECT 1 FROM credit_card_invoices i WHERE i.card_id = cc.id)
+             AND NOT (cc.card_type = 'Debito' AND EXISTS (
+                 SELECT 1 FROM transactions t WHERE t.account_id = cc.card_account_id AND t.method = 'Debito'
+             ))) AS can_delete
         FROM credit_cards cc
         JOIN accounts ca ON ca.id = cc.card_account_id AND ca.user_id = cc.user_id
         JOIN accounts sa ON sa.id = cc.source_account_id AND sa.user_id = cc.user_id
-        WHERE cc.user_id = ?
+        WHERE cc.user_id = ? AND (? = 1 OR cc.cancelled_at IS NULL)
         ORDER BY cc.name
         """,
-        (uid,),
+        (uid, int(include_cancelled)),
     ).fetchall()
     conn.close()
     return rows
@@ -765,11 +779,11 @@ def update_credit_card(
 ):
     uid = _uid(user_id)
     conn = get_conn()
-    _exec(conn, 
+    cur = _exec(conn,
         """
         UPDATE credit_cards
         SET name = ?, brand = ?, model = ?, card_type = ?, card_account_id = ?, source_account_id = ?, due_day = ?, close_day = ?
-        WHERE id = ? AND user_id = ?
+        WHERE id = ? AND user_id = ? AND cancelled_at IS NULL
         """,
         (
             name.strip(),
@@ -784,6 +798,9 @@ def update_credit_card(
             uid,
         ),
     )
+    if not cur.rowcount:
+        conn.close()
+        raise ValueError("Cartão cancelado ou não encontrado.")
     _sync_open_credit_card_invoice_calendar(
         conn,
         card_id=int(card_id),
@@ -899,21 +916,43 @@ def _sync_open_credit_card_invoice_calendar(
 def delete_credit_card(card_id: int, user_id: int | None = None) -> int:
     uid = _uid(user_id)
     conn = get_conn()
-    row = _exec(conn, 
-        """
-        SELECT COUNT(*) AS n
-        FROM credit_card_charges
-        WHERE card_id = ? AND user_id = ?
-        """,
-        (int(card_id), uid),
-    ).fetchone()
-    if row and int(row["n"]) > 0:
-        conn.close()
-        return 0
-    cur = _exec(conn, "DELETE FROM credit_cards WHERE id = ? AND user_id = ?", (int(card_id), uid))
+    cur = _exec(conn, """
+        DELETE FROM credit_cards
+        WHERE id = ? AND user_id = ? AND has_activity = 0
+          AND NOT EXISTS (SELECT 1 FROM credit_card_charges ch WHERE ch.card_id = credit_cards.id)
+          AND NOT EXISTS (SELECT 1 FROM credit_card_invoices i WHERE i.card_id = credit_cards.id)
+          AND NOT (card_type = 'Debito' AND EXISTS (
+              SELECT 1 FROM transactions t
+              WHERE t.account_id = credit_cards.card_account_id AND t.method = 'Debito'
+          ))
+        """, (int(card_id), uid))
     conn.commit()
     conn.close()
     return int(cur.rowcount or 0)
+
+
+def cancel_credit_card(card_id: int, user_id: int) -> bool:
+    uid = _uid(user_id)
+    with get_conn() as conn:
+        row = _exec(conn, "SELECT id FROM credit_cards WHERE id = ? AND user_id = ?",
+                    (int(card_id), uid)).fetchone()
+        if not row:
+            return False
+        _exec(conn, """
+            UPDATE credit_cards SET cancelled_at = ?, cancelled_by = ?
+            WHERE id = ? AND user_id = ? AND cancelled_at IS NULL
+        """, (datetime.now(timezone.utc).isoformat(), int(user_id), int(card_id), uid))
+    return True
+
+
+def _mark_card_activity(conn, card_id: int, uid: int) -> None:
+    # Updating the parent first serializes creation against cancellation/deletion.
+    cur = _exec(conn, """
+        UPDATE credit_cards SET has_activity = 1
+        WHERE id = ? AND user_id = ? AND cancelled_at IS NULL
+    """, (card_id, uid))
+    if not cur.rowcount:
+        raise ValueError("Cartão cancelado ou não encontrado.")
 
 
 def get_credit_card_by_account_and_type(card_account_id: int, card_type: str, user_id: int | None = None):
@@ -923,7 +962,7 @@ def get_credit_card_by_account_and_type(card_account_id: int, card_type: str, us
         """
         SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day, close_day
         FROM credit_cards
-        WHERE card_account_id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ?
+        WHERE card_account_id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ? AND cancelled_at IS NULL
         """,
         (int(card_account_id), uid, str(card_type)),
     ).fetchone()
@@ -938,7 +977,7 @@ def get_credit_card_by_id_and_type(card_id: int, card_type: str, user_id: int | 
         """
         SELECT id, name, COALESCE(brand, 'Visa') AS brand, COALESCE(model, 'Black') AS model, COALESCE(card_type, 'Credito') AS card_type, card_account_id, source_account_id, due_day, close_day
         FROM credit_cards
-        WHERE id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ?
+        WHERE id = ? AND user_id = ? AND COALESCE(card_type, 'Credito') = ? AND cancelled_at IS NULL
         """,
         (int(card_id), uid, str(card_type)),
     ).fetchone()
@@ -988,6 +1027,11 @@ def register_credit_charge(
 ):
     uid = _uid(user_id)
     conn = get_conn()
+    try:
+        _mark_card_activity(conn, int(card_id), uid)
+    except ValueError:
+        conn.close()
+        raise
     card = _exec(conn, 
         "SELECT id, due_day, close_day FROM credit_cards WHERE id = ? AND user_id = ?",
         (int(card_id), uid),

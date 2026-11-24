@@ -1612,6 +1612,22 @@ body {
   grid-template-columns: minmax(220px, 360px) auto;
 }
 
+.invest-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.invest-export-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: normal;
+}
+
 .invest-divergence-form {
   grid-template-columns: minmax(220px, 360px) minmax(220px, 360px);
 }

@@ -25,6 +25,7 @@ import invest_repo
 import invest_reports
 import invest_quotes
 import invest_fx
+from invest_analysis_export import create_analysis_export
 import lists_repo
 import repo
 import reports
@@ -3090,6 +3091,7 @@ def create_transaction(
                 method=method,
                 notes=notes,
                 user_id=uid,
+                card_id=int(card_cfg["id"]),
             )
             return {"ok": True, "mode": "debit_card_expense", "created": 1}
         if method in {"PIX", "Futuro"} and body.card_id is not None:
@@ -3227,6 +3229,13 @@ def update_card(
     return {"ok": True}
 
 
+@app.patch("/cards/{card_id}/cancel")
+def cancel_card(card_id: int, user: dict = Depends(_current_user)) -> dict:
+    if not repo.cancel_credit_card(card_id, user_id=int(user["id"])):
+        raise HTTPException(status_code=404, detail="Cartão não encontrado.")
+    return {"ok": True}
+
+
 @app.delete("/cards/{card_id}")
 def delete_card(
     card_id: int,
@@ -3235,7 +3244,7 @@ def delete_card(
     uid = int(user["id"])
     deleted = repo.delete_credit_card(int(card_id), user_id=uid)
     if not deleted:
-        raise HTTPException(status_code=400, detail="Não foi possível excluir cartão (possui faturas/movimentos).")
+        raise HTTPException(status_code=400, detail="Cartão não encontrado ou com histórico financeiro. Use Cancelar cartão para preservar os registros.")
     return {"ok": True}
 
 
@@ -4334,6 +4343,33 @@ def invest_download_report(
         content=html.encode("utf-8"),
         media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/invest/analysis-export")
+def invest_download_analysis(
+    date_from: _date | None = None,
+    date_to: _date | None = None,
+    asset_class: str | None = None,
+    user: dict = Depends(_current_user),
+) -> Response:
+    selected = str(asset_class or "").strip() or None
+    try:
+        report = create_analysis_export(
+            user_id=int(user["id"]), asset_class=selected, date_from=date_from, date_to=date_to,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    label = re.sub(r"[^a-z0-9]+", "-", _norm_asset_class(selected or "carteira"))
+    cutoff = min(date_to or invest_fx.today(), invest_fx.today()).isoformat()
+    return Response(
+        content=report.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="analise-investimentos-{label}-{cutoff}.txt"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

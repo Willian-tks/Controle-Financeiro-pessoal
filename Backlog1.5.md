@@ -251,6 +251,57 @@ Atualizar esta tabela durante o trabalho; manter os critérios acima como refer�
 
 ## Histórico do documento
 
+### Relatório por classe para IA externa — 24/11/2026
+
+Implementação local em validação, sem ativação de IA integrada: botão Exportar
+para IA (.txt) em Investimentos > Resumo, respeitando classe e datas selecionadas.
+TXT único reúne prompt pronto, listagem resumida e dados estruturados das posições
+abertas, com cotação/moeda quando disponível, quantidade, custo médio em BRL,
+valor atual, variação não realizada sobre custo e pesos na classe/carteira.
+Proventos do intervalo e resultado realizado acumulado são separados; não há
+alegação de rentabilidade anualizada/TWR/XIRR. Renda fixa informa saldo e unidades
+contábeis, nunca cotação fictícia. Exportar todas as classes mantém o peso de cada
+ativo dentro da própria classe e o peso na carteira inteira de investimentos.
+
+Prompt solicita análise objetiva, pesquisa pública com fontes/datas quando
+disponível, cenários condicionais e possibilidades de manter/reduzir/ampliar.
+Sem perfil, horizonte ou evidências suficientes, deve indicar avaliação pendente,
+não uma ordem personalizada. Nomes e campos do relatório são dados não confiáveis,
+nunca instruções para executar ações. Nada é enviado automaticamente a terceiros.
+Download exige confirmação de conteúdo financeiro e omite dados pessoais,
+contas, corretoras, notas e identificadores internos; o total da carteira continua
+presente para contextualizar os pesos. Data futura é limitada a hoje.
+
+Reutilizado o motor financeiro e as permissões atuais. Sem gravações financeiras,
+novos provedores, dependências ou migração adicional. Testes da exportação
+compõem também o contrato SQLite/PostgreSQL; validação remota e visual pendentes.
+Evidências locais: 137 testes Python, 22 testes Node e build Vite aprovados;
+download TXT conferido em teste do endpoint com valores reais do motor em banco
+descartável, sem usar dados de produção. PostgreSQL depende do próximo CI.
+Cancelamento de cartões continua preservado como alteração local separada.
+
+### Cancelamento de cartões — 24/11/2026
+
+Implementação local em validação: ação Cancelar cartão (permissão de edição)
+retira o cartão do cadastro ativo, da carteira visual e dos seletores de novas
+compras, sem remover faturas, lançamentos ou pagamentos. Faturas pendentes
+continuam disponíveis para consulta e quitação. Cancelamento registra data UTC
+e autor e é idempotente; não existe reativação automática.
+
+Exclusão definitiva exige ausência de compras, faturas e marcador permanente
+de uso. Marcador é gravado junto às novas movimentações e não é desfeito pela
+exclusão posterior delas. Migração aditiva preenche uso conhecido em cartões
+legados. Débitos antigos não persistem ID do cartão: por segurança, débitos na
+conta vinculada impedem excluir qualquer cartão de débito daquela conta;
+cancelamento continua possível. Histórico apagado antes desta migração não
+pode ser reconstruído nem certificado como ausência de uso.
+
+127 testes Python, 22 testes Node e build Vite aprovados. Cobertura inclui
+preservação e pagamento de faturas após cancelamento, bloqueio de novas compras,
+permissões, isolamento entre workspaces e migração idempotente. Contrato de
+cancelamento preparado também para PostgreSQL no CI, ainda não executado
+nessa plataforma localmente. Validação visual, commit e publicação pendentes.
+
 Revisão por classe em 27/10/2026, antes do commit: matriz cobrindo as 13 classes
 de ASSET_CLASSES. Mesmo risco de snapshot nas quatro classes de saldo (Renda
 Fixa, Tesouro Direto, COE e Fundos), cobertas pela correção compartilhada.

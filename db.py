@@ -1100,6 +1100,9 @@ def _migrate_multitenant_postgres(cur):
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT 'Black'")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS card_type TEXT NOT NULL DEFAULT 'Credito'")
     cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS close_day INTEGER")
+    cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS cancelled_at TEXT")
+    cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS cancelled_by BIGINT")
+    cur.execute("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS has_activity INTEGER NOT NULL DEFAULT 0")
     cur.execute("ALTER TABLE credit_card_invoices ADD COLUMN IF NOT EXISTS user_id BIGINT")
     cur.execute("ALTER TABLE credit_card_invoices ADD COLUMN IF NOT EXISTS workspace_id BIGINT")
     cur.execute("ALTER TABLE credit_card_charges ADD COLUMN IF NOT EXISTS user_id BIGINT")
@@ -1352,6 +1355,9 @@ def _migrate_multitenant_sqlite(cur):
     _add_column_sqlite(cur, "credit_cards", "model TEXT NOT NULL DEFAULT 'Black'")
     _add_column_sqlite(cur, "credit_cards", "card_type TEXT NOT NULL DEFAULT 'Credito'")
     _add_column_sqlite(cur, "credit_cards", "close_day INTEGER")
+    _add_column_sqlite(cur, "credit_cards", "cancelled_at TEXT")
+    _add_column_sqlite(cur, "credit_cards", "cancelled_by INTEGER")
+    _add_column_sqlite(cur, "credit_cards", "has_activity INTEGER NOT NULL DEFAULT 0")
     _add_column_sqlite(cur, "credit_card_invoices", "user_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "user_id INTEGER")
     _add_column_sqlite(cur, "credit_card_charges", "category_id INTEGER")
@@ -1664,3 +1670,15 @@ def init_db() -> None:
             _sqlite_schema(cur)
             _migrate_multitenant_sqlite(cur)
         create_schema(conn)
+        # Preserve known lifetime use even if its financial rows are deleted later.
+        conn.execute("""
+            UPDATE credit_cards SET has_activity = 1
+            WHERE has_activity = 0 AND (
+                EXISTS (SELECT 1 FROM credit_card_charges ch WHERE ch.card_id = credit_cards.id)
+                OR EXISTS (SELECT 1 FROM credit_card_invoices i WHERE i.card_id = credit_cards.id)
+                OR (card_type = 'Debito' AND EXISTS (
+                    SELECT 1 FROM transactions t
+                    WHERE t.account_id = credit_cards.card_account_id AND t.method = 'Debito'
+                ))
+            )
+        """)

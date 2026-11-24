@@ -1,5 +1,40 @@
 # Deploy no VPS LocalWeb
 
+## Exportação para IA externa — preparação local em 24/11/2026
+
+Publicar invest_analysis_export.py junto ao backend/API e reconstruir/promover
+o frontend. Reiniciar domus-api.service para carregar GET /invest/analysis-export.
+Sem dependências, credenciais de IA, chamadas pagas ou migração adicional para
+este recurso. Se publicado junto ao cancelamento de cartões, seguir também as
+exigências de backup e migração descritas na seção correspondente.
+
+Smoke: Investimentos > Resumo, escolher classe e datas, Exportar para IA (.txt),
+confirmar download e comparar quantidades/valores/pesos com a carteira. Conferir
+fonte/data/moeda, ausência de cotação em saldos de renda fixa, peso na carteira
+total e isolamento do workspace. Usuário sem visualizar Investimentos não
+exporta. O download não envia dados a nenhuma IA. Não validar compartilhando
+carteira real com serviço externo sem decisão explícita do usuário.
+
+## Cancelamento de cartões — preparação local em 24/11/2026
+
+Backend e frontend devem ser publicados juntos. A inicialização adiciona
+cancelled_at, cancelled_by e has_activity em credit_cards, em SQLite/PostgreSQL,
+sem apagar registros financeiros; todos os cartões atuais permanecem ativos.
+Uso financeiro conhecido é marcado para impedir exclusão definitiva posterior.
+Fazer backup consistente do banco e configurações antes do restart/migração,
+aguardar CI, gerar/promover frontend Linux e reiniciar domus-api.service.
+
+Smoke: cancelar cartão com fatura pendente, confirmar que não é oferecido para
+nova compra, mas seus lançamentos e sua fatura continuam visíveis e pagáveis;
+excluir apenas cartão descartável sem histórico; validar usuário sem edição
+e acesso a outro workspace. Não usar cartão real para ensaios de exclusão.
+Cancelamento é uma inativação no DOMUS, não comunicação ao banco emissor.
+
+Rollback: preservar as colunas e o histórico; não restaurar banco automaticamente.
+Código anterior não conhece cancelamento e pode voltar a oferecer cartões
+cancelados para novas compras. Restringir gravações durante eventual rollback
+e não considerá-lo operacionalmente seguro sem revisar esses cartões.
+
 ## Correção local de saldo de investimentos — 27/10/2026
 
 Correção em preparação: leitura do saldo atual de Renda Fixa, Tesouro Direto,
